@@ -242,11 +242,34 @@ app.use('/downloads', express.static(DOWNLOADS_DIR, {
 }));
 
 // GET /api/downloads — список доступных установщиков с авто-детектом платформы.
+// Поддерживает два источника:
+//   1) downloads.json в DOWNLOADS_DIR — массив { platform, filename, size, url }.
+//      Позволяет указывать внешние URL (например, GitHub Releases для файлов >100 МБ).
+//   2) Иначе — сканирует файлы в DOWNLOADS_DIR (для маленьких установщиков в git).
 app.get('/api/downloads', (req, res) => {
+  // 1) manifest downloads.json
+  const manifestPath = path.join(DOWNLOADS_DIR, 'downloads.json');
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      const arr = Array.isArray(raw) ? raw : (Array.isArray(raw.files) ? raw.files : []);
+      const files = arr.map((f) => ({
+        platform: f.platform || 'other',
+        filename: f.filename || f.name || 'download',
+        size: Number(f.size) || 0,
+        url: f.url,
+      })).filter((f) => !!f.url);
+      return res.json({ files });
+    } catch (e) {
+      console.warn('[downloads] bad downloads.json:', e.message);
+    }
+  }
+
+  // 2) сканирование папки
   let entries = [];
   try { entries = fs.readdirSync(DOWNLOADS_DIR); } catch { entries = []; }
   const files = entries
-    .filter((name) => !name.startsWith('.') && !/^readme($|\.)/i.test(name))
+    .filter((name) => !name.startsWith('.') && !/^readme($|\.)/i.test(name) && name !== 'downloads.json')
     .map((name) => {
       const full = path.join(DOWNLOADS_DIR, name);
       let size = 0;
