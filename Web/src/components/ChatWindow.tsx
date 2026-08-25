@@ -27,6 +27,7 @@ import { membranePressSx, motion } from '../styles/motion';
 import ChatInfoPanel from './ChatInfoPanel';
 import UserProfileModal from './UserProfileModal';
 import { Message, User } from '../types';
+import { saveLiveBg, loadLiveBgUrl, clearLiveBg, hasLiveBg } from '../services/chatLiveBgStorage';
 
 // ── ErrorBoundary ─────────────────────────────────────────────────────────────
 class ChatErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
@@ -212,6 +213,26 @@ function ChatWindowInner() {
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatBgInputRef = useRef<HTMLInputElement>(null);
+  const liveBgInputRef = useRef<HTMLInputElement>(null);
+  const [liveBgUrl, setLiveBgUrl] = useState<string | null>(null);
+  const [liveBgVersion, setLiveBgVersion] = useState(0);
+
+  // Загружаем живые обои (видео) из IndexedDB при монтировании и при смене версии
+  useEffect(() => {
+    let cancelled = false;
+    let currentUrl: string | null = null;
+    (async () => {
+      if (!hasLiveBg()) { setLiveBgUrl(null); return; }
+      const url = await loadLiveBgUrl();
+      if (cancelled) { if (url) URL.revokeObjectURL(url); return; }
+      currentUrl = url;
+      setLiveBgUrl(url);
+    })();
+    return () => {
+      cancelled = true;
+      if (currentUrl) URL.revokeObjectURL(currentUrl);
+    };
+  }, [liveBgVersion]);
   const prevMsgCountRef = useRef<number>(0);
 
   useEffect(() => {
@@ -665,8 +686,27 @@ function ChatWindowInner() {
           </Alert>
         </Snackbar>
 
+        {/* ── Живые обои (видео-слой, приоритет выше фото) ── */}
+        {liveBgUrl && (
+          <>
+            <Box component="video" src={liveBgUrl}
+              autoPlay muted loop playsInline
+              sx={{
+                position: 'absolute', inset: 0, zIndex: 0,
+                width: '100%', height: '100%', objectFit: 'cover',
+                pointerEvents: 'none',
+              }}
+            />
+            <Box sx={{
+              position: 'absolute', inset: 0, zIndex: 1,
+              bgcolor: `rgba(0,0,0,${1 - (theme.chatBgImageOpacity ?? 0.35)})`,
+              pointerEvents: 'none',
+            }} />
+          </>
+        )}
+
         {/* ── Фото-фон чата (абсолютный слой) ── */}
-        {theme.chatBgImage && (
+        {!liveBgUrl && theme.chatBgImage && (
           <>
             {/* само фото */}
             <Box sx={{
@@ -854,12 +894,50 @@ function ChatWindowInner() {
             <MenuItem onClick={() => { setAnchorEl(null); setTimeout(() => chatBgInputRef.current?.click(), 0); }}>
               🖼 Фото чата
             </MenuItem>
+            <MenuItem onClick={() => { setAnchorEl(null); setTimeout(() => liveBgInputRef.current?.click(), 0); }}>
+              🎬 Живые обои (видео)
+            </MenuItem>
+            <MenuItem onClick={async () => {
+              setAnchorEl(null);
+              await clearLiveBg();
+              setLiveBgVersion((v) => v + 1);
+              setToast({ message: 'Живые обои убраны', severity: 'info' });
+            }}>
+              🗑 Убрать живые обои
+            </MenuItem>
             <MenuItem onClick={() => { setAnchorEl(null); setChatBgImage(undefined); setToast({ message: 'Обои чата убраны', severity: 'info' }); }}>
               🗑 Убрать фото-фон
             </MenuItem>
           </Menu>
 
-          {/* Input для фото чата вынесен из Menu — иначе он размонтируется при закрытии меню и .click() не сработает */}
+          {/* Input для живых обоев (видео) */}
+          <input
+            ref={liveBgInputRef}
+            type="file"
+            accept="video/*"
+            style={{ display: 'none' }}
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              e.target.value = '';
+              // Разумный предел, чтобы не забить IndexedDB. 30 МБ ≈ короткий loop.
+              if (file.size > 30 * 1024 * 1024) {
+                setToast({ message: 'Видео слишком большое. Максимум 30 МБ.', severity: 'warning' });
+                return;
+              }
+              try {
+                setUploading(true);
+                await saveLiveBg(file);
+                setLiveBgVersion((v) => v + 1);
+                setToast({ message: 'Живые обои установлены', severity: 'success' });
+              } catch (err) {
+                console.error('live bg save error:', err);
+                setToast({ message: 'Не удалось сохранить видео: ' + ((err as any)?.message || err), severity: 'error' });
+              } finally {
+                setUploading(false);
+              }
+            }}
+          />
           <input
             ref={chatBgInputRef}
             type="file"
