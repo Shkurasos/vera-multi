@@ -211,6 +211,7 @@ function ChatWindowInner() {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatBgInputRef = useRef<HTMLInputElement>(null);
   const prevMsgCountRef = useRef<number>(0);
 
   useEffect(() => {
@@ -850,67 +851,69 @@ function ChatWindowInner() {
               <ExitToApp sx={{ fontSize: 18, color: '#f44336' }} />
               Покинуть чат
             </MenuItem>
-            <MenuItem onClick={() => { setAnchorEl(null); document.getElementById('chat-photo-input')?.click(); }}>
+            <MenuItem onClick={() => { setAnchorEl(null); setTimeout(() => chatBgInputRef.current?.click(), 0); }}>
               🖼 Фото чата
             </MenuItem>
             <MenuItem onClick={() => { setAnchorEl(null); setChatBgImage(undefined); setToast({ message: 'Обои чата убраны', severity: 'info' }); }}>
               🗑 Убрать фото-фон
             </MenuItem>
-            <input
-              id="chat-photo-input"
-              type="file"
-              accept="image/*"
-              style={{ display: 'none' }}
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                if (file.size > 5 * 1024 * 1024) {
-                  setToast({ message: 'Файл слишком большой. Максимум 5 МБ.', severity: 'warning' });
-                  return;
-                }
-                e.target.value = '';
-                try {
-                  setUploading(true);
-                  // P2P: читаем файл в data URL и сохраняем прямо в themeStore.
-                  // Для больших изображений уменьшаем разрешение до 1280px,
-                  // чтобы влезло в localStorage (квота ~5МБ на origin).
-                  const rawUrl: string = await new Promise((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.onload = () => resolve(String(reader.result || ''));
-                    reader.onerror = () => reject(new Error('read error'));
-                    reader.readAsDataURL(file);
-                  });
-                  const url: string = await new Promise((resolve) => {
-                    const img = new Image();
-                    img.onload = () => {
-                      const maxSide = 1280;
-                      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
-                      const w = Math.round(img.width * scale);
-                      const h = Math.round(img.height * scale);
-                      const canvas = document.createElement('canvas');
-                      canvas.width = w; canvas.height = h;
-                      const ctx = canvas.getContext('2d');
-                      if (!ctx) return resolve(rawUrl);
-                      ctx.drawImage(img, 0, 0, w, h);
-                      try { resolve(canvas.toDataURL('image/jpeg', 0.85)); }
-                      catch { resolve(rawUrl); }
-                    };
-                    img.onerror = () => resolve(rawUrl);
-                    img.src = rawUrl;
-                  });
-                  if (!url) throw new Error('no url');
-                  setChatPhoto(url);
-                  setChatBgImage(url);
-                  setToast({ message: 'Фото чата обновлено', severity: 'success' });
-                } catch (err) {
-                  console.error('chat photo upload error:', err);
-                  setToast({ message: 'Ошибка загрузки фото: ' + ((err as any)?.message || err), severity: 'error' });
-                } finally {
-                  setUploading(false);
-                }
-              }}
-            />
           </Menu>
+
+          {/* Input для фото чата вынесен из Menu — иначе он размонтируется при закрытии меню и .click() не сработает */}
+          <input
+            ref={chatBgInputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              if (file.size > 5 * 1024 * 1024) {
+                setToast({ message: 'Файл слишком большой. Максимум 5 МБ.', severity: 'warning' });
+                return;
+              }
+              e.target.value = '';
+              try {
+                setUploading(true);
+                // P2P: читаем файл в data URL и сохраняем прямо в themeStore.
+                // Для больших изображений уменьшаем разрешение до 1280px,
+                // чтобы влезло в localStorage (квота ~5МБ на origin).
+                const rawUrl: string = await new Promise((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onload = () => resolve(String(reader.result || ''));
+                  reader.onerror = () => reject(new Error('read error'));
+                  reader.readAsDataURL(file);
+                });
+                const url: string = await new Promise((resolve) => {
+                  const img = new Image();
+                  img.onload = () => {
+                    const maxSide = 1280;
+                    const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+                    const w = Math.round(img.width * scale);
+                    const h = Math.round(img.height * scale);
+                    const canvas = document.createElement('canvas');
+                    canvas.width = w; canvas.height = h;
+                    const ctx = canvas.getContext('2d');
+                    if (!ctx) return resolve(rawUrl);
+                    ctx.drawImage(img, 0, 0, w, h);
+                    try { resolve(canvas.toDataURL('image/jpeg', 0.85)); }
+                    catch { resolve(rawUrl); }
+                  };
+                  img.onerror = () => resolve(rawUrl);
+                  img.src = rawUrl;
+                });
+                if (!url) throw new Error('no url');
+                setChatPhoto(url);
+                setChatBgImage(url);
+                setToast({ message: 'Фото чата обновлено', severity: 'success' });
+              } catch (err) {
+                console.error('chat photo upload error:', err);
+                setToast({ message: 'Ошибка загрузки фото: ' + ((err as any)?.message || err), severity: 'error' });
+              } finally {
+                setUploading(false);
+              }
+            }}
+          />
 
           {/* ── Диалог настроек отображения ── */}
           <Dialog
@@ -1293,31 +1296,34 @@ function ChatWindowInner() {
           flexShrink: 0,
         }}>
 
-          {/* Кнопка скрепки через label — работает на мобильных без .click() */}
+          {/* Кнопка скрепки */}
           <Tooltip title="Прикрепить файл">
-            <Box component="label" sx={{ display: 'inline-flex', cursor: uploading ? 'default' : 'pointer', transform: 'translateX(3px)', flexShrink: 0 }}>
-              <input
-                type="file"
-                multiple
-                accept="*/*"
+            <span style={{ display: 'inline-flex', flexShrink: 0 }}>
+              <IconButton
+                onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
-                onChange={handleFileUpload}
-                style={{ display: 'none' }}
-              />
-              <Box
-                component="span"
                 sx={{
-                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  width: 42, height: 42, borderRadius: '50%',
-                  bgcolor: theme.bgInput, color: uploading ? theme.border : theme.textSec,
+                  width: 42, height: 42,
+                  bgcolor: theme.bgInput,
+                  color: uploading ? theme.border : theme.textSec,
+                  transform: 'translateX(3px)',
                   transition: 'background 0.15s, color 0.15s',
-                  '&:hover': { bgcolor: uploading ? theme.bgInput : theme.bgHover, color: uploading ? theme.border : theme.text },
+                  '&:hover': { bgcolor: theme.bgHover, color: theme.text },
                 }}
               >
                 <AttachFile sx={{ fontSize: 22 }} />
-              </Box>
-            </Box>
+              </IconButton>
+            </span>
           </Tooltip>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="*/*"
+            disabled={uploading}
+            onChange={handleFileUpload}
+            style={{ display: 'none' }}
+          />
 
           <Tooltip title="Эмодзи">
             <IconButton

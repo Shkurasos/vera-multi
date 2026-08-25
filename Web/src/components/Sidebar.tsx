@@ -11,7 +11,7 @@ import {
   Search, Group, PersonAdd, Archive,
   PinDropOutlined as Pin, NotificationsOffOutlined as Mute, DeleteForever, Palette,
   LibraryMusic, AccountCircle, SmartToy, Security, ChevronLeft,
-  ContentCopy, ContentPaste, QrCode, Link, DevicesOther, Download,
+  ContentCopy, ContentPaste, QrCode, Link, Download,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useChatStore } from '../store/chatStore';
@@ -454,8 +454,6 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
         <Tooltip title="Моя музыка и плейлисты"><IconButton onClick={() => setMusicOpen(true)} sx={{ color: theme.textSec, ...membranePressSx }}><LibraryMusic /></IconButton></Tooltip>
         <Tooltip title="Редактировать профиль"><IconButton onClick={() => navigate('/profile?edit=1')} sx={{ color: theme.textSec, ...membranePressSx }}><AccountCircle /></IconButton></Tooltip>
         <Tooltip title="Магазин тем"><IconButton onClick={() => setMarketplaceOpen(true)} sx={{ color: theme.textSec, ...membranePressSx }}><Palette /></IconButton></Tooltip>
-        <Tooltip title="Моя ссылка для добавления в друзья"><IconButton onClick={() => setMyLinkDialogOpen(true)} sx={{ color: theme.textSec, ...membranePressSx }}><Link /></IconButton></Tooltip>
-        <Tooltip title="Устройства"><IconButton onClick={() => navigate('/devices')} sx={{ color: theme.textSec, ...membranePressSx }}><DevicesOther /></IconButton></Tooltip>
         <Tooltip title="Скачать приложение"><IconButton onClick={() => navigate('/download')} sx={{ color: theme.textSec, ...membranePressSx }}><Download /></IconButton></Tooltip>
         {user?.username === 'admin3' && (
           <Tooltip title="Bug Bounty Tools"><IconButton onClick={() => navigate('/admin')} sx={{ color: theme.textSec, ...membranePressSx }}><Security /></IconButton></Tooltip>
