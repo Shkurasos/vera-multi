@@ -20,6 +20,8 @@ import MusicPlayer from './components/MusicPlayer';
 import MobileBottomNav from './components/MobileBottomNav';
 import { IncomingCallModal } from './components/CallModal';
 import { peer, isPeerAvailable } from './services/peer';
+import { useUserSettingsStore } from './store/userSettingsStore';
+import AppLockGate from './components/AppLockGate';
 
 // Звук уведомления
 let audioCtx: AudioContext | null = null;
@@ -322,6 +324,15 @@ export default function App() {
     }
   }, [isAuthenticated]);
 
+  // Применяем глобальные настройки внешнего вида: яркость и масштаб текста.
+  const brightness = useUserSettingsStore((s) => s.brightness);
+  const textScale = useUserSettingsStore((s) => s.textScale);
+  useEffect(() => {
+    document.body.style.filter = brightness === 1 ? '' : `brightness(${brightness})`;
+    document.documentElement.style.setProperty('--vera-text-scale', String(textScale));
+    document.documentElement.style.fontSize = `${16 * textScale}px`;
+  }, [brightness, textScale]);
+
   if (isLoading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" height="100vh"
@@ -332,7 +343,7 @@ export default function App() {
   }
 
   return (
-    <>
+    <AppLockGate>
       <Routes>
         <Route path="/link" element={<AcceptLinkPage />} />
         <Route path="/download" element={<DownloadPage />} />
@@ -360,6 +371,6 @@ export default function App() {
           onClose={() => setIncomingCall(null)}
         />
       )}
-    </>
+    </AppLockGate>
   );
 }

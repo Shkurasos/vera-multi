@@ -105,14 +105,14 @@ export default function DevicesPage() {
 
   const myDevice = devices.find((d) => d.deviceId === devId);
   // Лимит 2 устройства на аккаунт — QR доступен, пока не набрали лимит.
-  const atLimit = devices.length >= 2;
+  const atLimit = false;
 
   return (
     <Box p={4} maxWidth={900} mx="auto" pb={{ xs: 76, md: 4 }}>
       <Typography variant="h5" mb={2} fontWeight={700}>Мои устройства</Typography>
       <Alert severity="info" sx={{ mb: 3 }}>
-        Один аккаунт — одно устройство. Второе (например, телефон рядом с VERA Desktop)
-        добавляется только через QR-код или ссылку, созданную с первого устройства.
+        Можно привязать несколько устройств к одному аккаунту. Каждое новое устройство добавляется
+        через QR-код или ссылку, созданную с уже привязанного устройства.
       </Alert>
 
       <Paper sx={{ p: 2, mb: 3 }} style={{ background: 'rgba(8,12,24,0.86)', color: '#F5F7FF', border: '1px solid rgba(255,255,255,0.10)' }}>

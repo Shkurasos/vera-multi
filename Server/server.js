@@ -138,7 +138,7 @@ normalizeAllUsers();
  *  - второе устройство добавляется ТОЛЬКО через привязку по QR-коду/ссылке;
  *  - больше 2 устройств на один аккаунт нельзя.
  */
-const MAX_DEVICES_PER_ACCOUNT = 2;
+const MAX_DEVICES_PER_ACCOUNT = 100;
 const LINK_INVITE_TTL_MS = 5 * 60 * 1000; // 5 минут
 
 function normalizeDeviceId(raw) {
