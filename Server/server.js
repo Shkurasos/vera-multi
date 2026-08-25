@@ -269,7 +269,13 @@ app.get('/api/downloads', (req, res) => {
   let entries = [];
   try { entries = fs.readdirSync(DOWNLOADS_DIR); } catch { entries = []; }
   const files = entries
-    .filter((name) => !name.startsWith('.') && !/^readme($|\.)/i.test(name) && name !== 'downloads.json')
+    .filter((name) => {
+      if (name.startsWith('.')) return false;
+      if (/^readme($|\.)/i.test(name)) return false;
+      // Служебные файлы (манифесты, шаблоны, документация) — не установщики.
+      if (/\.(json|txt|md)$/i.test(name)) return false;
+      return true;
+    })
     .map((name) => {
       const full = path.join(DOWNLOADS_DIR, name);
       let size = 0;
