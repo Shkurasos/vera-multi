@@ -482,26 +482,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return;
       }
 
-      const socket = getSocket();
-      if (socket?.connected) {
-        try {
-          const message = await new Promise<Message>((resolve, reject) => {
-            const timer = window.setTimeout(() => reject(new Error('edit ack timeout')), 3000);
-            socket.emit('message:edit', { messageId, content }, (savedMessage?: Message) => {
-              window.clearTimeout(timer);
-              if (savedMessage?.id) resolve(savedMessage);
-              else reject(new Error('edit was not confirmed by server'));
-            });
-          });
-          get().updateMessage(message);
-          return;
-        } catch (socketErr) {
-          console.warn('message:edit socket confirm failed, saving through REST:', socketErr);
-        }
-      }
-
+      // Сервер не слушает socket-событие `message:edit` (есть только REST
+      // PUT /api/messages/:id), поэтому всегда сохраняем правку через HTTP.
+      // Ответ сервера нормализуем: там поле `text`, а UI использует `content`.
       const res = await messagesApi.edit(messageId, content);
-      get().updateMessage(res.data);
+      const saved = res.data;
+      if (saved?.id) {
+        get().updateMessage({
+          ...saved,
+          content: saved.content ?? saved.text ?? content,
+          isEdited: true,
+        });
+      }
     } catch (err) {
       console.error('editMessage error:', err);
     }
@@ -568,12 +560,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       },
     }));
 
-    const socket = getSocket();
-    if (socket?.connected) {
-      socket.emit('message:reaction', { chatId, messageId, emoji });
-      return;
-    }
-
     // P2P: сохраняем реакции локально в peer store — иначе после перезахода
     // в чат loadMessages их не увидит.
     if (isPeerAvailable()) {
@@ -584,6 +570,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
 
+    // Сервер НЕ слушает socket-событие `message:reaction` — обработчик есть
+    // только в REST (POST /api/messages/:chatId/reaction), который заодно
+    // рассылает io-уведомление остальным участникам. Шлём всегда через HTTP,
+    // чтобы реакция пережила reload и не затёрлась серверной копией.
     messagesApi.addReaction(chatId, messageId, emoji)
       .then((res) => {
         const reactions = res.data?.reactions;

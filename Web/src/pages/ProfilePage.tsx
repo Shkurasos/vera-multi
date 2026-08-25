@@ -202,6 +202,7 @@ export default function ProfilePage() {
     <Box sx={{
       height: '100%', bgcolor: theme.bgChat,
       display: 'flex', flexDirection: 'column', overflowY: 'auto',
+      pb: { xs: 76, md: 0 }, // запас под мобильную нижнюю панель
       '&::-webkit-scrollbar': { width: 5 },
       '&::-webkit-scrollbar-thumb': { bgcolor: theme.accent + '30', borderRadius: 4 },
     }}>

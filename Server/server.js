@@ -32,7 +32,30 @@ const { v4: uuidv4 } = require(tryResolve('uuid'));
 const DATA_DIR    = process.env.DATA_DIR    || path.join(__dirname, 'data');
 const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
 const DB_FILE     = process.env.DB_FILE     || path.join(DATA_DIR, 'vera.json');
-const JWT_SECRET  = process.env.JWT_SECRET  || 'vera_multi_secret_key_2026';
+// SEC: JWT_SECRET обязателен в проде. В деве генерируем эфемерный (токены не переживут рестарт).
+const IS_PROD = process.env.NODE_ENV === 'production';
+const JWT_SECRET = (() => {
+  const s = process.env.JWT_SECRET;
+  if (s && s.length >= 32) return s;
+  if (IS_PROD) {
+    console.error('[FATAL] JWT_SECRET is missing or too short (<32 chars). Set env var JWT_SECRET.');
+    process.exit(1);
+  }
+  const rnd = require('crypto').randomBytes(48).toString('hex');
+  console.warn('[SEC] JWT_SECRET не задан — использую эфемерный dev-ключ. Все токены сбросятся при рестарте.');
+  return rnd;
+})();
+// SEC: whitelist origin через env CORS_ORIGIN (CSV). Публичный URL (Render/PUBLIC_URL) добавляется автоматически.
+const CORS_ALLOWED = String(process.env.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
+const _pub = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL;
+if (_pub) CORS_ALLOWED.push(_pub.replace(/\/+$/, ''));
+function corsOriginFn(origin, cb) {
+  // Same-origin / curl / server-to-server (нет Origin) — пропускаем.
+  if (!origin) return cb(null, true);
+  if (CORS_ALLOWED.length === 0) return cb(null, !IS_PROD); // в деве разрешаем всё, в проде запрещаем
+  if (CORS_ALLOWED.includes(origin)) return cb(null, true);
+  return cb(null, false);
+}
 
 for (const d of [DATA_DIR, UPLOADS_DIR,
   path.join(UPLOADS_DIR, 'music'),
@@ -220,14 +243,70 @@ function createSavedMessagesChat(userId) {
 
 // ─── Express app ─────────────────────────────────────────────────────────────
 const app = express();
+// SEC: за прокси Render/Fly — доверяем ровно одному хопу, чтобы req.ip был реальным (для rate-limit).
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 
-app.use(cors({ origin: true, credentials: true }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(cors({ origin: corsOriginFn, credentials: true }));
+// SEC: лимит тела. Не '1mb', потому что голосовые/файлы отправляются как base64
+// через /api/messages/:chatId/send (data URL). 30mb покрывает длинные ГС и фото.
+app.use(express.json({ limit: '30mb' }));
+app.use(express.urlencoded({ extended: true, limit: '30mb' }));
 
-// Serve uploaded files
-app.use('/uploads', express.static(UPLOADS_DIR));
+// SEC: базовые security headers (без внешней зависимости).
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-XSS-Protection', '0');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(self), camera=(self)');
+  // Кэш API-ответов не хотим — токены/данные пользователей.
+  if (req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
+  next();
+});
+
+// SEC: примитивный in-memory rate-limit (без внешних зависимостей).
+// В проде на нескольких инстансах — заменить на Redis/express-rate-limit.
+function makeRateLimit({ windowMs, max, key = (req) => req.ip }) {
+  const hits = new Map();
+  setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of hits) if (v.reset < now) hits.delete(k);
+  }, Math.max(windowMs, 60_000)).unref?.();
+  return (req, res, next) => {
+    const k = key(req);
+    const now = Date.now();
+    let rec = hits.get(k);
+    if (!rec || rec.reset < now) rec = { count: 0, reset: now + windowMs };
+    rec.count++;
+    hits.set(k, rec);
+    if (rec.count > max) {
+      res.setHeader('Retry-After', Math.ceil((rec.reset - now) / 1000));
+      return res.status(429).json({ message: 'Слишком много запросов, попробуйте позже' });
+    }
+    next();
+  };
+}
+const authLimiter = makeRateLimit({ windowMs: 60_000, max: 20 }); // 20 auth-запросов/мин с IP
+const searchLimiter = makeRateLimit({ windowMs: 60_000, max: 60 });
+app.use(['/api/auth/device', '/api/auth/verify', '/api/auth/send-code', '/api/auth/verify-code', '/api/auth/logout'], authLimiter);
+app.use('/api/users/search', searchLimiter);
+
+// SEC: /uploads раздаём как attachment + nosniff, чтобы залитый .html/.svg не исполнялся в нашем домене.
+app.use('/uploads', express.static(UPLOADS_DIR, {
+  setHeaders: (res, filePath) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    const lower = filePath.toLowerCase();
+    // Медиа отдаём inline (нужно для <img>/<audio>/<video>), остальное — attachment.
+    const inlineOk = /\.(png|jpe?g|gif|webp|svg|mp3|ogg|wav|m4a|mp4|webm|mov)$/i.test(lower);
+    if (!inlineOk) {
+      res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
+    }
+    // SVG рендерит скрипты в браузере — отдаём как текст.
+    if (lower.endsWith('.svg')) res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+  },
+}));
 
 // ─── Загрузка установщиков десктоп-приложения ────────────────────────────────
 // Файлы кладём в Server/public/downloads/. Клиент читает /api/downloads,
@@ -237,7 +316,10 @@ try { fs.mkdirSync(DOWNLOADS_DIR, { recursive: true }); } catch {}
 app.use('/downloads', express.static(DOWNLOADS_DIR, {
   maxAge: '1h',
   setHeaders: (res, filePath) => {
-    res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
+    // SEC: экранируем кавычки/CR/LF в имени, чтобы не разорвать заголовок.
+    const safe = path.basename(filePath).replace(/[\r\n"\\]/g, '_');
+    res.setHeader('Content-Disposition', `attachment; filename="${safe}"`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
   },
 }));
 
@@ -318,18 +400,53 @@ function authMiddleware(req, res, next) {
 }
 
 // ─── Multer storage ───────────────────────────────────────────────────────────
+// SEC: белые списки MIME/расширений. UUID-имя файла, безопасное расширение.
+const SAFE_EXT = /^\.[a-z0-9]{1,8}$/i;
+function safeExt(name) {
+  const e = path.extname(String(name || '')).toLowerCase();
+  return SAFE_EXT.test(e) ? e : '';
+}
 function makeStorage(subfolder) {
   return multer.diskStorage({
     destination: path.join(UPLOADS_DIR, subfolder),
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname);
-      cb(null, uuidv4() + ext);
+      cb(null, uuidv4() + safeExt(file.originalname));
     },
   });
 }
-const uploadMusic   = multer({ storage: makeStorage('music'),   limits: { fileSize: 50 * 1024 * 1024 } });
-const uploadAvatar  = multer({ storage: makeStorage('avatars'), limits: { fileSize: 5 * 1024 * 1024 } });
-const uploadFile    = multer({ storage: makeStorage('files'),   limits: { fileSize: 100 * 1024 * 1024 } });
+function mimeFilter(allowedPrefixes, allowedExact = []) {
+  return (req, file, cb) => {
+    const mt = String(file.mimetype || '').toLowerCase();
+    // SVG запрещаем — может содержать <script>.
+    if (mt === 'image/svg+xml') return cb(new Error('SVG запрещён'));
+    const ok = allowedPrefixes.some(p => mt.startsWith(p)) || allowedExact.includes(mt);
+    if (!ok) return cb(new Error('Тип файла не разрешён: ' + mt));
+    cb(null, true);
+  };
+}
+const uploadMusic   = multer({ storage: makeStorage('music'),   limits: { fileSize: 50 * 1024 * 1024 },  fileFilter: mimeFilter(['audio/']) });
+const uploadAvatar  = multer({ storage: makeStorage('avatars'), limits: { fileSize: 5 * 1024 * 1024 },   fileFilter: mimeFilter(['image/'], []) });
+const uploadFile    = multer({ storage: makeStorage('files'),   limits: { fileSize: 100 * 1024 * 1024 }, fileFilter: mimeFilter(['image/', 'audio/', 'video/'], [
+  'application/pdf',
+  'application/zip', 'application/x-zip-compressed',
+  'application/x-7z-compressed', 'application/x-rar-compressed',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain', 'text/csv',
+  'application/json',
+  'application/octet-stream',
+]) });
+
+// SEC: обработчик ошибок Multer — возвращаем понятный 4xx вместо 500 с stack.
+function handleUploadError(err, req, res, next) {
+  if (!err) return next();
+  const msg = err.code === 'LIMIT_FILE_SIZE' ? 'Файл слишком большой' : (err.message || 'Ошибка загрузки');
+  res.status(400).json({ message: msg });
+}
 
 // ─── AUTH: аккаунт = устройство (без email/кода) ─────────────────────────────
 // POST /api/auth/device — единственный вход/регистрация.
@@ -617,7 +734,10 @@ app.get('/api/auth/me', authMiddleware, (req, res) => {
 // ─── ADMIN routes ─────────────────────────────────────────────────────────────
 
 // POST /api/admin/reload-db  — перечитать БД с диска без перезапуска сервера
-app.post('/api/admin/reload-db', (req, res) => {
+// SEC: требует auth + username=='admin3'.
+app.post('/api/admin/reload-db', authMiddleware, (req, res) => {
+  const me = db.users.find(u => u.id === req.userId);
+  if (!me || me.username !== 'admin3') return res.status(403).json({ message: 'Forbidden' });
   reloadDb();
   res.json({ success: true, users: db.users.length, tracks: db.tracks.length, chats: db.chats.length });
 });
@@ -1208,11 +1328,20 @@ app.put('/api/messages/:id', authMiddleware, (req, res) => {
   const msg = db.messages.find(m => m.id === req.params.id);
   if (!msg) return res.status(404).json({ message: 'Не найдено' });
   if (msg.senderId !== req.userId) return res.status(403).json({ message: 'Нет прав' });
-  msg.text = req.body.text;
+  msg.text = String(req.body?.text ?? '');
+  msg.content = msg.text;
   msg.editedAt = new Date().toISOString();
+  msg.isEdited = true;
   saveDb();
-  io.to(`chat:${msg.chatId}`).emit('message:edited', msg);
-  res.json(msg);
+  const sender = db.users.find(u => u.id === msg.senderId) || null;
+  // Нормализуем так же, как в GET /api/messages/:chatId (клиент читает content)
+  const result = {
+    ...msg,
+    content: msg.text,
+  };
+  result.sender = sender;
+  io.to(`chat:${msg.chatId}`).emit('message:edited', result);
+  res.json(result);
 });
 
 // DELETE /api/messages/:id
@@ -1627,7 +1756,7 @@ app.delete('/api/favorites/:chatId', authMiddleware, (req, res) => {
 
 // ─── Socket.io ────────────────────────────────────────────────────────────────
 const io = new IOServer(server, {
-  cors: { origin: true, credentials: true },
+  cors: { origin: corsOriginFn, credentials: true },
 });
 
 const userSockets = new Map(); // userId -> Set<socketId>

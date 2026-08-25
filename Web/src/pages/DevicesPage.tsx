@@ -108,7 +108,7 @@ export default function DevicesPage() {
   const atLimit = devices.length >= 2;
 
   return (
-    <Box p={4} maxWidth={900} mx="auto">
+    <Box p={4} maxWidth={900} mx="auto" pb={{ xs: 76, md: 4 }}>
       <Typography variant="h5" mb={2} fontWeight={700}>Мои устройства</Typography>
       <Alert severity="info" sx={{ mb: 3 }}>
         Один аккаунт — одно устройство. Второе (например, телефон рядом с VERA Desktop)

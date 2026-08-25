@@ -16,6 +16,7 @@ import CallLogPage from './pages/CallLogPage';
 import BotFatherPage from './pages/BotFatherPage';
 import AdminToolsPage from './pages/AdminToolsPage';
 import MusicPlayer from './components/MusicPlayer';
+import MobileBottomNav from './components/MobileBottomNav';
 import { IncomingCallModal } from './components/CallModal';
 import { peer, isPeerAvailable } from './services/peer';
 
@@ -327,6 +328,9 @@ export default function App() {
 
       {/* Плеер рендерится глобально над всеми маршрутами — не размонтируется при навигации */}
       {isAuthenticated && <MusicPlayer />}
+
+      {/* Мобильная нижняя навигация — глобально на всех авторизованных экранах */}
+      {isAuthenticated && <MobileBottomNav />}
 
       {/* Глобальный модал входящего звонка */}
       {incomingCall && (

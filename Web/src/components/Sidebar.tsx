@@ -25,7 +25,7 @@ import VeraLogo from './VeraLogo';
 import MusicLibrary from './MusicLibrary';
 import { membranePressSx, motion } from '../styles/motion';
 
-interface Props { open: boolean; onToggle: () => void; }
+interface Props { open: boolean; onToggle: () => void; mobile?: boolean; }
 
 function timeAgo(d: string): string {
   const diff = Date.now() - new Date(d).getTime();
@@ -66,7 +66,7 @@ function loadSidebarWidth() {
   return 320;
 }
 
-export default function Sidebar({ open, onToggle }: Props) {
+export default function Sidebar({ open, onToggle, mobile }: Props) {
   const { chats, activeChat, setActiveChat, loadChats, onlineUsers } = useChatStore();
   const { togglePin, toggleArchive, toggleMute, isPinned, isArchived, isMuted } = useChatPrefsStore();
   const { user, logout } = useAuthStore();
@@ -346,9 +346,9 @@ export default function Sidebar({ open, onToggle }: Props) {
 
   return (
     <Box sx={{
-      width: sidebarWidth,
-      minWidth: sidebarWidth,
-      maxWidth: sidebarWidth,
+      width: mobile ? '100%' : sidebarWidth,
+      minWidth: mobile ? '100%' : sidebarWidth,
+      maxWidth: mobile ? '100%' : sidebarWidth,
       height: '100%',
       background: theme.sidebarGradient || theme.bgSidebar,
       backdropFilter: theme.sidebarBlur || 'blur(18px)',

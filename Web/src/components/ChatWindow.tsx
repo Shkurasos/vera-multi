@@ -10,7 +10,7 @@ import {
   Send, Send as SendIcon, AttachFile, MoreVert, Search, Mic, Stop,
   EmojiEmotions, InfoOutlined, Close, PushPin,
   Call, Videocam, NotificationsOff, NotificationsActive,
-  FormatSize, ExitToApp,
+  FormatSize, ExitToApp, ArrowBack,
 } from '@mui/icons-material';
 import { CallModal } from './CallModal';
 import { useChatStore } from '../store/chatStore';
@@ -256,7 +256,7 @@ function ChatWindowInner() {
   };
 
   const getPartnerUser = (): User | null => {
-    if (activeChat?.type !== 'private') return null;
+    if (activeChat?.type !== 'private' && activeChat?.type !== 'direct') return null;
     return activeChat.members?.find((m) => m.userId !== user?.id)?.user || null;
   };
 
@@ -341,7 +341,9 @@ function ChatWindowInner() {
               url: dataUrl,
               fileUrl: dataUrl,
               name: voiceFile.name,
+              fileName: voiceFile.name,
               mime: 'audio/webm',
+              mimeType: 'audio/webm',
               size: voiceFile.size,
               duration: recordTime,
             };
@@ -681,6 +683,14 @@ function ChatWindowInner() {
           flexShrink: 0,
         }}>
           {/* Avatar — клик открывает профиль/инфо */}
+          <Tooltip title="К списку чатов">
+            <IconButton
+              onClick={() => navigate('/')}
+              sx={{ color: theme.textSec, mr: -0.5, display: { xs: 'inline-flex', md: 'none' } }}
+            >
+              <ArrowBack />
+            </IconButton>
+          </Tooltip>
           <Avatar
             src={chatAvatar || chatPhotoGlobal || undefined}
             onClick={handleAvatarClick}
@@ -717,7 +727,7 @@ function ChatWindowInner() {
           </Box>
 
           {/* Кнопки звонка — только для личных чатов */}
-          {activeChat.type === 'private' && (
+          {(activeChat.type === 'private' || activeChat.type === 'direct') && (
             <>
               <Tooltip title="Аудио звонок">
                 <IconButton onClick={() => setActiveCall({ type: 'audio' })}
