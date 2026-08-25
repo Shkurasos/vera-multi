@@ -4,6 +4,7 @@ import { authApi } from '../services/api';
 import { connectSocket, disconnectSocket } from '../services/socket';
 import { peer, isPeerAvailable } from '../services/peer';
 import { useThemeStore } from './themeStore';
+import { initArchive, closeArchive } from '../services/localArchive';
 
 interface AuthState {
   user: User | null;
@@ -54,6 +55,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   login: (token, user) => {
     localStorage.setItem('vera_token', token);
     localStorage.setItem('vera_user', JSON.stringify(user));
+    initArchive(user.id);
     if (!isPeerAvailable() && !token.startsWith('mock-token-')) {
       try { connectSocket(token); } catch {}
     }
@@ -73,6 +75,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       try { await authApi.logout(); } catch {}
       disconnectSocket();
     }
+    closeArchive();
     localStorage.removeItem('vera_token');
     set({ user: null, token: null, isAuthenticated: false });
   },
@@ -85,6 +88,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         const info = await peer.info();
         const user = peerInfoToUser(info);
         localStorage.setItem('vera_user', JSON.stringify(user));
+        initArchive(user.id);
         set({ user, token: info.deviceId, isAuthenticated: true });
       } catch (e) {
         console.error('[auth] peer.info failed', e);
@@ -108,6 +112,7 @@ export const useAuthStore = create<AuthState>((set) => ({
           if (typeof chatPhoto === 'string' && chatPhoto) useThemeStore.getState().setChatPhoto(chatPhoto);
         } catch {}
         set({ user: res.data, isAuthenticated: true, token: existingToken, isLoading: false });
+        try { if (res.data?.id) initArchive(res.data.id); } catch {}
         return;
       } catch {
         // Токен невалиден — попробуем переавторизоваться по устройству ниже.
@@ -130,6 +135,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         if (typeof chatPhoto === 'string' && chatPhoto) useThemeStore.getState().setChatPhoto(chatPhoto);
       } catch {}
       set({ token: accessToken, user, isAuthenticated: true });
+      try { if (user?.id) initArchive(user.id); } catch {}
     } catch (e) {
       console.error('[auth] device login failed', e);
     } finally {

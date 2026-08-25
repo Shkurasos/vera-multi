@@ -5,6 +5,11 @@ import { getSocket } from '../services/socket';
 import { peer, isPeerAvailable, PeerChat, PeerMessage } from '../services/peer';
 import { useAuthStore } from './authStore';
 import { useChatPrefsStore } from './chatPrefsStore';
+import {
+  loadArchivedChats, saveArchivedChats, deleteArchivedChat,
+  loadArchivedMessages, saveArchivedMessages, deleteArchivedMessage,
+  mergeById,
+} from '../services/localArchive';
 
 /* ---------- P2P ↔ UI-модель адаптеры ---------- */
 // UI-типы (Chat/Message) исторически заточены под серверную модель.
@@ -135,11 +140,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
   clearOnlineUsers: () => set({ onlineUsers: new Set<string>() }),
 
   loadChats: async () => {
+    // Сначала мгновенно показываем локальный архив (если есть).
+    try {
+      const archived = await loadArchivedChats();
+      if (archived.length > 0 && get().chats.length === 0) {
+        set({ chats: archived });
+      }
+    } catch {}
+
     // P2P-режим: список чатов приходит из локального узла (peer.listChats).
     if (isPeerAvailable()) {
       try {
         const raw = await peer.listChats();
-        set({ chats: raw.map(peerChatToChat) });
+        const chats = raw.map(peerChatToChat);
+        set({ chats });
+        saveArchivedChats(chats).catch(() => {});
       } catch (err) { console.error('[peer] loadChats error:', err); }
       return;
     }
@@ -179,7 +194,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
           updatedAt: chat.updatedAt || chat.createdAt,
         } as import('../types').Chat;
       });
-      set({ chats: normalized });
+      // Мерджим с архивом: чаты которые сервер потерял (Render /tmp почистился)
+      // остаются у пользователя, а свежие данные с сервера обновляют локальные.
+      const archived = await loadArchivedChats().catch(() => [] as Chat[]);
+      const merged = mergeById(archived, normalized);
+      set({ chats: merged });
+      saveArchivedChats(normalized).catch(() => {});
     } catch (err) {
       console.error('loadChats error:', err);
     }
@@ -208,6 +228,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   loadMessages: async (chatId, before) => {
+    // Показываем архивную историю мгновенно (только для первой загрузки чата).
+    if (!before) {
+      try {
+        const archived = await loadArchivedMessages(chatId);
+        if (archived.length > 0 && (!get().messages[chatId] || get().messages[chatId].length === 0)) {
+          set((state) => ({ messages: { ...state.messages, [chatId]: archived } }));
+        }
+      } catch {}
+    }
+
     // P2P-режим: сообщения хранятся локально в peer/src/store.
     if (isPeerAvailable()) {
       set({ loadingMessages: true });
@@ -215,6 +245,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const raw = await peer.listMessages(chatId);
         const msgs = raw.map(peerMsgToMsg).filter((m) => !m.isDeleted);
         set((state) => ({ messages: { ...state.messages, [chatId]: msgs } }));
+        saveArchivedMessages(msgs).catch(() => {});
       } catch (err) { console.error('[peer] loadMessages error:', err); }
       finally { set({ loadingMessages: false }); }
       return;
@@ -223,14 +254,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const res = await messagesApi.getMessages(chatId, before, 50);
       const incoming: Message[] = res.data;
+      // Мерджим свежее с сервера и архив, чтобы сообщения не пропадали при
+      // очистке /tmp на Render. Только для первой страницы (без before).
+      let merged: Message[];
+      if (before) {
+        merged = [...incoming, ...(get().messages[chatId] || [])];
+      } else {
+        const archived = await loadArchivedMessages(chatId).catch(() => [] as Message[]);
+        merged = mergeById(archived, incoming);
+      }
       set((state) => ({
-        messages: {
-          ...state.messages,
-          [chatId]: before
-            ? [...incoming, ...(state.messages[chatId] || [])]
-            : incoming,
-        },
+        messages: { ...state.messages, [chatId]: merged },
       }));
+      saveArchivedMessages(incoming).catch(() => {});
       if (!before && get().activeChat?.id === chatId && incoming.length) {
         const userId = useAuthStore.getState().user?.id;
         const lastIncoming = [...incoming].reverse().find((m) => m.senderId !== userId);
@@ -570,6 +606,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       await chatsApi.leaveChat(chatId);
     } catch {}
+    deleteArchivedChat(chatId).catch(() => {});
     set((state) => ({
       chats: state.chats.filter((c) => c.id !== chatId),
       activeChat: state.activeChat?.id === chatId ? null : state.activeChat,
@@ -747,3 +784,38 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 }));
+
+/* ---------- Автоматический синк в IndexedDB-архив ---------- */
+// При любых изменениях messages/chats пишем всё, что добавилось или изменилось,
+// в локальный архив. Это гарантирует что даже если сервер (Render Free /tmp)
+// потеряет данные — у пользователя в браузере/десктопе история сохранится.
+{
+  let prevMessages: Record<string, Message[]> = {};
+  let prevChats: Chat[] = [];
+  useChatStore.subscribe((state) => {
+    const nextMessages = state.messages;
+    for (const chatId of Object.keys(nextMessages)) {
+      const before = prevMessages[chatId] || [];
+      const after = nextMessages[chatId] || [];
+      if (before === after) continue;
+      const beforeMap = new Map(before.map((m) => [m.id, m]));
+      const changed: Message[] = [];
+      for (const m of after) {
+        const b = beforeMap.get(m.id);
+        if (!b || b !== m) changed.push(m);
+      }
+      if (changed.length) saveArchivedMessages(changed).catch(() => {});
+      const afterIds = new Set(after.map((m) => m.id));
+      for (const m of before) {
+        if (!afterIds.has(m.id)) deleteArchivedMessage(m.id).catch(() => {});
+      }
+    }
+    prevMessages = nextMessages;
+
+    if (state.chats !== prevChats) {
+      saveArchivedChats(state.chats).catch(() => {});
+      prevChats = state.chats;
+    }
+  });
+}
+
