@@ -60,7 +60,9 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       const themeId = Number((user as any).themeId || 0);
       const chatPhoto = (user as any).chatPhoto;
-      useThemeStore.getState().setTheme(themeId);
+      // Применяем с сервера только если он реально что-то сохранил
+      // (themeId > 0). Иначе не трогаем локально сохранённую тему.
+      if (themeId > 0) useThemeStore.getState().setTheme(themeId);
       if (typeof chatPhoto === 'string' && chatPhoto) useThemeStore.getState().setChatPhoto(chatPhoto);
     } catch {}
     set({ token, user, isAuthenticated: true });
@@ -102,7 +104,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         try {
           const themeId = Number((res.data as any).themeId || 0);
           const chatPhoto = (res.data as any).chatPhoto;
-          useThemeStore.getState().setTheme(themeId);
+          if (themeId > 0) useThemeStore.getState().setTheme(themeId);
           if (typeof chatPhoto === 'string' && chatPhoto) useThemeStore.getState().setChatPhoto(chatPhoto);
         } catch {}
         set({ user: res.data, isAuthenticated: true, token: existingToken, isLoading: false });
@@ -124,7 +126,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       try {
         const themeId = Number((user as any).themeId || 0);
         const chatPhoto = (user as any).chatPhoto;
-        useThemeStore.getState().setTheme(themeId);
+        if (themeId > 0) useThemeStore.getState().setTheme(themeId);
         if (typeof chatPhoto === 'string' && chatPhoto) useThemeStore.getState().setChatPhoto(chatPhoto);
       } catch {}
       set({ token: accessToken, user, isAuthenticated: true });

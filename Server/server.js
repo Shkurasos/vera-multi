@@ -640,9 +640,9 @@ app.get('/api/users/:id', authMiddleware, (req, res) => {
 app.patch('/api/users/me', authMiddleware, (req, res) => {
   const user = db.users.find(u => u.id === req.userId);
   if (!user) return res.status(404).json({ message: 'Не найден' });
-  const allowed = ['firstName', 'lastName', 'username', 'bio', 'birthDate', 'country', 'region', 'city'];
+  const allowed = ['firstName', 'lastName', 'username', 'bio', 'birthDate', 'country', 'region', 'city', 'themeId', 'chatPhoto'];
   for (const k of allowed) {
-    if (req.body[k] !== undefined) user[k] = req.body[k] || null;
+    if (req.body[k] !== undefined) user[k] = req.body[k];
   }
   // username обязательно строка если задан
   if (req.body.username) user.username = req.body.username.trim();
