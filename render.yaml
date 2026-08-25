@@ -1,6 +1,7 @@
 # render.yaml — деплой Vera Multi на Render Free (без карты).
-# После пуша в GitHub: https://dashboard.render.com/ → New → Blueprint →
-# указать репозиторий → Render сам подхватит этот файл.
+# Free-тариф НЕ поддерживает persistent disk: данные vera.json и uploads/
+# живут внутри контейнера и теряются при редеплое/рестарте.
+# Для постоянного хранения — обновить план или подключить внешнюю БД.
 services:
   - type: web
     name: vera-multi
@@ -15,14 +16,11 @@ services:
       - key: NODE_ENV
         value: production
       - key: DATA_DIR
-        value: /data
+        value: /tmp/vera
       - key: UPLOADS_DIR
-        value: /data/uploads
+        value: /tmp/vera/uploads
       - key: DB_FILE
-        value: /data/vera.json
+        value: /tmp/vera/vera.json
       - key: JWT_SECRET
         generateValue: true
-    disk:
-      name: vera-data
-      mountPath: /data
-      sizeGB: 1
+
