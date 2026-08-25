@@ -1,0 +1,21 @@
+name: keep-alive
+
+# Пинг сервера каждые 10 минут, чтобы Render Free не усыплял контейнер после 15 мин простоя.
+# Дублирует внутренний self-ping в server.js — если контейнер уснул, извне его разбудим.
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /api/downloads
+        run: |
+          set -e
+          URL="https://vera-multi.onrender.com/api/downloads"
+          echo "Pinging $URL"
+          # -f: fail на HTTP >=400, --max-time 60: даём Render до минуты подняться из сна.
+          curl -fsS --max-time 60 --retry 2 --retry-delay 15 "$URL" | head -c 200
+          echo
