@@ -1823,8 +1823,12 @@ io.on('connection', (socket) => {
 });
 
 // ─── Console commands ─────────────────────────────────────────────────────────
-const readline = require('readline');
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 'vera> ' });
+// Интерактивная консоль работает только когда есть TTY (локальный запуск).
+// В продакшне (Docker/Render) stdin не TTY — readline получит close сразу и
+// уронит процесс. Поэтому включаем её условно.
+if (process.stdin.isTTY) {
+  const readline = require('readline');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 'vera> ' });
 
 function printHelp() {
   console.log(`
@@ -1920,6 +1924,7 @@ rl.on('line', (line) => {
 });
 
 rl.on('close', () => process.exit(0));
+} // end if (process.stdin.isTTY)
 
 // ─── SPA fallback — должен быть ПОСЛЕ всех API маршрутов ─────────────────────
 if (fs.existsSync(CLIENT_DIST)) {
