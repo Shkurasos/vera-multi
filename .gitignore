@@ -5,6 +5,7 @@ node_modules/
 # builds
 Web/dist/
 App/dist/
+App/dist-electron/
 App/out/
 App/release/
 App/build/
