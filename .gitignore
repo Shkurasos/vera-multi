@@ -1,0 +1,33 @@
+# deps
+node_modules/
+**/node_modules/
+
+# builds
+Web/dist/
+App/dist/
+App/out/
+App/release/
+App/build/
+
+# runtime data (живут на persistent disk Render)
+Server/data/
+Server/uploads/
+Server/vera.json
+
+# logs / env
+*.log
+.env
+.env.*
+!.env.example
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# electron cache
+App/electron-install.log
+
+# temp
+tmp-data/

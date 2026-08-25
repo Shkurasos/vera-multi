@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+Web/dist
+Server/data
+Server/uploads
+Server/run-*.log
+App
+*.log
+.git
+.gitignore
+.vscode
+.idea
+Vera_0.2Ex

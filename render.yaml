@@ -1,0 +1,28 @@
+# render.yaml — деплой Vera Multi на Render Free (без карты).
+# После пуша в GitHub: https://dashboard.render.com/ → New → Blueprint →
+# указать репозиторий → Render сам подхватит этот файл.
+services:
+  - type: web
+    name: vera-multi
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: frankfurt
+    healthCheckPath: /api/downloads
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /data
+      - key: UPLOADS_DIR
+        value: /data/uploads
+      - key: DB_FILE
+        value: /data/vera.json
+      - key: JWT_SECRET
+        generateValue: true
+    disk:
+      name: vera-data
+      mountPath: /data
+      sizeGB: 1

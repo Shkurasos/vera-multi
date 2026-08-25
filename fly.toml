@@ -1,0 +1,32 @@
+# fly.toml — Vera Multi (сервер + Web) на Fly.io
+# Регион ams (Амстердам) даёт лучшую задержку из СНГ. Меняйте на удобный.
+app = "vera-multi"
+primary_region = "ams"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+  DATA_DIR = "/data"
+  UPLOADS_DIR = "/data/uploads"
+  DB_FILE = "/data/vera.json"
+
+# 3 GB бесплатного persistent-volume. Создаётся отдельно: fly volumes create vera_data --region ams --size 3
+[[mounts]]
+  source = "vera_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  # Не выключаем машину при простое — WebSocket-соединения должны жить.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256
