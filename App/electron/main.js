@@ -14,8 +14,9 @@
 const { app, BrowserWindow, shell } = require('electron');
 const path = require('path');
 
-const SERVER_URL = process.env.VERA_SERVER_URL || 'http://localhost:3000';
 const DEV = !app.isPackaged;
+const DEFAULT_SERVER_URL = DEV ? 'http://localhost:3000' : 'https://vera-multi.onrender.com';
+const SERVER_URL = process.env.VERA_SERVER_URL || DEFAULT_SERVER_URL;
 
 let mainWindow = null;
 
