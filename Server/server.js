@@ -1944,5 +1944,5 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`   WebSocket: ws://localhost:${PORT}`);
   console.log(`   Uploads:   http://localhost:${PORT}/uploads`);
   console.log(`   Введите 'help' для списка команд\n`);
-  rl.prompt();
+  if (process.stdin.isTTY && typeof rl !== 'undefined') rl.prompt();
 });
