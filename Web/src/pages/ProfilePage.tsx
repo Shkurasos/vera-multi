@@ -6,7 +6,7 @@ import {
 } from '@mui/material';
 import {
   ArrowBack, Edit, PhotoCamera, Check, Close,
-  Phone, Cake, Info, LocationOn, Palette, QrCode2, ContentCopy,
+  Phone, Cake, Info, LocationOn, Palette, QrCode2, ContentCopy, Settings,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
@@ -15,6 +15,7 @@ import { usersApi, devicesApi } from '../services/api';
 import QRCode from 'qrcode';
 import { peer, isPeerAvailable } from '../services/peer';
 import { peerInfoToUser } from '../store/authStore';
+import SettingsDialog from '../components/SettingsDialog';
 
 export default function ProfilePage() {
   const navigate = useNavigate();
@@ -48,6 +49,7 @@ export default function ProfilePage() {
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [qrInvite, setQrInvite] = useState<{ token: string; url: string; textUrl: string; expiresAt: number } | null>(null);
   const [qrError, setQrError] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   async function openLinkQr() {
     setQrError(null);
@@ -222,6 +224,12 @@ export default function ProfilePage() {
           <IconButton onClick={() => navigate('/theme-editor')}
             sx={{ color: theme.textSec }}>
             <Palette />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title="Настройки">
+          <IconButton onClick={() => setSettingsOpen(true)}
+            sx={{ color: theme.textSec }}>
+            <Settings />
           </IconButton>
         </Tooltip>
         {!editing ? (
@@ -551,6 +559,7 @@ export default function ProfilePage() {
           {snack.message}
         </Alert>
       </Snackbar>
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </Box>
   );
 }

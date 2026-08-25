@@ -645,6 +645,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => {
       const safeChats = state.chats.filter(c => c && c.id);
       const normalizedMessage = attachReplyPreview(message, state.messages);
+      const myId = useAuthStore.getState().user?.id;
+      const isActive = state.activeChat?.id === message.chatId;
+      const isMine = message.senderId === myId;
       return {
         messages: {
           ...state.messages,
@@ -652,7 +655,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
         chats: safeChats.map((c) =>
           c.id === message.chatId
-            ? { ...c, lastMessage: normalizedMessage, updatedAt: normalizedMessage.createdAt }
+            ? {
+                ...c,
+                lastMessage: normalizedMessage,
+                updatedAt: normalizedMessage.createdAt,
+                // Инкрементим счётчик только если сообщение чужое и чат не открыт.
+                unreadCount: (!isActive && !isMine)
+                  ? ((c.unreadCount || 0) + 1)
+                  : (isActive ? 0 : (c.unreadCount || 0)),
+              }
             : c
         ).sort((a, b) => {
           const ta = a?.lastMessage?.createdAt || a?.updatedAt || a?.createdAt || '';

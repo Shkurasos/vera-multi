@@ -9,7 +9,7 @@ import {
 } from '@mui/material';
 import {
   Search, Group, PersonAdd, Archive,
-  PinDropOutlined as Pin, NotificationsOffOutlined as Mute, DeleteForever, Logout, Palette,
+  PinDropOutlined as Pin, NotificationsOffOutlined as Mute, DeleteForever, Palette,
   LibraryMusic, AccountCircle, SmartToy, Security, ChevronLeft,
   ContentCopy, ContentPaste, QrCode, Link, DevicesOther, Download,
 } from '@mui/icons-material';
@@ -69,7 +69,7 @@ function loadSidebarWidth() {
 export default function Sidebar({ open, onToggle, mobile }: Props) {
   const { chats, activeChat, setActiveChat, loadChats, onlineUsers } = useChatStore();
   const { togglePin, toggleArchive, toggleMute, isPinned, isArchived, isMuted } = useChatPrefsStore();
-  const { user, logout } = useAuthStore();
+  const { user } = useAuthStore();
   const { theme } = useThemeStore();
   const navigate = useNavigate();
 
@@ -459,9 +459,6 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
         <Tooltip title="Скачать приложение"><IconButton onClick={() => navigate('/download')} sx={{ color: theme.textSec, ...membranePressSx }}><Download /></IconButton></Tooltip>
         {user?.username === 'admin3' && (
           <Tooltip title="Bug Bounty Tools"><IconButton onClick={() => navigate('/admin')} sx={{ color: theme.textSec, ...membranePressSx }}><Security /></IconButton></Tooltip>
-        )}
-        {!isPeerAvailable() && (
-          <Tooltip title="Выйти"><IconButton onClick={logout} sx={{ color: theme.textSec, ...membranePressSx }}><Logout /></IconButton></Tooltip>
         )}
       </Box>
 

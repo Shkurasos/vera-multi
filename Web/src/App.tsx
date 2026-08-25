@@ -4,6 +4,7 @@ import { Box, CircularProgress } from '@mui/material';
 import { useAuthStore } from './store/authStore';
 import { useChatStore } from './store/chatStore';
 import { useChatPrefsStore } from './store/chatPrefsStore';
+import { useChatSoundStore } from './store/chatSoundStore';
 import { getSocket } from './services/socket';
 import { requestNotificationPermission, showMessageNotification } from './services/notifications';
 import MainLayout from './pages/MainLayout';
@@ -22,7 +23,7 @@ import { peer, isPeerAvailable } from './services/peer';
 
 // Звук уведомления
 let audioCtx: AudioContext | null = null;
-function playNotificationSound() {
+function playDefaultBeep(volume: number = 1) {
   try {
     if (!audioCtx) audioCtx = new AudioContext();
     const ctx = audioCtx;
@@ -33,11 +34,30 @@ function playNotificationSound() {
     oscillator.type = 'sine';
     oscillator.frequency.setValueAtTime(880, ctx.currentTime);
     oscillator.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.15);
-    gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
+    gainNode.gain.setValueAtTime(0.3 * volume, ctx.currentTime);
     gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
     oscillator.start(ctx.currentTime);
     oscillator.stop(ctx.currentTime + 0.3);
   } catch {}
+}
+function playNotificationSound(chatId?: string) {
+  try {
+    if (chatId) {
+      const store = useChatSoundStore.getState();
+      const volume = store.getVolume(chatId);
+      if (volume <= 0) return; // громкость 0 = глушим полностью
+      const custom = store.sounds[chatId];
+      if (custom?.url) {
+        const a = new Audio(custom.url);
+        a.volume = volume;
+        a.play().catch(() => playDefaultBeep(volume));
+        return;
+      }
+      playDefaultBeep(volume);
+      return;
+    }
+  } catch {}
+  playDefaultBeep();
 }
 
 interface IncomingCallState {
@@ -95,7 +115,7 @@ export default function App() {
       // Обновляем список чатов — вдруг это первое сообщение от нового контакта
       // и чата ещё нет в сайдбаре.
       try { useChatStore.getState().loadChats(); } catch {}
-      playNotificationSound();
+      playNotificationSound(uiMsg.chatId);
     });
     const offSent = w.on('message-sent', () => { /* можно обновлять статус галочек */ });
     const offPres = w.on('presence',    (p: any) => { p?.online ? setUserOnline(p.peer) : setUserOffline(p.peer); });
@@ -175,11 +195,12 @@ export default function App() {
           replaceOrAddMessage(message);
         } else {
           addMessage(message);
-          playNotificationSound();
+          const { isMuted } = useChatPrefsStore.getState();
+          const chatMuted = isMuted(message.chatId);
+          if (!chatMuted) playNotificationSound(message.chatId);
 
           // Push-уведомление если чат не в фокусе и не замьючен
-          const { isMuted } = useChatPrefsStore.getState();
-          if (!isMuted(message.chatId)) {
+          if (!chatMuted) {
             const { chats } = useChatStore.getState();
             const chat = chats.find(c => c.id === message.chatId);
             const senderName = message.sender

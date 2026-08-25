@@ -946,9 +946,16 @@ app.get('/api/chats', authMiddleware, (req, res) => {
   }).filter(Boolean);
 
   chats.sort((a, b) => {
+    // 1) закреплённые выше
+    if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+    // 2) с непрочитанными — выше прочитанных
+    const au = (a.unreadCount || 0) > 0 ? 1 : 0;
+    const bu = (b.unreadCount || 0) > 0 ? 1 : 0;
+    if (au !== bu) return bu - au;
+    // 3) чем новее входящее — тем выше
     const ta = a.lastMessage?.createdAt || a.createdAt;
     const tb = b.lastMessage?.createdAt || b.createdAt;
-    return new Date(tb) - new Date(ta);
+    return new Date(tb).getTime() - new Date(ta).getTime();
   });
   res.json(chats);
 });
@@ -1357,12 +1364,24 @@ app.delete('/api/messages/:id', authMiddleware, (req, res) => {
 });
 
 // POST /api/messages/:id/read
+// Отмечает прочитанными ВСЕ сообщения чата ДО указанного включительно.
+// Раньше помечалось только одно сообщение → unreadCount считался неправильно
+// и после перезагрузки весь бэклог снова был «непрочитан».
 app.post('/api/messages/:id/read', authMiddleware, (req, res) => {
   const msg = db.messages.find(m => m.id === req.params.id);
   if (!msg) return res.status(404).json({ message: 'Не найдено' });
-  if (!msg.readBy) msg.readBy = [];
-  if (!msg.readBy.includes(req.userId)) msg.readBy.push(req.userId);
-  saveDb();
+  const cutoff = new Date(msg.createdAt).getTime();
+  let changed = false;
+  for (const m of db.messages) {
+    if (m.chatId !== msg.chatId) continue;
+    if (new Date(m.createdAt).getTime() > cutoff) continue;
+    if (!Array.isArray(m.readBy)) m.readBy = [];
+    if (!m.readBy.includes(req.userId)) {
+      m.readBy.push(req.userId);
+      changed = true;
+    }
+  }
+  if (changed) saveDb();
   io.to(`chat:${msg.chatId}`).emit('message:read', { messageId: msg.id, userId: req.userId });
   res.json({ success: true });
 });

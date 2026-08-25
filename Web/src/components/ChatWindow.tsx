@@ -15,6 +15,8 @@ import {
 import { CallModal } from './CallModal';
 import { useChatStore } from '../store/chatStore';
 import { useChatPrefsStore } from '../store/chatPrefsStore';
+import { useChatSoundStore } from '../store/chatSoundStore';
+import NotificationSettingsDialog from './NotificationSettingsDialog';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import { useChatSettingsStore, BUILTIN_FONTS } from '../store/chatSettingsStore';
@@ -68,7 +70,41 @@ const EMOJI_LIST = [
 // на каждое сообщение (это вызывало подтормаживания).
 let notificationCtx: AudioContext | null = null;
 
-function playNotificationSound() {
+function playNotificationSound(chatId?: string) {
+  try {
+    if (chatId) {
+      const store = useChatSoundStore.getState();
+      const volume = store.getVolume(chatId);
+      if (volume <= 0) return;
+      const custom = store.sounds[chatId];
+      if (custom?.url) {
+        const a = new Audio(custom.url);
+        a.volume = volume;
+        a.play().catch(() => {});
+        return;
+      }
+      // fallback beep с громкостью
+      try {
+        if (!notificationCtx) {
+          const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+          if (!Ctx) return;
+          notificationCtx = new Ctx();
+        }
+        if (notificationCtx.state === 'suspended') notificationCtx.resume().catch(() => {});
+        const ctx = notificationCtx;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.15);
+        gain.gain.setValueAtTime(0.3 * volume, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+        osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.3);
+      } catch {}
+      return;
+    }
+  } catch {}
   try {
     if (!notificationCtx) {
       const Ctx = window.AudioContext || (window as any).webkitAudioContext;
@@ -152,6 +188,7 @@ function ChatWindowInner() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [showDisplaySettings, setShowDisplaySettings] = useState(false);
+  const [notifSettingsOpen, setNotifSettingsOpen] = useState(false);
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
   const [activeCall, setActiveCall] = useState<{ type: 'audio' | 'video' } | null>(null);
   const [toast, setToast] = useState<{ message: string; severity: 'success' | 'info' | 'warning' | 'error' } | null>(null);
@@ -214,7 +251,7 @@ function ChatWindowInner() {
     if (curr > prev && prev > 0) {
       const lastMsg = chatMessages[curr - 1];
       if (lastMsg?.senderId !== user?.id) {
-        playNotificationSound();
+        if (!(id && mutedChats.has(id))) playNotificationSound(id);
       }
     }
     prevMsgCountRef.current = curr;
@@ -783,15 +820,15 @@ function ChatWindowInner() {
               <InfoOutlined sx={{ fontSize: 18, color: theme.textSec }} />
               Информация о чате
             </MenuItem>
-            <MenuItem onClick={() => { setAnchorEl(null); if (id) toggleMute(id); }}
+            <MenuItem onClick={() => { setAnchorEl(null); setNotifSettingsOpen(true); }}
               sx={{
                 gap: 1.5, py: 1.2, px: 2,
                 color: theme.text, fontSize: 14, fontWeight: 500,
                 '&:hover': { bgcolor: theme.bgHover },
               }}>
               {(id && mutedChats.has(id))
-                ? <><NotificationsActive sx={{ fontSize: 18, color: theme.textSec }} />Включить уведомления</>
-                : <><NotificationsOff sx={{ fontSize: 18, color: theme.textSec }} />Выключить уведомления</>
+                ? <><NotificationsOff sx={{ fontSize: 18, color: theme.textSec }} />Уведомления чата</>
+                : <><NotificationsActive sx={{ fontSize: 18, color: theme.textSec }} />Уведомления чата</>
               }
             </MenuItem>
             <MenuItem onClick={() => { setAnchorEl(null); setShowDisplaySettings(true); }}
@@ -1483,6 +1520,12 @@ placeholder="Сообщение..."
           </Button>
         </DialogActions>
       </Dialog>
+
+      <NotificationSettingsDialog
+        open={notifSettingsOpen}
+        chatId={id}
+        onClose={() => setNotifSettingsOpen(false)}
+      />
 
       {/* ── Активный звонок ── */}
       {activeCall && (
