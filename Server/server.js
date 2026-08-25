@@ -1949,6 +1949,21 @@ rl.on('line', (line) => {
 rl.on('close', () => process.exit(0));
 } // end if (process.stdin.isTTY)
 
+// ─── Self-ping (keep-alive для Render Free / любого хостинга со сном) ─────────
+// Каждые KEEPALIVE_INTERVAL_MS сервер делает GET на самого себя, чтобы не уснуть
+// после 15 минут неактивности. Запускается только если задан PUBLIC_URL, иначе
+// это бессмысленно (локально сервер и так не засыпает).
+const PUBLIC_URL = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL;
+if (PUBLIC_URL) {
+  const KEEPALIVE_MS = Number(process.env.KEEPALIVE_INTERVAL_MS) || 10 * 60 * 1000;
+  const pingUrl = PUBLIC_URL.replace(/\/+$/, '') + '/api/downloads';
+  setInterval(() => {
+    // Используем global fetch (Node 18+). Ошибки игнорируем — это некритично.
+    fetch(pingUrl).catch(() => {});
+  }, KEEPALIVE_MS);
+  console.log(`💓 Keep-alive: пингую ${pingUrl} каждые ${Math.round(KEEPALIVE_MS/60000)} мин`);
+}
+
 // ─── SPA fallback — должен быть ПОСЛЕ всех API маршрутов ─────────────────────
 if (fs.existsSync(CLIENT_DIST)) {
   app.get('*', (req, res, next) => {
