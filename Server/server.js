@@ -819,6 +819,42 @@ app.put('/api/users/me/avatar', authMiddleware, uploadAvatar.single('avatar'), (
   res.json(user);
 });
 
+// ─── USER SETTINGS (layout / внешний вид / приватность) ──────────────────────
+// Настройки хранятся per-user в db.userSettings[userId]. Клиент кладёт сюда
+// весь снапшот стора (кроме action-функций) и подтягивает при логине.
+// SEC: сохраняем только plain JSON, ограничиваем размер до 32 КБ.
+app.get('/api/settings', authMiddleware, (req, res) => {
+  if (!db.userSettings) db.userSettings = {};
+  const data = db.userSettings[req.userId] || null;
+  res.json({ settings: data, updatedAt: data?.__updatedAt || null });
+});
+
+app.put('/api/settings', authMiddleware, (req, res) => {
+  const body = req.body?.settings;
+  if (!body || typeof body !== 'object') {
+    return res.status(400).json({ message: 'settings обязателен и должен быть объектом' });
+  }
+  const serialized = JSON.stringify(body);
+  if (serialized.length > 32 * 1024) {
+    return res.status(413).json({ message: 'Слишком большой объект настроек' });
+  }
+  if (!db.userSettings) db.userSettings = {};
+  const clean = JSON.parse(serialized);
+  clean.__updatedAt = new Date().toISOString();
+  db.userSettings[req.userId] = clean;
+  saveDb();
+
+  // Push другим устройствам пользователя. Клиент отсеет своё эхо по __clientId.
+  try {
+    const sockets = userSockets.get(req.userId);
+    if (sockets) sockets.forEach(sid => io.to(sid).emit('settings:updated', {
+      settings: clean, updatedAt: clean.__updatedAt,
+    }));
+  } catch {}
+
+  res.json({ ok: true, updatedAt: clean.__updatedAt });
+});
+
 // ─── DEVICE routes (правило «устройство 1 = 1, второе — по QR») ───────────────
 
 // GET /api/devices — список устройств текущего пользователя
@@ -1780,6 +1816,39 @@ const io = new IOServer(server, {
 
 const userSockets = new Map(); // userId -> Set<socketId>
 
+// ─── Discord-style voice rooms (in-memory) ─────────────────────────────────
+// chatId -> Map<userId, { socketId, kind, joinedAt, mic, cam, screen, deaf }>
+const callRooms = new Map();
+
+function publicPeerState(_uid, st) {
+  return {
+    kind: st.kind, mic: !!st.mic, cam: !!st.cam, screen: !!st.screen, deaf: !!st.deaf,
+    joinedAt: st.joinedAt,
+  };
+}
+
+function doLeaveRoom(chatId, userId, _socketId) {
+  const room = callRooms.get(chatId);
+  if (!room || !room.has(userId)) return;
+  room.delete(userId);
+  io.to(`callroom:${chatId}`).emit('callroom:peer-left', { chatId, userId });
+  if (room.size === 0) {
+    callRooms.delete(chatId);
+    io.to(`chat:${chatId}`).emit('callroom:ended', { chatId });
+  }
+  // Убираем всех сокетов юзера из socket-room этой комнаты.
+  const sockets = userSockets.get(userId);
+  if (sockets) sockets.forEach(sid => {
+    const s = io.sockets.sockets.get(sid);
+    if (s) s.leave(`callroom:${chatId}`);
+  });
+}
+
+function leaveAllCallRooms(userId, _socketId) {
+  for (const [chatId, room] of callRooms.entries()) {
+    if (room.has(userId)) doLeaveRoom(chatId, userId);
+  }
+}
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(' ')[1];
   if (!token) return next(new Error('Unauthorized'));
@@ -1984,7 +2053,112 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ─── Discord-style групповые/1:1 звонки (voice rooms) ──────────────────────
+  // Схема: одна «комната» на chatId. Клиенты обмениваются offer/answer/ICE
+  // ЧЕРЕЗ сервер, но media идёт напрямую peer-to-peer (mesh). Сервер знает
+  // только СПИСОК участников и ретранслирует сигналинг.
+  //
+  // Хранилище (in-memory, живёт до рестарта сервера):
+  //   callRooms.get(chatId) = Map<userId, {
+  //     socketId, kind: 'audio'|'video', joinedAt,
+  //     mic: bool, cam: bool, screen: bool, deaf: bool
+  //   }>
+
+  socket.on('callroom:join', ({ chatId, kind }) => {
+    if (!chatId) return;
+    const isMember = db.chatMembers.find(m => m.chatId === chatId && m.userId === userId);
+    if (!isMember) return;
+
+    if (!callRooms.has(chatId)) callRooms.set(chatId, new Map());
+    const room = callRooms.get(chatId);
+
+    // Список уже присутствующих участников (без нас) — вернём инициатору.
+    const peers = Array.from(room.entries())
+      .filter(([uid]) => uid !== userId)
+      .map(([uid, st]) => ({ userId: uid, ...publicPeerState(uid, st) }));
+
+    const wasEmpty = room.size === 0;
+    room.set(userId, {
+      socketId: socket.id,
+      kind: kind === 'video' ? 'video' : 'audio',
+      joinedAt: Date.now(),
+      mic: true, cam: kind === 'video', screen: false, deaf: false,
+    });
+    socket.join(`callroom:${chatId}`);
+
+    // Ответ инициатору: кто уже в комнате.
+    socket.emit('callroom:peers', { chatId, peers, kind: kind === 'video' ? 'video' : 'audio' });
+
+    // Уведомляем остальных участников комнаты (те, кто уже сидят) — появился новичок.
+    const meUser = db.users.find(u => u.id === userId);
+    const joinedPayload = {
+      chatId,
+      userId,
+      user: meUser ? {
+        id: meUser.id,
+        firstName: meUser.firstName, lastName: meUser.lastName,
+        username: meUser.username, avatarUrl: meUser.avatarUrl,
+      } : { id: userId },
+      state: publicPeerState(userId, room.get(userId)),
+    };
+    socket.to(`callroom:${chatId}`).emit('callroom:peer-joined', joinedPayload);
+
+    // Уведомляем всех участников чата (включая тех, кто не в комнате) —
+    // чтобы у них появилась «плашка идёт звонок» / входящий рингтон.
+    const chat = db.chats.find(c => c.id === chatId);
+    if (wasEmpty && chat) {
+      // Direct = входящий вызов конкретному второму участнику (ring).
+      if (chat.type === 'direct') {
+        const others = db.chatMembers.filter(m => m.chatId === chatId && m.userId !== userId);
+        others.forEach(m => sendToUser(m.userId, 'callroom:ring', {
+          chatId, callerId: userId,
+          callerName: meUser ? `${meUser.firstName || ''} ${meUser.lastName || ''}`.trim() || meUser.username : 'Неизвестный',
+          callerAvatar: meUser?.avatarUrl || null,
+          kind: kind === 'video' ? 'video' : 'audio',
+        }));
+      } else {
+        // Group/channel — просто оповещаем «в чате начался звонок».
+        io.to(`chat:${chatId}`).emit('callroom:started', {
+          chatId, starterId: userId, kind: kind === 'video' ? 'video' : 'audio',
+        });
+      }
+    }
+  });
+
+  socket.on('callroom:leave', ({ chatId }) => {
+    doLeaveRoom(chatId, userId, socket.id);
+  });
+
+  // Сигналинг: SDP offer/answer/ICE между двумя конкретными пирами в комнате.
+  socket.on('callroom:signal', ({ chatId, toUserId, data }) => {
+    if (!chatId || !toUserId) return;
+    const room = callRooms.get(chatId);
+    if (!room || !room.has(userId) || !room.has(toUserId)) return;
+    const target = room.get(toUserId);
+    io.to(target.socketId).emit('callroom:signal', {
+      chatId, fromUserId: userId, data,
+    });
+  });
+
+  // Изменение локального состояния (mic/cam/screen/deaf/speaking).
+  socket.on('callroom:state', ({ chatId, patch }) => {
+    const room = callRooms.get(chatId);
+    if (!room || !room.has(userId)) return;
+    const st = room.get(userId);
+    if (patch && typeof patch === 'object') {
+      if (typeof patch.mic === 'boolean') st.mic = patch.mic;
+      if (typeof patch.cam === 'boolean') st.cam = patch.cam;
+      if (typeof patch.screen === 'boolean') st.screen = patch.screen;
+      if (typeof patch.deaf === 'boolean') st.deaf = patch.deaf;
+    }
+    socket.to(`callroom:${chatId}`).emit('callroom:peer-state', {
+      chatId, userId, state: publicPeerState(userId, st),
+    });
+  });
+
   socket.on('disconnect', () => {
+    // Автовыход из всех голосовых комнат (см. ниже блок callRooms)
+    try { leaveAllCallRooms(userId, socket.id); } catch {}
     const sockets = userSockets.get(userId);
     if (sockets) {
       sockets.delete(socket.id);

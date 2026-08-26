@@ -4,6 +4,7 @@ import { Box, useMediaQuery } from '@mui/material';
 import { useChatStore } from '../store/chatStore';
 import { useThemeStore } from '../store/themeStore';
 import { useMusicStore } from '../store/musicStore';
+import { useUserSettingsStore } from '../store/userSettingsStore';
 import Sidebar from '../components/Sidebar';
 import ChatWindow from '../components/ChatWindow';
 import WelcomeScreen from '../components/WelcomeScreen';
@@ -19,24 +20,31 @@ export default function MainLayout() {
   const { loadChats } = useChatStore();
   const { theme } = useThemeStore();
   const { currentTrack, playerCollapsed } = useMusicStore();
+  const layout = useUserSettingsStore((s) => s.layout);
   const location = useLocation();
   const isMobile = useMediaQuery('(max-width: 700px)');
 
   useEffect(() => { loadChats(); }, []);
 
+  // Применяем плотность и радиус как CSS-переменные для всего приложения.
+  useEffect(() => {
+    const densityGap = layout.density === 'compact' ? 0.5 : layout.density === 'roomy' ? 1.6 : 1;
+    const root = document.documentElement;
+    root.style.setProperty('--vera-density', String(densityGap));
+    root.style.setProperty('--vera-radius', `${layout.radius}px`);
+    root.style.setProperty('--vera-bubble-radius', `${layout.bubbleRadius}px`);
+    root.style.setProperty('--vera-nav-pos', layout.mobileNavPos);
+  }, [layout.density, layout.radius, layout.bubbleRadius, layout.mobileNavPos]);
+
   const onChatList = location.pathname === '/';
 
-  // Нижний отступ зависит от РЕАЛЬНОГО состояния плеера
+  // Позиция плеера: снизу → padding-bottom, сверху → padding-top
   let bottomPad = '0px';
   let topPad = '0px';
   if (currentTrack) {
-    if (playerCollapsed) {
-      topPad = `${PLAYER_COLLAPSED}px`;
-      bottomPad = '0px';
-    } else {
-      topPad = '0px';
-      bottomPad = `${PLAYER_EXPANDED}px`;
-    }
+    const size = playerCollapsed ? PLAYER_COLLAPSED : PLAYER_EXPANDED;
+    if (layout.playerPos === 'top') topPad = `${size}px`;
+    else bottomPad = `${size}px`;
   }
 
   const bg = {
@@ -88,31 +96,39 @@ export default function MainLayout() {
     );
   }
 
-  // ── Десктопный вид (как было) ──
+  // ── Десктопный вид ──
+  const sidebar = <Sidebar open onToggle={() => {}} />;
+  const mainArea = (
+    <Box sx={{
+      flex: 1,
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+      minHeight: 0,
+      position: 'relative',
+      zIndex: 1,
+    }}>
+      <Box sx={{
+        flex: 1, overflow: 'hidden', minHeight: 0, height: '100%',
+        m: { xs: 0, md: `${layout.chatOuterMargin}px` },
+        borderRadius: { xs: 0, md: `${layout.radius}px` },
+        border: { xs: 'none', md: `1px solid ${theme.border}` },
+        boxShadow: { xs: 'none', md: '0 22px 70px rgba(0,0,0,0.42)' },
+        transition: 'border-color 800ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 800ms cubic-bezier(0.22, 1, 0.36, 1), border-radius 220ms ease',
+      }}>
+        <Routes>
+          <Route path="/" element={<WelcomeScreen />} />
+          <Route path="/chat/:id" element={<ChatWindow />} />
+          <Route path="/botfather" element={<BotFatherPage />} />
+          <Route path="/admin" element={<AdminToolsPage />} />
+        </Routes>
+      </Box>
+    </Box>
+  );
+
   return (
     <Box sx={bg}>
-      {/* Сайдбар */}
-      <Sidebar open onToggle={() => {}} />
-
-      {/* Основная область */}
-      <Box sx={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-        minHeight: 0,
-        position: 'relative',
-        zIndex: 1,
-      }}>
-        <Box sx={{ flex: 1, overflow: 'hidden', minHeight: 0, height: '100%', m: { xs: 0, md: 1 }, borderRadius: { xs: 0, md: 4 }, border: { xs: 'none', md: `1px solid ${theme.border}` }, boxShadow: { xs: 'none', md: '0 22px 70px rgba(0,0,0,0.42)' }, transition: 'border-color 800ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 800ms cubic-bezier(0.22, 1, 0.36, 1)' }}>
-          <Routes>
-            <Route path="/" element={<WelcomeScreen />} />
-            <Route path="/chat/:id" element={<ChatWindow />} />
-            <Route path="/botfather" element={<BotFatherPage />} />
-            <Route path="/admin" element={<AdminToolsPage />} />
-          </Routes>
-        </Box>
-      </Box>
+      {layout.sidebarSide === 'left' ? (<>{sidebar}{mainArea}</>) : (<>{mainArea}{sidebar}</>)}
     </Box>
   );
 }

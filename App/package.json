@@ -20,7 +20,7 @@
       "electron/**/*"
     ],
     "directories": {
-      "output": "dist-electron"
+      "output": "dist-electron-build"
     },
     "win": {
       "target": "nsis"

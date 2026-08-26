@@ -6,7 +6,7 @@ import {
 } from '@mui/material';
 import {
   ArrowBack, Edit, PhotoCamera, Check, Close,
-  Phone, Cake, Info, LocationOn, Palette, QrCode2, ContentCopy, Settings,
+  Phone, Cake, Info, LocationOn, Palette, QrCode2, ContentCopy, Settings, Storefront,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
@@ -16,6 +16,11 @@ import QRCode from 'qrcode';
 import { peer, isPeerAvailable } from '../services/peer';
 import { peerInfoToUser } from '../store/authStore';
 import SettingsDialog from '../components/SettingsDialog';
+import ProfileCustomizeDialog from '../components/ProfileCustomizeDialog';
+import ProfileCommentsWall from '../components/ProfileCommentsWall';
+import ActivityLine from '../components/ActivityLine';
+import { useProfileCustomizationStore } from '../store/profileCustomizationStore';
+import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 
 export default function ProfilePage() {
   const navigate = useNavigate();
@@ -50,6 +55,11 @@ export default function ProfilePage() {
   const [qrInvite, setQrInvite] = useState<{ token: string; url: string; textUrl: string; expiresAt: number } | null>(null);
   const [qrError, setQrError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const customization = useProfileCustomizationStore();
+  const shopActiveRing = useShopStore((s) => s.activeRing);
+  const ringItem = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === shopActiveRing);
+  const ringVal = ringItem?.value as any;
 
   async function openLinkQr() {
     setQrError(null);
@@ -251,11 +261,19 @@ export default function ProfilePage() {
       </Box>
 
 
+      {/* ── Banner ── */}
+      <Box sx={{
+        height: 180,
+        background: customization.bannerUrl
+          ? `url(${customization.bannerUrl}) center/cover no-repeat`
+          : `linear-gradient(135deg, ${customization.bannerColor || theme.accent} 0%, ${theme.bgChat} 100%)`,
+        flexShrink: 0,
+      }} />
+
       {/* ── Avatar section ── */}
       <Box sx={{
         display: 'flex', flexDirection: 'column', alignItems: 'center',
-        py: 4, px: 2,
-        background: `linear-gradient(180deg, ${theme.accent}20 0%, ${theme.bgChat} 100%)`,
+        pt: 0, pb: 3, px: 2, mt: -7,
       }}>
         <Box sx={{ position: 'relative' }}>
           {uploadingAvatar ? (
@@ -274,6 +292,17 @@ export default function ProfilePage() {
                 bgcolor: theme.accent + '80',
                 border: `4px solid ${theme.accent}`,
                 boxShadow: `0 0 24px ${theme.accent}50`,
+                ...(ringVal?.type === 'gradient' ? {
+                  border: '4px solid transparent',
+                  backgroundImage: `linear-gradient(${theme.accent + '44'}, ${theme.accent + '44'}), ${ringVal.gradient}`,
+                  backgroundOrigin: 'border-box',
+                  backgroundClip: 'padding-box, border-box',
+                  boxShadow: `0 0 26px ${theme.accent}55`,
+                } : {}),
+                ...(ringVal?.type === 'glow' ? {
+                  border: `4px solid ${ringVal.color || theme.accent}`,
+                  boxShadow: `0 0 30px ${ringVal.color || theme.accent}`,
+                } : {}),
               }}
             >
               {getInitials(displayName)}
@@ -305,6 +334,21 @@ export default function ProfilePage() {
         <Typography sx={{ fontSize: 14, color: user?.isOnline ? theme.online : theme.textSec, mt: 0.5 }}>
           {user?.isOnline ? '● в сети' : '○ не в сети'}
         </Typography>
+        {user?.id && <Box sx={{ mt: 1 }}><ActivityLine userId={user.id} /></Box>}
+        {customization.showcase && (
+          <Box sx={{
+            mt: 2, px: 2, py: 1.5, borderRadius: 2,
+            bgcolor: theme.bgHeader,
+            border: `1px solid ${(customization.cardAccent || theme.accent) + '40'}`,
+            maxWidth: 480, width: '100%',
+            opacity: (customization.cardOpacity ?? 100) / 100,
+          }}>
+            <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 0.5 }}>Витрина</Typography>
+            <Typography sx={{ fontSize: 14, color: theme.text, whiteSpace: 'pre-wrap' }}>
+              {customization.showcase}
+            </Typography>
+          </Box>
+        )}
       </Box>
 
       <Divider sx={{ borderColor: theme.border }} />
@@ -486,6 +530,21 @@ export default function ProfilePage() {
               fullWidth
               variant="outlined"
               startIcon={<Palette />}
+              onClick={() => setCustomizeOpen(true)}
+              sx={{
+                color: theme.accent, borderColor: theme.accent + '50',
+                borderRadius: 2.5, fontSize: 15, py: 1.2, mb: 1.5,
+                '&:hover': { bgcolor: theme.accent + '10', borderColor: theme.accent },
+                textTransform: 'none',
+              }}
+            >
+              Кастомизировать профиль
+            </Button>
+
+            <Button
+              fullWidth
+              variant="outlined"
+              startIcon={<Palette />}
               onClick={() => navigate('/theme-editor')}
               sx={{
                 color: theme.accent, borderColor: theme.accent + '50',
@@ -560,6 +619,13 @@ export default function ProfilePage() {
         </Alert>
       </Snackbar>
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <ProfileCustomizeDialog open={customizeOpen} onClose={() => setCustomizeOpen(false)} />
+      {user?.id && (
+        <Box sx={{ px: 2.5, pb: 4 }}>
+          <Divider sx={{ borderColor: theme.border, mb: 2 }} />
+          <ProfileCommentsWall targetUserId={user.id} targetUserName={displayName} />
+        </Box>
+      )}
     </Box>
   );
 }

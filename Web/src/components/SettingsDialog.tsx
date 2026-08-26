@@ -3,15 +3,23 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button, Typography, Box,
   List, ListItemButton, ListItemIcon, ListItemText, Divider, Slider, Switch,
   MenuItem, Select, TextField, Alert, Accordion, AccordionSummary, AccordionDetails, Stack,
+  ToggleButton, ToggleButtonGroup,
 } from '@mui/material';
 import {
   Link as LinkIcon, DevicesOther, ChevronRight, ExpandMore,
   Brightness6, TextFields, Language, DataUsage, Notifications, Security, Lock, Public,
+  ViewSidebar, RestartAlt, Storefront,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useThemeStore } from '../store/themeStore';
-import { useUserSettingsStore, hashPassword, PrivacyScope, PreviewMode, AutoDeleteMonths } from '../store/userSettingsStore';
+import {
+  useUserSettingsStore, hashPassword,
+  PrivacyScope, PreviewMode, AutoDeleteMonths,
+  SidePos, VertPos, Density,
+} from '../store/userSettingsStore';
 import InviteLinkDialog from './InviteLinkDialog';
+import LayoutDesignerDialog from './LayoutDesignerDialog';
+import { useShopStore } from '../store/shopStore';
 
 const SCOPE_LABELS: Record<PrivacyScope, string> = {
   everyone: 'Все', contacts: 'Мои контакты', nobody: 'Никто',
@@ -21,6 +29,8 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
   const { theme } = useThemeStore();
   const navigate = useNavigate();
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [designerOpen, setDesignerOpen] = useState(false);
+  const shopSetOpen = useShopStore((x) => x.setOpen);
   const s = useUserSettingsStore();
 
   const [pwd1, setPwd1] = useState('');
@@ -99,6 +109,122 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
                 <Alert severity="info" sx={{ mt: 1, fontSize: 12 }}>
                   Полная локализация интерфейса добавляется постепенно — выбор сохраняется.
                 </Alert>
+              </AccordionDetails>
+            </Accordion>
+
+            <Accordion sx={sectionSx} disableGutters>
+              <AccordionSummary expandIcon={<ExpandMore sx={{ color: theme.textSec }} />}>
+                <ViewSidebar sx={{ mr: 1, color: theme.accent }} />
+                <Typography sx={{ fontWeight: 600 }}>Макет</Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Stack spacing={2}>
+                  <Button variant="outlined" startIcon={<Storefront />} onClick={() => { setDesignerOpen(false); shopSetOpen(true); }}
+                    sx={{ color: theme.accent, borderColor: theme.accent + '55', textTransform: 'none', borderRadius: 2,
+                          '&:hover': { bgcolor: theme.accent + '10', borderColor: theme.accent } }}>
+                    Магазин VERA
+                  </Button>
+
+                  <Button variant="contained" onClick={() => setDesignerOpen(true)}
+                    sx={{ bgcolor: theme.accent, textTransform: 'none', borderRadius: 2,
+                          '&:hover': { bgcolor: theme.accent } }}>
+                    🎨 Открыть визуальный конструктор
+                  </Button>
+
+                  <Box>
+                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Сторона панели чатов (десктоп)</Typography>
+                    <ToggleButtonGroup
+                      exclusive size="small" fullWidth
+                      value={s.layout.sidebarSide}
+                      onChange={(_, v) => v && s.setLayout('sidebarSide', v as SidePos)}
+                    >
+                      <ToggleButton value="left">Слева</ToggleButton>
+                      <ToggleButton value="right">Справа</ToggleButton>
+                    </ToggleButtonGroup>
+                  </Box>
+
+                  <Box>
+                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
+                      Ширина панели чатов — {s.layout.sidebarWidth}px
+                    </Typography>
+                    <Slider min={200} max={520} step={5} value={s.layout.sidebarWidth}
+                      onChange={(_, v) => s.setLayout('sidebarWidth', Array.isArray(v) ? v[0] : v)} />
+                  </Box>
+
+                  <Box>
+                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Нижняя навигация (мобильный)</Typography>
+                    <ToggleButtonGroup exclusive size="small" fullWidth
+                      value={s.layout.mobileNavPos}
+                      onChange={(_, v) => v && s.setLayout('mobileNavPos', v as VertPos)}>
+                      <ToggleButton value="bottom">Снизу</ToggleButton>
+                      <ToggleButton value="top">Сверху</ToggleButton>
+                    </ToggleButtonGroup>
+                  </Box>
+
+                  <Box>
+                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Плеер</Typography>
+                    <ToggleButtonGroup exclusive size="small" fullWidth
+                      value={s.layout.playerPos}
+                      onChange={(_, v) => v && s.setLayout('playerPos', v as VertPos)}>
+                      <ToggleButton value="bottom">Снизу</ToggleButton>
+                      <ToggleButton value="top">Сверху</ToggleButton>
+                    </ToggleButtonGroup>
+                  </Box>
+
+                  <Box>
+                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Шапка чата</Typography>
+                    <ToggleButtonGroup exclusive size="small" fullWidth
+                      value={s.layout.chatHeaderPos}
+                      onChange={(_, v) => v && s.setLayout('chatHeaderPos', v as VertPos)}>
+                      <ToggleButton value="top">Сверху</ToggleButton>
+                      <ToggleButton value="bottom">Снизу</ToggleButton>
+                    </ToggleButtonGroup>
+                  </Box>
+
+                  <Box>
+                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Поле ввода чата</Typography>
+                    <ToggleButtonGroup exclusive size="small" fullWidth
+                      value={s.layout.chatInputPos}
+                      onChange={(_, v) => v && s.setLayout('chatInputPos', v as VertPos)}>
+                      <ToggleButton value="bottom">Снизу</ToggleButton>
+                      <ToggleButton value="top">Сверху</ToggleButton>
+                    </ToggleButtonGroup>
+                  </Box>
+
+                  <Box>
+                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Плотность интерфейса</Typography>
+                    <ToggleButtonGroup exclusive size="small" fullWidth
+                      value={s.layout.density}
+                      onChange={(_, v) => v && s.setLayout('density', v as Density)}>
+                      <ToggleButton value="compact">Компактно</ToggleButton>
+                      <ToggleButton value="cozy">Обычно</ToggleButton>
+                      <ToggleButton value="roomy">Просторно</ToggleButton>
+                    </ToggleButtonGroup>
+                  </Box>
+
+                  <Box>
+                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
+                      Скругление углов окна чата и панелей — {s.layout.radius}px
+                    </Typography>
+                    <Slider min={0} max={28} step={1} value={s.layout.radius}
+                      onChange={(_, v) => s.setLayout('radius', Array.isArray(v) ? v[0] : v)} />
+                  </Box>
+
+                  <RowToggle label="Показывать вкладки (Диалоги / Архив / Группы)"
+                    checked={s.layout.showTabs}
+                    onChange={(v) => s.setLayout('showTabs', v)} />
+                  <RowToggle label="Показывать аватары в списке чатов"
+                    checked={s.layout.showAvatarsInList}
+                    onChange={(v) => s.setLayout('showAvatarsInList', v)} />
+
+                  <Alert severity="info" sx={{ fontSize: 12 }}>
+                    Панель чатов можно также перетаскивать за правый край мышью — ширина сохранится.
+                  </Alert>
+                  <Button variant="outlined" startIcon={<RestartAlt />}
+                    onClick={() => s.resetLayout()}>
+                    Сбросить макет по умолчанию
+                  </Button>
+                </Stack>
               </AccordionDetails>
             </Accordion>
 
@@ -229,6 +355,7 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
         </DialogActions>
       </Dialog>
       <InviteLinkDialog open={inviteOpen} onClose={() => setInviteOpen(false)} />
+      <LayoutDesignerDialog open={designerOpen} onClose={() => setDesignerOpen(false)} />
     </>
   );
 }

@@ -18,6 +18,7 @@ import { useChatStore } from '../store/chatStore';
 import { useChatPrefsStore } from '../store/chatPrefsStore';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
+import { useUserSettingsStore } from '../store/userSettingsStore';
 import { chatsApi, usersApi } from '../services/api';
 import { peer, isPeerAvailable } from '../services/peer';
 import { Chat, User } from '../types';
@@ -51,20 +52,8 @@ const TABS: { id: SidebarTab; label: string }[] = [
   { id: 'groups', label: 'Группы' },
 ];
 
-const SIDEBAR_WIDTH_KEY = 'vera-sidebar-width';
-const SIDEBAR_MIN = 220;
-const SIDEBAR_MAX = 440;
-
-function loadSidebarWidth() {
-  try {
-    const raw = localStorage.getItem(SIDEBAR_WIDTH_KEY);
-    if (raw) {
-      const n = parseInt(raw, 10);
-      if (!Number.isNaN(n) && n >= SIDEBAR_MIN && n <= SIDEBAR_MAX) return n;
-    }
-  } catch {}
-  return 320;
-}
+const SIDEBAR_MIN = 200;
+const SIDEBAR_MAX = 520;
 
 export default function Sidebar({ open, onToggle, mobile }: Props) {
   const { chats, activeChat, setActiveChat, loadChats, onlineUsers } = useChatStore();
@@ -162,7 +151,9 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   const [musicOpen, setMusicOpen] = useState(false);
   const [scrollPulse, setScrollPulse] = useState(false);
   const scrollTimerRef = React.useRef<number | null>(null);
-  const [sidebarWidth, setSidebarWidth] = useState<number>(loadSidebarWidth());
+  const layout = useUserSettingsStore((s) => s.layout);
+  const setLayout = useUserSettingsStore((s) => s.setLayout);
+  const sidebarWidth = Math.min(Math.max(layout.sidebarWidth, SIDEBAR_MIN), SIDEBAR_MAX);
   const [resizing, setResizing] = useState(false);
 
   useEffect(() => { loadChats(); }, []);
@@ -171,12 +162,15 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   useEffect(() => {
     if (!resizing) return;
     const onMove = (e: globalThis.MouseEvent) => {
-      const x = Math.min(Math.max(e.clientX, SIDEBAR_MIN), SIDEBAR_MAX);
-      setSidebarWidth(x);
+      // Учитываем сторону: при правом сайдбаре тянем от правого края экрана
+      const x = layout.sidebarSide === 'right'
+        ? window.innerWidth - e.clientX
+        : e.clientX;
+      const w = Math.min(Math.max(x, SIDEBAR_MIN), SIDEBAR_MAX);
+      setLayout('sidebarWidth', w);
     };
     const onUp = () => {
       setResizing(false);
-      try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth)); } catch {}
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     };
@@ -186,7 +180,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [resizing, sidebarWidth]);
+  }, [resizing, layout.sidebarSide, setLayout]);
 
   function handleChatListScroll() {
     setScrollPulse(true);
@@ -352,12 +346,13 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       height: '100%',
       background: theme.sidebarGradient || theme.bgSidebar,
       backdropFilter: theme.sidebarBlur || 'blur(18px)',
-      borderRight: `1px solid ${theme.border}`,
+      borderRight: layout.sidebarSide === 'left' ? `1px solid ${theme.border}` : 'none',
+      borderLeft: layout.sidebarSide === 'right' ? `1px solid ${theme.border}` : 'none',
       display: 'flex',
       flexDirection: 'column',
       transition: resizing ? 'none' : 'width .2s ease, min-width .2s ease',
       overflow: 'hidden',
-      boxShadow: '18px 0 60px rgba(0,0,0,0.38)',
+      boxShadow: layout.sidebarSide === 'left' ? '18px 0 60px rgba(0,0,0,0.38)' : '-18px 0 60px rgba(0,0,0,0.38)',
       position: 'relative',
       '&::before': {
         content: '""', position: 'absolute', inset: 0, pointerEvents: 'none',
@@ -370,7 +365,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
         {open && <Tooltip title="Создать группу"><IconButton onClick={() => setCreateGroupOpen(true)} sx={{ color: theme.textSec }}><Group /></IconButton></Tooltip>}
       </Box>
 
-      {open && (
+      {open && layout.showTabs && (
         <Box sx={{
           display: 'grid',
           gridTemplateColumns: `repeat(${TABS.length}, 1fr)`,
@@ -443,7 +438,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
           const name = getChatName(chat);
           const active = activeChat?.id === chat.id;
            return <ListItem key={chat.id} onClick={() => { setActiveChat(chat); navigate(`/chat/${chat.id}`); }} onContextMenu={(e) => handleContextMenu(e, chat)} sx={{ cursor: 'pointer', px: open ? 1.15 : .65, py: .85, mb: .55, borderRadius: 3.5, bgcolor: active ? theme.bgActive : 'rgba(255,255,255,0.026)', border: `1px solid ${active ? theme.accent + '66' : 'rgba(255,255,255,0.045)'}`, boxShadow: active ? `0 12px 34px ${theme.accent}22` : 'none', backdropFilter: 'blur(14px)', overflow: 'hidden', '&::before': { content: '""', position: 'absolute', inset: 0, opacity: 0, background: 'linear-gradient(90deg, rgba(255,72,105,.34), rgba(255,145,77,.20), transparent 78%)', filter: 'blur(10px)', transform: 'translateX(-18%)', transition: `opacity 260ms ${motion.easeOut}, transform 360ms ${motion.easeOut}` }, '&:hover': { bgcolor: theme.bgHover, transform: 'translateY(-1px)' }, '&:active': { transform: 'translateX(10px) scale(.985)', boxShadow: 'inset 10px 0 28px rgba(255,80,110,.26)' }, '&:active::before': { opacity: 1, transform: 'translateX(0)' }, transition: `background .22s ${motion.easeOut}, transform .28s ${motion.spring}, box-shadow .22s ${motion.easeOut}` }}>
-             <Badge color="success" variant="dot" invisible={!isChatOnline(chat)} overlap="circular"><Avatar src={getChatAvatar(chat)} sx={{ width: 46, height: 46, bgcolor: theme.accent, boxShadow: `0 0 0 2px ${active ? theme.accent + '55' : 'rgba(255,255,255,0.08)'}`, transform: scrollPulse ? 'scale(.88)' : 'scale(1)', transition: `transform ${scrollPulse ? 120 : 520}ms ${scrollPulse ? motion.easeIn : motion.spring}`, willChange: 'transform' }}>{getInitials(name)}</Avatar></Badge>
+             <Badge color="success" variant="dot" invisible={!isChatOnline(chat)} overlap="circular">{layout.showAvatarsInList ? <Avatar src={getChatAvatar(chat)} sx={{ width: 46, height: 46, bgcolor: theme.accent, boxShadow: `0 0 0 2px ${active ? theme.accent + '55' : 'rgba(255,255,255,0.08)'}`, transform: scrollPulse ? 'scale(.88)' : 'scale(1)', transition: `transform ${scrollPulse ? 120 : 520}ms ${scrollPulse ? motion.easeIn : motion.spring}`, willChange: 'transform' }}>{getInitials(name)}</Avatar> : <Box sx={{ width: 6, height: 46, borderRadius: 3, bgcolor: active ? theme.accent : 'transparent' }} />}</Badge>
             {open && <ListItemText sx={{ ml: 1.25, minWidth: 0 }} primary={<Box sx={{ display: 'flex', alignItems: 'center', gap: .5 }}><Typography noWrap sx={{ color: theme.text, fontWeight: isPinned(chat.id) ? 700 : 600, flex: 1 }}>{isPinned(chat.id) ? '📌 ' : ''}{name}</Typography><Typography sx={{ color: theme.textSec, fontSize: 11 }}>{timeAgo(chat.lastMessage?.createdAt || chat.updatedAt || chat.createdAt)}</Typography></Box>} secondary={<Typography noWrap sx={{ color: theme.textSec, fontSize: 13 }}>{chat.lastMessage?.content || (chat.lastMessage?.attachments?.length ? '📎 Вложение' : 'Нет сообщений')}</Typography>} />}
             {open && !!chat.unreadCount && <Badge badgeContent={chat.unreadCount} color="primary" />}
           </ListItem>;
@@ -475,7 +470,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
         }}
         sx={{
           position: 'absolute',
-          right: -5,
+          ...(layout.sidebarSide === 'left' ? { right: -5 } : { left: -5 }),
           top: 0,
           bottom: 0,
           width: 10,
@@ -484,7 +479,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
           '&::after': {
             content: '"↔"',
             position: 'absolute',
-            right: 2,
+            ...(layout.sidebarSide === 'left' ? { right: 2 } : { left: 2 }),
             top: '50%',
             transform: 'translateY(-50%)',
             color: 'rgba(255,255,255,0.55)',

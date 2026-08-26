@@ -172,7 +172,7 @@ export function ThemeMarketplace({ onClose }: Props) {
               <Palette sx={{ color: '#fff', fontSize: 22 }} />
             </Box>
             <Box>
-              <Typography sx={{ fontSize: 20, fontWeight: 800 }}>Магазин тем</Typography>
+              <Typography sx={{ fontSize: 20, fontWeight: 800 }}>Темы</Typography>
               <Typography sx={{ fontSize: 12, color: theme.textSec }}>Выберите тему или создайте свою</Typography>
             </Box>
           </Box>

@@ -14,6 +14,7 @@ import {
 } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
 import { useChatStore } from '../store/chatStore';
+import { useUserSettingsStore } from '../store/userSettingsStore';
 import MusicLibrary from './MusicLibrary';
 const ThemeMarketplace = lazy(() => import('./ThemeMarketplace').then(m => ({ default: m.ThemeMarketplace })));
 
@@ -26,6 +27,7 @@ export default function MobileBottomNav() {
   const { theme } = useThemeStore();
   const unread = useChatStore((s) => s.chats.reduce((acc, c) => acc + (c.unreadCount || 0), 0));
   const isMobile = useMediaQuery('(max-width: 700px)');
+  const navPos = useUserSettingsStore((s) => s.layout.mobileNavPos);
   const [musicOpen, setMusicOpen] = useState(false);
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
 
@@ -62,7 +64,8 @@ export default function MobileBottomNav() {
       <Box
         sx={{
           position: 'fixed',
-          left: 10, right: 10, bottom: 10,
+          left: 10, right: 10,
+          ...(navPos === 'top' ? { top: 10 } : { bottom: 10 }),
           zIndex: 1400,
           height: HEIGHT,
           display: 'flex',
@@ -73,8 +76,8 @@ export default function MobileBottomNav() {
           backdropFilter: 'blur(20px) saturate(1.4)',
           border: `1px solid ${theme.border}`,
           boxShadow: '0 16px 34px rgba(0,0,0,0.45), 0 4px 12px rgba(0,0,0,0.3)',
-          // Запас снизу под системный жестовый бар
-          pb: 'env(safe-area-inset-bottom)',
+          pb: navPos === 'bottom' ? 'env(safe-area-inset-bottom)' : 0,
+          pt: navPos === 'top' ? 'env(safe-area-inset-top)' : 0,
           '&::before': {
             content: '""',
             position: 'absolute', inset: 0, borderRadius: 20, pointerEvents: 'none',
@@ -86,7 +89,7 @@ export default function MobileBottomNav() {
           unread > 0 ? <Badge badgeContent={unread} color="error" sx={{ position: 'absolute', top: 2, right: 0, '& .MuiBadge-badge': { fontSize: 9, minWidth: 16, height: 16, p: 0 } }} /> : undefined)}
         {item(isActive('/contacts'), 'Контакты', () => navigate('/contacts'), <Group fontSize="medium" />)}
         {item(false, 'Музыка', () => setMusicOpen(true), <LibraryMusic fontSize="medium" />)}
-        {item(false, 'Магазин тем', () => setMarketplaceOpen(true), <Storefront fontSize="medium" />)}
+        {item(false, 'Темы', () => setMarketplaceOpen(true), <Storefront fontSize="medium" />)}
         {item(isActive('/profile'), 'Профиль', () => navigate('/profile'), <AccountCircle fontSize="medium" />)}
         {item(isActive('/devices'), 'Устройства', () => navigate('/devices'), <DevicesOther fontSize="medium" />)}
       </Box>

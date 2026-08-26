@@ -5,6 +5,7 @@ import { connectSocket, disconnectSocket } from '../services/socket';
 import { peer, isPeerAvailable } from '../services/peer';
 import { useThemeStore } from './themeStore';
 import { initArchive, closeArchive } from '../services/localArchive';
+import { hydrateSettingsFromServer, startSettingsAutoSync } from './userSettingsStore';
 
 interface AuthState {
   user: User | null;
@@ -113,6 +114,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         } catch {}
         set({ user: res.data, isAuthenticated: true, token: existingToken, isLoading: false });
         try { if (res.data?.id) initArchive(res.data.id); } catch {}
+        try { await hydrateSettingsFromServer(); startSettingsAutoSync(); } catch {}
         return;
       } catch {
         // Токен невалиден — попробуем переавторизоваться по устройству ниже.
@@ -136,6 +138,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       } catch {}
       set({ token: accessToken, user, isAuthenticated: true });
       try { if (user?.id) initArchive(user.id); } catch {}
+      try { await hydrateSettingsFromServer(); startSettingsAutoSync(); } catch {}
     } catch (e) {
       console.error('[auth] device login failed', e);
     } finally {

@@ -11,7 +11,7 @@
  * В prod: грузим собранный Web/dist локально (file в Electron) или с сервера.
  */
 
-const { app, BrowserWindow, shell } = require('electron');
+const { app, BrowserWindow, shell, session, desktopCapturer } = require('electron');
 const path = require('path');
 
 const DEV = !app.isPackaged;
@@ -96,6 +96,36 @@ app.on('open-url', (event, url) => {
 });
 
 app.whenReady().then(() => {
+  // ─── WebRTC permissions (микрофон / камера / уведомления) ────────────
+  // Без этих handlers Electron блокирует getUserMedia и звонок молча падает.
+  const ses = session.defaultSession;
+  const allowed = new Set(['media', 'audioCapture', 'videoCapture', 'display-capture', 'notifications']);
+  ses.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(allowed.has(permission));
+  });
+  ses.setPermissionCheckHandler((_wc, permission) => allowed.has(permission));
+
+  // ─── Screen-share (getDisplayMedia) ───────────────────────────────────
+  // По умолчанию Electron 20+ требует явно вернуть источник экрана.
+  // Здесь берём первый доступный экран без picker-UI. При желании можно
+  // показать окно выбора через ipcMain + отдельный renderer.
+  if (typeof ses.setDisplayMediaRequestHandler === 'function') {
+    ses.setDisplayMediaRequestHandler(async (_req, callback) => {
+      try {
+        const sources = await desktopCapturer.getSources({
+          types: ['screen', 'window'],
+          thumbnailSize: { width: 0, height: 0 },
+        });
+        // Первый экран (обычно основной монитор).
+        const screen = sources.find((s) => s.id.startsWith('screen:')) || sources[0];
+        if (screen) callback({ video: screen, audio: 'loopback' });
+        else callback(null);
+      } catch {
+        callback(null);
+      }
+    });
+  }
+
   createWindow();
   if (pendingDeepLink && mainWindow) {
     mainWindow.webContents.once('did-finish-load', () => {

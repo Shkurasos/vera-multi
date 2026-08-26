@@ -13,6 +13,7 @@ import {
   FormatSize, ExitToApp, ArrowBack,
 } from '@mui/icons-material';
 import { CallModal } from './CallModal';
+import { useCallStore } from '../store/callStore';
 import { useChatStore } from '../store/chatStore';
 import { useChatPrefsStore } from '../store/chatPrefsStore';
 import { useChatSoundStore } from '../store/chatSoundStore';
@@ -20,6 +21,7 @@ import NotificationSettingsDialog from './NotificationSettingsDialog';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import { useChatSettingsStore, BUILTIN_FONTS } from '../store/chatSettingsStore';
+import { useUserSettingsStore } from '../store/userSettingsStore';
 import { sendTypingStart, sendTypingStop } from '../services/socket';
 import { filesApi, messagesApi } from '../services/api';
 import MessageBubble from './MessageBubble';
@@ -192,6 +194,7 @@ function ChatWindowInner() {
   const [notifSettingsOpen, setNotifSettingsOpen] = useState(false);
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
   const [activeCall, setActiveCall] = useState<{ type: 'audio' | 'video' } | null>(null);
+  const callActive = useCallStore((s) => s.activeChatId === id);
   const [toast, setToast] = useState<{ message: string; severity: 'success' | 'info' | 'warning' | 'error' } | null>(null);
 
   const {
@@ -199,6 +202,7 @@ function ChatWindowInner() {
     setFontSize, setEmojiSize, setFontFamily,
     addCustomFont, removeCustomFont,
   } = useChatSettingsStore();
+  const layout = useUserSettingsStore((st) => st.layout);
   const fontInputRef = useRef<HTMLInputElement>(null);
 
   // Голосовые сообщения
@@ -756,9 +760,12 @@ function ChatWindowInner() {
           px: 2.5, py: 1.5, gap: 2,
           background: theme.headerGradient || theme.bgHeader,
           backdropFilter: 'blur(22px)',
-          borderBottom: `1px solid ${theme.border}`,
+          borderBottom: layout.chatHeaderPos === 'bottom' ? 'none' : `1px solid ${theme.border}`,
+          borderTop: layout.chatHeaderPos === 'bottom' ? `1px solid ${theme.border}` : 'none',
           boxShadow: '0 16px 44px rgba(0,0,0,0.22)',
           flexShrink: 0,
+          position: 'relative', zIndex: 2,
+          order: layout.chatHeaderPos === 'bottom' ? 3 : 0,
         }}>
           {/* Avatar — клик открывает профиль/инфо */}
           <Tooltip title="К списку чатов">
@@ -804,18 +811,28 @@ function ChatWindowInner() {
             </Typography>
           </Box>
 
-          {/* Кнопки звонка — только для личных чатов */}
-          {(activeChat.type === 'private' || activeChat.type === 'direct') && (
+          {/* Кнопки звонка — 1:1 и группы (Discord-style) */}
+          {(activeChat.type === 'private' || activeChat.type === 'direct' || activeChat.type === 'group') && (
             <>
-              <Tooltip title="Аудио звонок">
-                <IconButton onClick={() => setActiveCall({ type: 'audio' })}
-                  sx={{ color: theme.textSec, '&:hover': { color: '#22c55e' } }}>
-                  <Call sx={{ fontSize: 22 }} />
-                </IconButton>
+              <Tooltip title={callActive ? 'Идёт звонок' : 'Аудио звонок'}>
+                <span>
+                  <IconButton
+                    onClick={() => useCallStore.getState().startCall(id!, 'audio')}
+                    disabled={callActive}
+                    sx={{
+                      color: callActive ? '#22c55e' : theme.textSec,
+                      '&:hover': { color: '#22c55e' },
+                    }}
+                  >
+                    <Call sx={{ fontSize: 22 }} />
+                  </IconButton>
+                </span>
               </Tooltip>
               <Tooltip title="Видео звонок">
-                <IconButton onClick={() => setActiveCall({ type: 'video' })}
-                  sx={{ color: theme.textSec, '&:hover': { color: '#3b82f6' } }}>
+                <IconButton
+                  onClick={() => useCallStore.getState().startCall(id!, 'video')}
+                  sx={{ color: theme.textSec, '&:hover': { color: '#3b82f6' } }}
+                >
                   <Videocam sx={{ fontSize: 22 }} />
                 </IconButton>
               </Tooltip>
@@ -1130,6 +1147,7 @@ function ChatWindowInner() {
             bgcolor: theme.bgHeader,
             borderBottom: `1px solid ${theme.border}`,
             display: 'flex', alignItems: 'center', gap: 1.5,
+            position: 'relative', zIndex: 2, order: 1,
           }}>
             <Search sx={{ color: theme.textSec, fontSize: 20 }} />
             <TextField
@@ -1167,6 +1185,7 @@ function ChatWindowInner() {
             borderBottom: `1px solid ${theme.accent}30`,
             display: 'flex', alignItems: 'center', gap: 1.5,
             cursor: 'pointer',
+            position: 'relative', zIndex: 2, order: 1,
           }}
             onClick={() => {
               const pinned = pinnedMessages[activeChat.id];
@@ -1195,6 +1214,7 @@ function ChatWindowInner() {
               height: 3,
               bgcolor: theme.accent + '20',
               '& .MuiLinearProgress-bar': { bgcolor: theme.accent },
+              position: 'relative', zIndex: 2, order: 1,
             }}
           />
         )}
@@ -1207,6 +1227,7 @@ function ChatWindowInner() {
           scrollBehavior: 'smooth',
           '&::-webkit-scrollbar': { width: 5 },
           '&::-webkit-scrollbar-thumb': { bgcolor: theme.accent + '30', borderRadius: 4 },
+          position: 'relative', zIndex: 2, order: 2,
         }}
           onClick={() => setHoveredMsgId(null)}
           onContextMenu={() => setHoveredMsgId(null)}
@@ -1369,9 +1390,12 @@ function ChatWindowInner() {
           px: { xs: 1.15, md: 1.6 }, py: 1.25,
           bgcolor: theme.bgHeader,
           backdropFilter: 'blur(22px)',
-          borderTop: `1px solid ${theme.border}`,
-          boxShadow: '0 -18px 46px rgba(0,0,0,0.28)',
+          borderTop: layout.chatInputPos === 'top' ? 'none' : `1px solid ${theme.border}`,
+          borderBottom: layout.chatInputPos === 'top' ? `1px solid ${theme.border}` : 'none',
+          boxShadow: layout.chatInputPos === 'top' ? '0 18px 46px rgba(0,0,0,0.28)' : '0 -18px 46px rgba(0,0,0,0.28)',
           flexShrink: 0,
+          position: 'relative', zIndex: 2,
+          order: layout.chatInputPos === 'top' ? 1 : 4,
         }}>
 
           {/* Кнопка скрепки */}
@@ -1611,14 +1635,7 @@ placeholder="Сообщение..."
         onClose={() => setNotifSettingsOpen(false)}
       />
 
-      {/* ── Активный звонок ── */}
-      {activeCall && (
-        <CallModal
-          targetUser={getPartnerUser()}
-          callType={activeCall.type}
-          onClose={() => setActiveCall(null)}
-        />
-      )}
+      {/* ── Активный звонок (legacy 1:1 CallModal больше не показываем — используется CallOverlay) ── */}
 
       {/* ── Диалог пересылки сообщения ── */}
       <Dialog

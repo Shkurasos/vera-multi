@@ -18,9 +18,15 @@ import BotFatherPage from './pages/BotFatherPage';
 import AdminToolsPage from './pages/AdminToolsPage';
 import MusicPlayer from './components/MusicPlayer';
 import MobileBottomNav from './components/MobileBottomNav';
-import { IncomingCallModal } from './components/CallModal';
+import CallOverlay from './components/CallOverlay';
+import CallMiniBar from './components/CallMiniBar';
+import CallRingModal from './components/CallRingModal';
+import CallAudioSink from './components/CallAudioSink';
+import { bindSocketHandlers as bindCallHandlers } from './services/callPeers';
 import { peer, isPeerAvailable } from './services/peer';
 import { useUserSettingsStore } from './store/userSettingsStore';
+import { useShopStore } from './store/shopStore';
+import Store, { StoreOpen } from './components/Store';
 import AppLockGate from './components/AppLockGate';
 
 // Звук уведомления
@@ -69,6 +75,8 @@ interface IncomingCallState {
   offer: RTCSessionDescriptionInit;
   type: 'audio' | 'video';
 }
+// (legacy; больше не используется в UI, но тип оставлен на всякий случай для типизации старых событий)
+void ({} as IncomingCallState);
 
 export default function App() {
   const { checkAuth, isAuthenticated, isLoading, user, isPeerMode } = useAuthStore();
@@ -77,7 +85,6 @@ export default function App() {
     applyPinnedMessage, setTyping, updateChatList, setUserOnline, setUserOffline, clearOnlineUsers, markMessageRead,
   } = useChatStore();
   const listenersAttached = useRef(false);
-  const [incomingCall, setIncomingCall] = useState<IncomingCallState | null>(null);
 
   useEffect(() => {
     // На публичной странице /link авто-логин запрещён: устройство ещё не
@@ -295,10 +302,11 @@ export default function App() {
         markMessageRead(chatId, messageId, userId);
       });
 
-      // Входящий звонок
-      socket.on('call:incoming', (data: IncomingCallState) => {
-        setIncomingCall(data);
-      });
+      // Входящий звонок (legacy 1:1 protocol — новые звонки идут через callroom:*)
+      // Оставлен только как no-op для старых клиентов; UI показывает CallRingModal.
+
+      // Discord-style: биндим обработчики callroom:* один раз.
+      bindCallHandlers();
     };
 
     // Пробуем сразу, потом через интервал если сокет ещё не подключён
@@ -361,15 +369,22 @@ export default function App() {
       {/* Плеер рендерится глобально над всеми маршрутами — не размонтируется при навигации */}
       {isAuthenticated && <MusicPlayer />}
 
+      {/* Магазин — плашка-оверлей, открывается на любом экране */}
+      {isAuthenticated && (
+        <StoreOpen />
+      )}
+
       {/* Мобильная нижняя навигация — глобально на всех авторизованных экранах */}
       {isAuthenticated && <MobileBottomNav />}
 
-      {/* Глобальный модал входящего звонка */}
-      {incomingCall && (
-        <IncomingCallModal
-          data={incomingCall}
-          onClose={() => setIncomingCall(null)}
-        />
+      {/* Discord-style звонки */}
+      {isAuthenticated && (
+        <>
+          <CallRingModal />
+          <CallOverlay />
+          <CallMiniBar />
+          <CallAudioSink />
+        </>
       )}
     </AppLockGate>
   );

@@ -12,6 +12,7 @@ import { useChatStore } from '../store/chatStore';
 import { useThemeStore } from '../store/themeStore';
 import { useAuthStore } from '../store/authStore';
 import { useChatSettingsStore } from '../store/chatSettingsStore';
+import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { voiceApi } from '../services/api';
 import { membranePressSx, motion } from '../styles/motion';
 
@@ -252,6 +253,12 @@ function MessageBubble({
   const { addReaction, pinMessage, editMessage, deleteMessage, sendMessage, addMessage } = useChatStore();
   const { fontSize, emojiSize, fontFamily } = useChatSettingsStore();
 
+  // Активные покупки из магазина: обводка аватара и «плашка» своих сообщений.
+  const shopActiveRing = useShopStore((s) => s.activeRing);
+  const shopActiveSelfCard = useShopStore((s) => s.activeSelfCard);
+  const ringItem = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === shopActiveRing);
+  const selfCardItem = SHOP_CATALOG.find(i => i.applyKey === 'selfCard' && i.id === shopActiveSelfCard);
+
   const [showActions, setShowActions] = useState(false);
   const [openReply, setOpenReply] = useState(false);
   const [openForward, setOpenForward] = useState(false);
@@ -314,6 +321,47 @@ function MessageBubble({
 
   const bubbleTextColor = isOwn ? (theme.bubbleOwnText || '#fff') : theme.text;
 
+  // ── Обводка аватара из магазина ──────────────────────────────────────
+  const ringVal = ringItem?.value as any;
+  const avatarSx: Record<string, any> = {
+    width: 38, height: 38, cursor: 'pointer', flexShrink: 0,
+    bgcolor: theme.accent + '70',
+    border: `2px solid ${isOwn ? theme.accent : 'transparent'}`,
+    transition: 'box-shadow 0.3s ease, border-color 0.3s ease',
+  };
+  if (ringVal) {
+    if (ringVal.type === 'gradient') {
+      avatarSx.border = '2px solid transparent';
+      avatarSx.backgroundImage = `linear-gradient(${theme.accent + '33'}, ${theme.accent + '33'}), ${ringVal.gradient}`;
+      avatarSx.backgroundOrigin = 'border-box';
+      avatarSx.backgroundClip = 'padding-box, border-box';
+      avatarSx.boxShadow = `0 0 12px ${theme.accent}55`;
+    } else if (ringVal.type === 'glow') {
+      avatarSx.border = `2px solid ${ringVal.color || theme.accent}`;
+      avatarSx.boxShadow = `0 0 14px ${ringVal.color || theme.accent}`;
+    }
+  }
+
+  // ─── «Плашка» своих сообщений (вид у других) ────────────────────────
+  const selfPlaqueSx: Record<string, any> = {
+    fontSize: 11, lineHeight: 1, px: 0.6, py: 0.4, borderRadius: 1,
+    color: theme.textSec, bgcolor: theme.bgHover, fontWeight: 600,
+    ...((theme as any).bgBubbleOther ? {} : {}),
+  };
+  const selfVal = selfCardItem?.value;
+  if (selfVal) {
+    if (selfVal.type === 'gradient') {
+      selfPlaqueSx.background = selfVal.gradient;
+      selfPlaqueSx.color = '#fff';
+      selfPlaqueSx.boxShadow = `0 2px 8px rgba(0,0,0,0.25)`;
+    } else if (selfVal.type === 'badge') {
+      selfPlaqueSx.bgcolor = theme.accent;
+      selfPlaqueSx.color = '#fff';
+      selfPlaqueSx.borderRadius = 999;
+      selfPlaqueSx.px = 0.8;
+    }
+  }
+
   return (
     <Box
       id={`msg-${message.id}`}
@@ -327,11 +375,7 @@ function MessageBubble({
     >
       <Avatar
         src={senderAvatar}
-        sx={{
-          width: 38, height: 38, cursor: 'pointer', flexShrink: 0,
-          bgcolor: theme.accent + '70',
-          border: `2px solid ${isOwn ? theme.accent : 'transparent'}`,
-        }}
+        sx={avatarSx}
         onClick={() => onAvatarClick?.(sender as User)}
       >
         {senderName[0]?.toUpperCase()}
@@ -342,6 +386,13 @@ function MessageBubble({
           <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 0.3, ml: 0.5 }}>
             {senderName}
           </Typography>
+        )}
+        {isOwn && (
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 0.4 }}>
+            <Typography component="span" sx={selfPlaqueSx}>
+              Вы
+            </Typography>
+          </Box>
         )}
 
         <Box
@@ -355,7 +406,9 @@ function MessageBubble({
             boxShadow: isOwn
               ? theme.bubbleOwnShadow
               : theme.bubbleOtherShadow,
-            borderRadius: isOwn ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+            borderRadius: isOwn
+              ? `var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) 4px var(--vera-bubble-radius, 16px)`
+              : `var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) 4px`,
             px: 1.75, py: 1.25,
             border: `1px solid ${isOwn ? theme.accent + '28' : theme.border}`,
             backdropFilter: 'blur(18px)',

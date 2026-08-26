@@ -6,6 +6,7 @@ node_modules/
 Web/dist/
 App/dist/
 App/dist-electron/
+App/dist-electron-build/
 App/out/
 App/release/
 App/build/
@@ -17,6 +18,8 @@ Server/vera.json
 
 # logs / env
 *.log
+*procs.txt
+holders.txt
 .env
 .env.*
 !.env.example
