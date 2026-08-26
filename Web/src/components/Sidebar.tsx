@@ -22,6 +22,7 @@ import { useUserSettingsStore } from '../store/userSettingsStore';
 import { chatsApi, usersApi } from '../services/api';
 import { peer, isPeerAvailable } from '../services/peer';
 import { Chat, User } from '../types';
+import ContextMenu from './ContextMenu';
 import VeraLogo from './VeraLogo';
 import MusicLibrary from './MusicLibrary';
 import { membranePressSx, motion } from '../styles/motion';
@@ -455,12 +456,42 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
         )}
       </Box>
 
-      {contextMenu && <Box sx={{ position: 'fixed', left: contextMenu.x, top: contextMenu.y, zIndex: 2000, bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`, borderRadius: 2, boxShadow: 4, p: .5 }} onMouseLeave={() => setContextMenu(null)}>
-        <Button fullWidth startIcon={<Pin />} onClick={() => { togglePin(contextMenu.chat.id); setContextMenu(null); }}>Закрепить</Button>
-        <Button fullWidth startIcon={<Archive />} onClick={() => { toggleArchive(contextMenu.chat.id); setContextMenu(null); }}>Архив</Button>
-        <Button fullWidth startIcon={<Mute />} onClick={() => { toggleMute(contextMenu.chat.id); setContextMenu(null); }}>Без звука</Button>
-        <Button fullWidth color="error" startIcon={<DeleteForever />} onClick={() => { setDeleteConfirmChat(contextMenu.chat); setContextMenu(null); }}>Удалить</Button>
-      </Box>}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+          title={contextMenu.chat.name || 'Чат'}
+          items={[
+            {
+              key: 'pin',
+              label: isPinned(contextMenu.chat.id) ? 'Открепить' : 'Закрепить',
+              icon: <Pin />,
+              onClick: () => togglePin(contextMenu.chat.id),
+            },
+            {
+              key: 'archive',
+              label: isArchived(contextMenu.chat.id) ? 'Из архива' : 'В архив',
+              icon: <Archive />,
+              onClick: () => toggleArchive(contextMenu.chat.id),
+            },
+            {
+              key: 'mute',
+              label: isMuted(contextMenu.chat.id) ? 'Включить звук' : 'Без звука',
+              icon: <Mute />,
+              onClick: () => toggleMute(contextMenu.chat.id),
+            },
+            {
+              key: 'delete',
+              label: 'Удалить',
+              icon: <DeleteForever />,
+              danger: true,
+              divider: true,
+              onClick: () => setDeleteConfirmChat(contextMenu.chat),
+            },
+          ]}
+        />
+      )}
 
       <Box
         onMouseDown={() => {

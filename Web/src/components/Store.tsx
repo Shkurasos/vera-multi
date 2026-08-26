@@ -24,8 +24,11 @@ export default function Store({ onClose }: Props) {
   const { theme } = useThemeStore();
   const { enabled, activeRing, activeSelfCard, isOwned, purchase } = useShopStore();
   const [activeCat, setActiveCat] = useState<ShopCategory | 'all'>('all');
+  const [tab, setTab] = useState<'inventory' | 'shop'>('inventory');
 
-  const items = SHOP_CATALOG.filter(i => activeCat === 'all' || i.category === activeCat);
+  const items = SHOP_CATALOG
+    .filter(i => activeCat === 'all' || i.category === activeCat)
+    .filter(i => (tab === 'inventory' ? isOwned(i.id) : true));
   const isActive = (id: string) => id === activeRing || id === activeSelfCard;
 
   return (
@@ -70,6 +73,21 @@ export default function Store({ onClose }: Props) {
               <Close />
             </IconButton>
           </Box>
+        </Box>
+
+        {/* Табы: Инвентарь / Магазин */}
+        <Box sx={{ display: 'flex', gap: 0.5, p: 0.5, bgcolor: theme.bgHover, borderRadius: 999, mb: 2, width: 'fit-content' }}>
+          {(['inventory', 'shop'] as const).map((t) => (
+            <Button key={t} size="small" onClick={() => setTab(t)}
+              sx={{
+                bgcolor: tab === t ? theme.accent : 'transparent',
+                color: tab === t ? '#001018' : theme.textSec,
+                textTransform: 'none', borderRadius: 999, px: 2.5, fontSize: 12, minHeight: 32,
+                '&:hover': { bgcolor: tab === t ? theme.accent : theme.bg + '88' },
+              }}>
+              {t === 'inventory' ? 'Мой инвентарь' : 'Магазин'}
+            </Button>
+          ))}
         </Box>
 
         {/* Категории */}

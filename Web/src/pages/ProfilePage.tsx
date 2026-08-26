@@ -35,6 +35,29 @@ export default function ProfilePage() {
     open: false, message: '', severity: 'success',
   });
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  const bannerInputRef = useRef<HTMLInputElement>(null);
+
+  const handleBannerChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 4 * 1024 * 1024) {
+      setSnack({ open: true, message: 'Файл больше 4 МБ', severity: 'error' });
+      return;
+    }
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result || ''));
+        r.onerror = () => reject(new Error('read'));
+        r.readAsDataURL(file);
+      });
+      customization.set('bannerUrl', dataUrl);
+      setSnack({ open: true, message: 'Шапка обновлена', severity: 'success' });
+    } catch {
+      setSnack({ open: true, message: 'Не удалось загрузить', severity: 'error' });
+    }
+  };
 
   const [form, setForm] = useState({
     firstName: user?.firstName || '',
@@ -267,14 +290,27 @@ export default function ProfilePage() {
       </Box>
 
 
-      {/* ── Banner ── */}
-      <Box sx={{
-        height: 180,
-        background: customization.bannerUrl
-          ? `url(${customization.bannerUrl}) center/cover no-repeat`
-          : `linear-gradient(135deg, ${customization.bannerColor || theme.accent} 0%, ${theme.bgChat} 100%)`,
-        flexShrink: 0,
-      }} />
+      {/* ── Banner (клик = сменить фон шапки, платно/бесплатно решает магазин) ── */}
+      <Box
+        onClick={() => bannerInputRef.current?.click()}
+        sx={{
+          height: 180, position: 'relative', cursor: 'pointer',
+          background: customization.bannerUrl
+            ? `url(${customization.bannerUrl}) center/cover no-repeat`
+            : `linear-gradient(135deg, ${customization.bannerColor || theme.accent} 0%, ${theme.bgChat} 100%)`,
+          flexShrink: 0,
+          '&:hover .banner-edit': { opacity: 1 },
+        }}>
+        <Box className="banner-edit" sx={{
+          position: 'absolute', inset: 0, opacity: 0, transition: 'opacity 0.2s',
+          bgcolor: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          color: '#fff', gap: 1, fontSize: 14, fontWeight: 600,
+        }}>
+          <PhotoCamera sx={{ fontSize: 20 }} /> Сменить шапку
+        </Box>
+        <input ref={bannerInputRef} type="file" hidden accept="image/*"
+          onChange={handleBannerChange} />
+      </Box>
 
       {/* ── Avatar section ── */}
       <Box sx={{

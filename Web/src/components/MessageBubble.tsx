@@ -14,6 +14,7 @@ import { useAuthStore } from '../store/authStore';
 import { useChatSettingsStore } from '../store/chatSettingsStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { voiceApi } from '../services/api';
+import ContextMenu from './ContextMenu';
 import { membranePressSx, motion } from '../styles/motion';
 
 interface Props {
@@ -598,18 +599,20 @@ function MessageBubble({
       </Popover>
 
       {contextMenu && (
-        <Box sx={{ position: 'fixed', left: contextMenu.x, top: contextMenu.y, zIndex: 2000, bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`, borderRadius: 2, boxShadow: 4, p: 0.5 }}
-          onMouseLeave={() => setContextMenu(null)}>
-          <Button fullWidth startIcon={<Reply />} onClick={() => { setContextMenu(null); onReply(message); }} sx={{ justifyContent: 'flex-start' }}>Ответить</Button>
-          <Button fullWidth startIcon={<Forward />} onClick={() => { setContextMenu(null); onForward(message); }} style={{ justifyContent: 'flex-start' }}>Переслать</Button>
-          <Button fullWidth startIcon={<ContentCopy />} onClick={() => { navigator.clipboard.writeText(message.content || ''); setContextMenu(null); }} style={{ justifyContent: 'flex-start' }}>Копировать</Button>
-          <Button fullWidth startIcon={<PushPin />} onClick={() => { setContextMenu(null); handleTogglePin(); }} style={{ justifyContent: 'flex-start' }}>{message.isPinned ? 'Открепить' : 'Закрепить'}</Button>
-          <Button fullWidth startIcon={<AddReaction />} onClick={() => { setContextMenu(null); setReactionAnchor(contextMenu as any); }} style={{ justifyContent: 'flex-start' }}>Реакция</Button>
-          {isOwn && (
-            <Button fullWidth startIcon={<Edit />} onClick={() => { setContextMenu(null); setEditText(message.content || ''); setEditing(true); }} style={{ justifyContent: 'flex-start' }}>Редактировать</Button>
-          )}
-          <Button fullWidth color="error" startIcon={<Delete />} onClick={handleDelete} style={{ justifyContent: 'flex-start' }}>Удалить</Button>
-        </Box>
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+          items={[
+            { key: 'reply', label: 'Ответить', icon: <Reply />, onClick: () => onReply(message) },
+            { key: 'forward', label: 'Переслать', icon: <Forward />, onClick: () => onForward(message) },
+            { key: 'copy', label: 'Копировать', icon: <ContentCopy />, onClick: () => navigator.clipboard.writeText(message.content || '') },
+            { key: 'pin', label: message.isPinned ? 'Открепить' : 'Закрепить', icon: <PushPin />, onClick: () => handleTogglePin() },
+            { key: 'react', label: 'Реакция', icon: <AddReaction />, onClick: () => setReactionAnchor({ getBoundingClientRect: () => ({ left: contextMenu.x, top: contextMenu.y, right: contextMenu.x, bottom: contextMenu.y, width: 0, height: 0, x: contextMenu.x, y: contextMenu.y, toJSON: () => ({}) }) } as any) },
+            ...(isOwn ? [{ key: 'edit', label: 'Редактировать', icon: <Edit />, onClick: () => { setEditText(message.content || ''); setEditing(true); } }] : []),
+            { key: 'delete', label: 'Удалить', icon: <Delete />, danger: true, divider: true, onClick: handleDelete },
+          ]}
+        />
       )}
     </Box>
   );

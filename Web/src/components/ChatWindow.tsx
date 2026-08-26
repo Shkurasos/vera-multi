@@ -588,6 +588,23 @@ function ChatWindowInner() {
     else setShowInfo(v => !v);
   };
 
+  // ── Хуки для магазинных возможностей (должны вызываться ДО ранних return, иначе React error #310) ──
+  const chatThemeOverride = useChatThemeStore((s) => (id ? s.themes[id] : undefined));
+  const smartWpActiveId = useShopStore((s) => s.activeSelfCard);
+  const smartWpOwned = useShopStore((s) => s.owned);
+  const smartWpItem = React.useMemo(() => {
+    return SHOP_CATALOG.find((it) => it.applyKey === 'smartWallpaper' && smartWpOwned[it.id]);
+  }, [smartWpActiveId, smartWpOwned]);
+  const smartWpGradient = React.useMemo(() => {
+    if (!smartWpItem || smartWpItem.value?.type !== 'time') return null;
+    const h = new Date().getHours();
+    if (h < 6) return 'linear-gradient(135deg,#0b1026 0%,#161a3f 60%,#3a1f5c 100%)';
+    if (h < 11) return 'linear-gradient(135deg,#ffd6a5 0%,#ffb480 50%,#ff8caa 100%)';
+    if (h < 17) return 'linear-gradient(135deg,#7ec8ff 0%,#a5e3ff 50%,#e0f4ff 100%)';
+    if (h < 21) return 'linear-gradient(135deg,#ff9068 0%,#ff5f6d 50%,#4b1248 100%)';
+    return 'linear-gradient(135deg,#0b1026 0%,#20124d 60%,#1a1a2e 100%)';
+  }, [smartWpItem]);
+
   if (!activeChat) {
     // If there's a chat id in URL — we're loading, not waiting for selection
     if (id) {
@@ -643,27 +660,6 @@ function ChatWindowInner() {
   const chatName = getChatName();
   const chatAvatar = getChatAvatar();
   const partnerOnline = getPartnerOnline();
-
-  // ── Персональная тема чата (платный товар «Персональные темы») ────────
-  const chatThemeOverride = useChatThemeStore((s) => (id ? s.themes[id] : undefined));
-  // ── Умные обои (платный товар «Умные обои по времени») ────────────────
-  const smartWpActiveId = useShopStore((s) => s.activeSelfCard); // не оно
-  const smartWpItem = React.useMemo(() => {
-    // Ищем активный купленный товар с applyKey === 'smartWallpaper'.
-    // Пока нет отдельного activeWallpaper — берём первый купленный.
-    const owned = useShopStore.getState().owned;
-    return SHOP_CATALOG.find((it) => it.applyKey === 'smartWallpaper' && owned[it.id]);
-  }, [smartWpActiveId]);
-  const smartWpGradient = React.useMemo(() => {
-    if (!smartWpItem || smartWpItem.value?.type !== 'time') return null;
-    const h = new Date().getHours();
-    // Утро / день / вечер / ночь
-    if (h < 6) return 'linear-gradient(135deg,#0b1026 0%,#161a3f 60%,#3a1f5c 100%)';
-    if (h < 11) return 'linear-gradient(135deg,#ffd6a5 0%,#ffb480 50%,#ff8caa 100%)';
-    if (h < 17) return 'linear-gradient(135deg,#7ec8ff 0%,#a5e3ff 50%,#e0f4ff 100%)';
-    if (h < 21) return 'linear-gradient(135deg,#ff9068 0%,#ff5f6d 50%,#4b1248 100%)';
-    return 'linear-gradient(135deg,#0b1026 0%,#20124d 60%,#1a1a2e 100%)';
-  }, [smartWpItem]);
 
   return (
     <Box sx={{ display: 'flex', height: '100%', overflow: 'hidden', background: theme.bgChat, position: 'relative', perspective: 1200 }}>
