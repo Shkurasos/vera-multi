@@ -353,6 +353,8 @@ export default function LayoutDesignerDialog({ open, onClose }: Props) {
               onChange={(_, v) => v && setLayout('sidebarSide', v as SidePos)}>
               <ToggleButton value="left"><SwapHoriz sx={{ mr: 0.5, fontSize: 16 }} />Слева</ToggleButton>
               <ToggleButton value="right">Справа<SwapHoriz sx={{ ml: 0.5, fontSize: 16 }} /></ToggleButton>
+              <ToggleButton value="top">Сверху</ToggleButton>
+              <ToggleButton value="bottom">Снизу</ToggleButton>
             </ToggleButtonGroup>
           </Box>
           <Box>
