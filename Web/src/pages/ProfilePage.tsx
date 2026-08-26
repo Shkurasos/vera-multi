@@ -212,7 +212,7 @@ export default function ProfilePage() {
 
   return (
     <Box sx={{
-      height: '100%', bgcolor: theme.bgChat,
+      height: '100%', bgcolor: theme.bg,
       display: 'flex', flexDirection: 'column', overflowY: 'auto',
       pb: { xs: 76, md: 0 }, // запас под мобильную нижнюю панель
       '&::-webkit-scrollbar': { width: 5 },
@@ -476,130 +476,113 @@ export default function ProfilePage() {
             </Box>
           </Box>
         ) : (
-          <Box>
-            <Typography sx={{ fontSize: 14, color: theme.accent, fontWeight: 700, mb: 2 }}>
-              Информация
-            </Typography>
-
-            {user?.phone && (
-              <Box display="flex" alignItems="flex-start" gap={2} mb={2}>
-                <Phone sx={{ fontSize: 20, color: theme.textSec, mt: 0.2 }} />
-                <Box>
-                  <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 0.3 }}>Телефон</Typography>
-                  <Typography sx={{ fontSize: 15, color: theme.text }}>{user.phone}</Typography>
-                </Box>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 720, mx: 'auto', width: '100%' }}>
+            {/* ── Карточка: О себе (Steam-style) ── */}
+            <Box sx={{
+              bgcolor: theme.bgHeader, borderRadius: 3, p: 2.5,
+              border: `1px solid ${theme.border}`,
+            }}>
+              <Typography sx={{ fontSize: 12, color: theme.textSec, textTransform: 'uppercase', letterSpacing: 0.6, mb: 1.5, fontWeight: 700 }}>
+                О себе
+              </Typography>
+              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, rowGap: 1.5, columnGap: 2.5 }}>
+                {user?.phone && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                    <Phone sx={{ fontSize: 18, color: theme.textSec }} />
+                    <Box>
+                      <Typography sx={{ fontSize: 11, color: theme.textSec }}>Телефон</Typography>
+                      <Typography sx={{ fontSize: 14, color: theme.text }}>{user.phone}</Typography>
+                    </Box>
+                  </Box>
+                )}
+                {user?.birthDate && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                    <Cake sx={{ fontSize: 18, color: theme.textSec }} />
+                    <Box>
+                      <Typography sx={{ fontSize: 11, color: theme.textSec }}>Дата рождения</Typography>
+                      <Typography sx={{ fontSize: 14, color: theme.text }}>{user.birthDate}</Typography>
+                    </Box>
+                  </Box>
+                )}
+                {(user?.country || user?.city) && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                    <LocationOn sx={{ fontSize: 18, color: theme.textSec }} />
+                    <Box>
+                      <Typography sx={{ fontSize: 11, color: theme.textSec }}>Местоположение</Typography>
+                      <Typography sx={{ fontSize: 14, color: theme.text }}>
+                        {[user?.city, user?.region, user?.country].filter(Boolean).join(', ')}
+                      </Typography>
+                    </Box>
+                  </Box>
+                )}
+                {user?.createdAt && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                    <Info sx={{ fontSize: 18, color: theme.textSec }} />
+                    <Box>
+                      <Typography sx={{ fontSize: 11, color: theme.textSec }}>С нами</Typography>
+                      <Typography sx={{ fontSize: 14, color: theme.text }}>
+                        {new Date(user.createdAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}
+                      </Typography>
+                    </Box>
+                  </Box>
+                )}
               </Box>
-            )}
-
-            {user?.bio && (
-              <Box display="flex" alignItems="flex-start" gap={2} mb={2}>
-                <Info sx={{ fontSize: 20, color: theme.textSec, mt: 0.2 }} />
-                <Box>
-                  <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 0.3 }}>О себе</Typography>
-                  <Typography sx={{ fontSize: 15, color: theme.text, whiteSpace: 'pre-wrap' }}>{user.bio}</Typography>
-                </Box>
-              </Box>
-            )}
-
-            {user?.birthDate && (
-              <Box display="flex" alignItems="flex-start" gap={2} mb={2}>
-                <Cake sx={{ fontSize: 20, color: theme.textSec, mt: 0.2 }} />
-                <Box>
-                  <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 0.3 }}>Дата рождения</Typography>
-                  <Typography sx={{ fontSize: 15, color: theme.text }}>{user.birthDate}</Typography>
-                </Box>
-              </Box>
-            )}
-
-            {(user?.country || user?.city) && (
-              <Box display="flex" alignItems="flex-start" gap={2} mb={2}>
-                <LocationOn sx={{ fontSize: 20, color: theme.textSec, mt: 0.2 }} />
-                <Box>
-                  <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 0.3 }}>Местоположение</Typography>
-                  <Typography sx={{ fontSize: 15, color: theme.text }}>
-                    {[user?.city, user?.region, user?.country].filter(Boolean).join(', ')}
+              {user?.bio && (
+                <Box sx={{ mt: 2, pt: 2, borderTop: `1px solid ${theme.border}` }}>
+                  <Typography sx={{ fontSize: 14, color: theme.text, whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>
+                    {user.bio}
                   </Typography>
                 </Box>
-              </Box>
-            )}
-
-            {!user?.firstName && !user?.bio && (
-              <Box onClick={handleEdit} sx={{
-                border: `1px dashed ${theme.accent}40`,
-                borderRadius: 2.5, p: 2.5, textAlign: 'center', cursor: 'pointer',
-                '&:hover': { bgcolor: theme.accent + '08' },
-                transition: 'all 0.15s',
-              }}>
-                <Typography sx={{ fontSize: 15, color: theme.textSec }}>
-                  ✏️ Нажмите, чтобы заполнить профиль
-                </Typography>
-              </Box>
-            )}
-
-            <Divider sx={{ borderColor: theme.border, my: 2.5 }} />
-
-            <Typography sx={{ fontSize: 14, color: theme.accent, fontWeight: 700, mb: 1.5 }}>
-              Аккаунт
-            </Typography>
-            <Box mb={1.5}>
-              <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 0.3 }}>Имя пользователя</Typography>
-              <Typography sx={{ fontSize: 15, color: theme.text }}>@{user?.username}</Typography>
+              )}
+              {!user?.bio && !user?.firstName && (
+                <Box onClick={handleEdit} sx={{
+                  mt: 1, border: `1px dashed ${theme.accent}40`,
+                  borderRadius: 2, p: 2, textAlign: 'center', cursor: 'pointer',
+                  '&:hover': { bgcolor: theme.accent + '08' },
+                }}>
+                  <Typography sx={{ fontSize: 14, color: theme.textSec }}>
+                    Нажмите, чтобы заполнить профиль
+                  </Typography>
+                </Box>
+              )}
             </Box>
-            {user?.createdAt && (
-              <Box mb={1.5}>
-                <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 0.3 }}>Дата регистрации</Typography>
-                <Typography sx={{ fontSize: 15, color: theme.text }}>
-                  {new Date(user.createdAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}
+
+            {/* ── Карточка: Действия (компактные chip-кнопки) ── */}
+            <Box sx={{
+              bgcolor: theme.bgHeader, borderRadius: 3, p: 2,
+              border: `1px solid ${theme.border}`,
+              display: 'flex', flexWrap: 'wrap', gap: 1,
+            }}>
+              {[
+                { icon: <QrCode2 sx={{ fontSize: 18 }} />, label: 'QR-привязка', onClick: openLinkQr },
+                { icon: <Palette sx={{ fontSize: 18 }} />, label: 'Оформление', onClick: () => setCustomizeOpen(true) },
+                { icon: <Palette sx={{ fontSize: 18 }} />, label: 'Редактор тем', onClick: () => navigate('/theme-editor') },
+                { icon: <Storefront sx={{ fontSize: 18 }} />, label: 'Магазин VERA', onClick: () => useShopStore.getState().setOpen(true) },
+              ].map((a, i) => (
+                <Button key={i} onClick={a.onClick} startIcon={a.icon} size="small"
+                  sx={{
+                    color: theme.text, bgcolor: theme.bgHover, textTransform: 'none',
+                    borderRadius: 999, px: 1.5, py: 0.6, fontSize: 13,
+                    border: `1px solid ${theme.border}`,
+                    '&:hover': { bgcolor: theme.accent + '18', borderColor: theme.accent + '55' },
+                  }}>
+                  {a.label}
+                </Button>
+              ))}
+            </Box>
+
+            {/* ── Карточка: Стена комментариев (без отдельного чёрного блока внизу) ── */}
+            {user?.id && (
+              <Box sx={{
+                bgcolor: theme.bgHeader, borderRadius: 3, p: 2.5,
+                border: `1px solid ${theme.border}`,
+              }}>
+                <Typography sx={{ fontSize: 12, color: theme.textSec, textTransform: 'uppercase', letterSpacing: 0.6, mb: 1.5, fontWeight: 700 }}>
+                  Комментарии
                 </Typography>
+                <ProfileCommentsWall targetUserId={user.id} targetUserName={displayName} />
               </Box>
             )}
-
-            <Divider sx={{ borderColor: theme.border, my: 2.5 }} />
-
-            <Button
-              fullWidth
-              variant="outlined"
-              startIcon={<QrCode2 />}
-              onClick={openLinkQr}
-              sx={{
-                color: theme.accent, borderColor: theme.accent + '50',
-                borderRadius: 2.5, fontSize: 15, py: 1.2, mb: 1.5,
-                '&:hover': { bgcolor: theme.accent + '10', borderColor: theme.accent },
-                textTransform: 'none',
-              }}
-            >
-              QR для привязки устройства
-            </Button>
-
-            <Button
-              fullWidth
-              variant="outlined"
-              startIcon={<Palette />}
-              onClick={() => setCustomizeOpen(true)}
-              sx={{
-                color: theme.accent, borderColor: theme.accent + '50',
-                borderRadius: 2.5, fontSize: 15, py: 1.2, mb: 1.5,
-                '&:hover': { bgcolor: theme.accent + '10', borderColor: theme.accent },
-                textTransform: 'none',
-              }}
-            >
-              Кастомизировать профиль
-            </Button>
-
-            <Button
-              fullWidth
-              variant="outlined"
-              startIcon={<Palette />}
-              onClick={() => navigate('/theme-editor')}
-              sx={{
-                color: theme.accent, borderColor: theme.accent + '50',
-                borderRadius: 2.5, fontSize: 15, py: 1.2,
-                '&:hover': { bgcolor: theme.accent + '10', borderColor: theme.accent },
-                textTransform: 'none',
-              }}
-            >
-              Редактор тем
-            </Button>
           </Box>
         )}
       </Box>
@@ -665,12 +648,6 @@ export default function ProfilePage() {
       </Snackbar>
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <ProfileCustomizeDialog open={customizeOpen} onClose={() => setCustomizeOpen(false)} />
-      {user?.id && (
-        <Box sx={{ px: 2.5, pb: 4 }}>
-          <Divider sx={{ borderColor: theme.border, mb: 2 }} />
-          <ProfileCommentsWall targetUserId={user.id} targetUserName={displayName} />
-        </Box>
-      )}
     </Box>
   );
 }
