@@ -590,10 +590,15 @@ function ChatWindowInner() {
 
   // ── Хуки для магазинных возможностей (должны вызываться ДО ранних return, иначе React error #310) ──
   const chatThemeOverride = useChatThemeStore((s) => (id ? s.themes[id] : undefined));
-  const smartWpActiveId = useShopStore((s) => s.activeSelfCard);
+  const smartWpActiveId = useShopStore((s) => s.activeWallpaper);
   const smartWpOwned = useShopStore((s) => s.owned);
   const smartWpItem = React.useMemo(() => {
-    return SHOP_CATALOG.find((it) => it.applyKey === 'smartWallpaper' && smartWpOwned[it.id]);
+    if (!smartWpActiveId) return undefined;
+    const it = SHOP_CATALOG.find((i) => i.id === smartWpActiveId && i.applyKey === 'smartWallpaper');
+    if (!it) return undefined;
+    // Проверяем, что товар действительно в инвентаре (куплен или бесплатный)
+    if (it.price && it.price > 0 && !smartWpOwned[it.id]) return undefined;
+    return it;
   }, [smartWpActiveId, smartWpOwned]);
   const smartWpGradient = React.useMemo(() => {
     if (!smartWpItem || smartWpItem.value?.type !== 'time') return null;

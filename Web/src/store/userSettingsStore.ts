@@ -13,7 +13,7 @@ export type PreviewMode = 'always' | 'when_off' | 'never';
 export type AutoDeleteMonths = 0 | 1 | 3 | 6 | 12; // 0 = отключено
 
 /* ─── Layout / раскладка интерфейса ─────────────────────────────────── */
-export type SidePos = 'left' | 'right';
+export type SidePos = 'left' | 'right' | 'top' | 'bottom';
 export type VertPos = 'top' | 'bottom';
 export type Density = 'compact' | 'cozy' | 'roomy';
 

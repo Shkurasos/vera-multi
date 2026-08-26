@@ -49,6 +49,7 @@ export default function MainLayout() {
 
   const bg = {
     display: 'flex',
+    flexDirection: (layout.sidebarSide === 'top' || layout.sidebarSide === 'bottom') ? 'column' as const : 'row' as const,
     height: '100dvh',
     maxHeight: '100dvh',
     overflow: 'hidden',
@@ -128,7 +129,10 @@ export default function MainLayout() {
 
   return (
     <Box sx={bg}>
-      {layout.sidebarSide === 'left' ? (<>{sidebar}{mainArea}</>) : (<>{mainArea}{sidebar}</>)}
+      {layout.sidebarSide === 'left' && (<>{sidebar}{mainArea}</>)}
+      {layout.sidebarSide === 'right' && (<>{mainArea}{sidebar}</>)}
+      {layout.sidebarSide === 'top' && (<>{sidebar}{mainArea}</>)}
+      {layout.sidebarSide === 'bottom' && (<>{mainArea}{sidebar}</>)}
     </Box>
   );
 }

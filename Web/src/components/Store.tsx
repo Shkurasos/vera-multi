@@ -29,7 +29,9 @@ export default function Store({ onClose }: Props) {
   const items = SHOP_CATALOG
     .filter(i => activeCat === 'all' || i.category === activeCat)
     .filter(i => (tab === 'inventory' ? isOwned(i.id) : true));
-  const isActive = (id: string) => id === activeRing || id === activeSelfCard;
+  const activeWallpaper = useShopStore((s) => s.activeWallpaper);
+  const setActiveWallpaper = useShopStore((s) => s.setActiveWallpaper);
+  const isActive = (id: string) => id === activeRing || id === activeSelfCard || id === activeWallpaper;
 
   return (
     <Box sx={{
@@ -118,13 +120,26 @@ export default function Store({ onClose }: Props) {
         </Typography>
 
         {/* Сетка товаров */}
+        {items.length === 0 ? (
+          <Box sx={{ textAlign: 'center', py: 6, opacity: 0.7 }}>
+            <Storefront sx={{ fontSize: 44, color: theme.textSec, mb: 1 }} />
+            <Typography sx={{ fontSize: 14, color: theme.textSec }}>
+              {tab === 'inventory' ? 'В инвентаре пока пусто. Загляните в «Магазин».' : 'В этой категории ничего нет.'}
+            </Typography>
+          </Box>
+        ) : (
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 2 }}>
           {items.map(item => {
             const isActiveItem = isActive(item.id);
             const owned = isOwned(item.id);
             const paid = item.price && item.price > 0;
             return (
-              <Box key={item.id} onClick={() => { if (owned) selectShopItem(item.id); }}
+              <Box key={item.id} onClick={() => {
+                if (!owned) return;
+                // Для обоев: клик по активному → выключить (снять); иначе — выбрать.
+                if (item.category === 'wallpaper' && isActiveItem) setActiveWallpaper('');
+                else selectShopItem(item.id);
+              }}
                 sx={{
                   borderRadius: 3, p: 2,
                   cursor: owned ? 'pointer' : 'default',
@@ -189,6 +204,7 @@ export default function Store({ onClose }: Props) {
             );
           })}
         </Box>
+        )}
 
         {/* Подпись */}
         <Box sx={{ mt: 3, display: 'flex', alignItems: 'center', gap: 1.5, px: 1 }}>

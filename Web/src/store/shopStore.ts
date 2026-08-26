@@ -106,6 +106,9 @@ export interface ShopState {
   /** id выбранной «плашки» своих сообщений (из категории 'selfcard'). */
   activeSelfCard: string;
   setActiveSelfCard: (id: string) => void;
+  /** id выбранных умных обоев ('' = выключено, т.е. без смарт-обоев). */
+  activeWallpaper: string;
+  setActiveWallpaper: (id: string) => void;
 
   purchase: (id: string) => void;
   isOwned: (id: string) => boolean;
@@ -118,6 +121,7 @@ export function selectShopItem(id: string): void {
   if (!item) return;
   if (item.category === 'profile') useShopStore.getState().setActiveRing(id);
   else if (item.category === 'selfcard') useShopStore.getState().setActiveSelfCard(id);
+  else if (item.category === 'wallpaper') useShopStore.getState().setActiveWallpaper(id);
 }
 
 export const useShopStore = create<ShopState>()(
@@ -139,6 +143,8 @@ export const useShopStore = create<ShopState>()(
         setActiveRing: (id) => set({ activeRing: id }),
         activeSelfCard: 'selfcard-default',
         setActiveSelfCard: (id) => set({ activeSelfCard: id }),
+        activeWallpaper: '',
+        setActiveWallpaper: (id) => set({ activeWallpaper: id }),
         purchase: (id) => set(s => ({ owned: { ...s.owned, [id]: true } })),
         isOwned,
         toggleEnabled: () => set(s => ({ enabled: !s.enabled })),
@@ -148,6 +154,7 @@ export const useShopStore = create<ShopState>()(
         enabled: s.enabled,
         activeRing: s.activeRing,
         activeSelfCard: s.activeSelfCard,
+        activeWallpaper: s.activeWallpaper,
         owned: s.owned,
       }) }
   )

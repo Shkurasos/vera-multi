@@ -140,6 +140,8 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
                     >
                       <ToggleButton value="left">Слева</ToggleButton>
                       <ToggleButton value="right">Справа</ToggleButton>
+                      <ToggleButton value="top">Сверху</ToggleButton>
+                      <ToggleButton value="bottom">Снизу</ToggleButton>
                     </ToggleButtonGroup>
                   </Box>
 

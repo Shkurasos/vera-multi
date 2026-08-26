@@ -155,6 +155,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   const layout = useUserSettingsStore((s) => s.layout);
   const setLayout = useUserSettingsStore((s) => s.setLayout);
   const sidebarWidth = Math.min(Math.max(layout.sidebarWidth, SIDEBAR_MIN), SIDEBAR_MAX);
+  const horizontal = layout.sidebarSide === 'top' || layout.sidebarSide === 'bottom';
   const [resizing, setResizing] = useState(false);
 
   useEffect(() => { loadChats(); }, []);
@@ -341,19 +342,30 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
 
   return (
     <Box sx={{
-      width: mobile ? '100%' : sidebarWidth,
-      minWidth: mobile ? '100%' : sidebarWidth,
-      maxWidth: mobile ? '100%' : sidebarWidth,
-      height: '100%',
+      ...(horizontal
+        ? {
+            width: '100%', minWidth: '100%', maxWidth: '100%',
+            height: 240, minHeight: 240, maxHeight: 240,
+            borderTop: layout.sidebarSide === 'bottom' ? `1px solid ${theme.border}` : 'none',
+            borderBottom: layout.sidebarSide === 'top' ? `1px solid ${theme.border}` : 'none',
+            boxShadow: layout.sidebarSide === 'top' ? '0 18px 60px rgba(0,0,0,0.38)' : '0 -18px 60px rgba(0,0,0,0.38)',
+          }
+        : {
+            width: mobile ? '100%' : sidebarWidth,
+            minWidth: mobile ? '100%' : sidebarWidth,
+            maxWidth: mobile ? '100%' : sidebarWidth,
+            height: '100%',
+            borderRight: layout.sidebarSide === 'left' ? `1px solid ${theme.border}` : 'none',
+            borderLeft: layout.sidebarSide === 'right' ? `1px solid ${theme.border}` : 'none',
+            boxShadow: layout.sidebarSide === 'left' ? '18px 0 60px rgba(0,0,0,0.38)' : '-18px 0 60px rgba(0,0,0,0.38)',
+          }
+      ),
       background: theme.sidebarGradient || theme.bgSidebar,
       backdropFilter: theme.sidebarBlur || 'blur(18px)',
-      borderRight: layout.sidebarSide === 'left' ? `1px solid ${theme.border}` : 'none',
-      borderLeft: layout.sidebarSide === 'right' ? `1px solid ${theme.border}` : 'none',
       display: 'flex',
       flexDirection: 'column',
       transition: resizing ? 'none' : 'width .2s ease, min-width .2s ease',
       overflow: 'hidden',
-      boxShadow: layout.sidebarSide === 'left' ? '18px 0 60px rgba(0,0,0,0.38)' : '-18px 0 60px rgba(0,0,0,0.38)',
       position: 'relative',
       '&::before': {
         content: '""', position: 'absolute', inset: 0, pointerEvents: 'none',
