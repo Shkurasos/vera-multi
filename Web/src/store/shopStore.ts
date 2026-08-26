@@ -62,22 +62,31 @@ export const SHOP_CATALOG: ShopItem[] = [
   // ── Режимы тем ─────────────────────────────────────────────────────────
   { id: 'theme-auto-daynight', category: 'theme', name: 'Авто день/ночь',
     description: 'Тема автоматически меняется по времени суток', applyKey: 'themeMode',
-    value: { type: 'daynight', mode: 'auto' }, previewColor: false },
+    value: { type: 'daynight', mode: 'auto' }, previewColor: false, price: 0 },
   { id: 'theme-ambient', category: 'theme', name: 'Режим Ambience',
     description: 'Лёгкая цветовая подстройка темы под обои', applyKey: 'themeMode',
-    value: { type: 'ambience' }, previewColor: false },
+    value: { type: 'ambience' }, previewColor: false, price: 0 },
 
-  // ── Обои (умные / динамические) ────────────────────────────────────────
+  // ── Обои (умные / динамические) — ПЛАТНЫЕ ─────────────────────────────
   { id: 'wp-time', category: 'wallpaper', name: 'Умные обои по времени',
-    description: 'Меняются утро/день/ночь автоматически', applyKey: 'smartWallpaper',
-    value: { type: 'time' }, previewColor: false },
+    description: 'Обои сами меняются утро/день/вечер/ночь (продаётся издателем)', applyKey: 'smartWallpaper',
+    value: { type: 'time' }, previewColor: false, price: 120, ownedByDefault: false },
   { id: 'wp-parallax', category: 'wallpaper', name: 'Параллакс',
-    description: 'Обои реагируют на наклон устройства', applyKey: 'smartWallpaper',
-    value: { type: 'parallax' }, previewColor: false },
+    description: 'Обои реагируют на наклон устройства (продаётся издателем)', applyKey: 'smartWallpaper',
+    value: { type: 'parallax' }, previewColor: false, price: 180, ownedByDefault: false },
   { id: 'wp-touch', category: 'wallpaper', name: '«Жидкое стекло»',
-    description: 'Обои реагируют на касания', applyKey: 'smartWallpaper',
-    value: { type: 'touch' }, previewColor: false },
+    description: 'Обои реагируют на касания (продаётся издателем)', applyKey: 'smartWallpaper',
+    value: { type: 'touch' }, previewColor: false, price: 200, ownedByDefault: false },
+
+  // ── Персональные темы для контактов — ПЛАТНЫЕ ─────────────────────────
+  { id: 'chat-theme', category: 'theme', name: 'Персональные темы',
+    description: 'Свой фон и цвет пузырей для каждого чата отдельно (продаётся издателем)',
+    applyKey: 'perChatTheme', value: { type: 'perchat' },
+    previewColor: 'linear-gradient(90deg,#4dd0ff,#a04dff,#ff4870)', price: 250, ownedByDefault: false },
 ];
+
+/** Валюта магазина — «Вера-баллы» (пока виртуальные, покупка локальная). */
+export const SHOP_CURRENCY = 'ВП';
 
 export type AvatarRingSetting = 'default' | 'rainbow' | 'glow';
 export type SelfCardSetting = 'plain' | 'gradient' | 'badge';
@@ -113,22 +122,22 @@ export function selectShopItem(id: string): void {
 
 export const useShopStore = create<ShopState>()(
   persist(
-    (set) => {
-      // Дефолтные активные: первый элемент каждой подходящей категории.
-      const defaultRing = SHOP_CATALOG.find(i => i.category === 'profile')?.id || 'ring-default';
-      const defaultSelfCard = SHOP_CATALOG.find(i => i.category === 'selfcard')?.id || 'selfcard-default';
-      const isOwned = (_id: string) => {
-        // Пока всё открыто и бесплатно.
-        return true;
+    (set, get) => {
+      const isOwned = (id: string) => {
+        const item = SHOP_CATALOG.find(i => i.id === id);
+        if (!item) return false;
+        // Бесплатные (price: 0) и дефолтные открыты всегда; платные — только после purchase().
+        if (item.ownedByDefault || !item.price || item.price <= 0) return true;
+        return !!get().owned[id];
       };
       return {
         owned: {},
         enabled: true,
         open: false,
         setOpen: (v) => set({ open: v }),
-        activeRing: defaultRing,
+        activeRing: 'ring-default',
         setActiveRing: (id) => set({ activeRing: id }),
-        activeSelfCard: defaultSelfCard,
+        activeSelfCard: 'selfcard-default',
         setActiveSelfCard: (id) => set({ activeSelfCard: id }),
         purchase: (id) => set(s => ({ owned: { ...s.owned, [id]: true } })),
         isOwned,
@@ -139,6 +148,7 @@ export const useShopStore = create<ShopState>()(
         enabled: s.enabled,
         activeRing: s.activeRing,
         activeSelfCard: s.activeSelfCard,
+        owned: s.owned,
       }) }
   )
 );

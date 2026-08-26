@@ -230,6 +230,12 @@ export default function ProfilePage() {
         <Typography sx={{ flex: 1, fontSize: 18, fontWeight: 700, color: theme.text }}>
           Мой профиль
         </Typography>
+        <Tooltip title="Магазин VERA">
+          <IconButton onClick={() => useShopStore.getState().setOpen(true)}
+            sx={{ color: theme.textSec }}>
+            <Storefront />
+          </IconButton>
+        </Tooltip>
         <Tooltip title="Редактор тем">
           <IconButton onClick={() => navigate('/theme-editor')}
             sx={{ color: theme.textSec }}>
@@ -349,6 +355,45 @@ export default function ProfilePage() {
             </Typography>
           </Box>
         )}
+
+        {/* ── Косметика из магазина VERA ── */}
+        <Box sx={{
+          mt: 2, maxWidth: 480, width: '100%',
+          display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 1,
+        }}>
+          {[
+            { label: 'Обводка', item: SHOP_CATALOG.find(i => i.id === useShopStore.getState().activeRing) },
+            { label: 'Плашка', item: SHOP_CATALOG.find(i => i.id === useShopStore.getState().activeSelfCard) },
+            { label: 'Магазин', item: null as any, action: true },
+          ].map((c, i) => (
+            <Box key={i}
+              onClick={() => useShopStore.getState().setOpen(true)}
+              sx={{
+                p: 1.2, borderRadius: 2, cursor: 'pointer',
+                bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
+                textAlign: 'center',
+                '&:hover': { borderColor: theme.accent + '88' },
+              }}>
+              <Box sx={{
+                mx: 'auto', mb: 0.5, width: 36, height: 36, borderRadius: '50%',
+                background: c.action
+                  ? `linear-gradient(135deg, ${theme.accent}, #ff4fd8)`
+                  : (c.item?.previewColor && String(c.item.previewColor).startsWith('linear'))
+                    ? String(c.item?.previewColor)
+                    : theme.bgInput,
+                border: `2px solid ${theme.accent}66`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#fff', fontWeight: 700, fontSize: 14,
+              }}>
+                {c.action ? <Storefront sx={{ fontSize: 18 }} /> : 'V'}
+              </Box>
+              <Typography sx={{ fontSize: 11, color: theme.textSec }}>{c.label}</Typography>
+              <Typography sx={{ fontSize: 11, color: theme.text, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {c.action ? 'Открыть' : (c.item?.name || '—')}
+              </Typography>
+            </Box>
+          ))}
+        </Box>
       </Box>
 
       <Divider sx={{ borderColor: theme.border }} />

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Box, Typography, IconButton, Button, Chip } from '@mui/material';
 import { Close, Storefront, Lock, Check, Palette, Wallpaper, Face, AccountCircle } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
-import { SHOP_CATALOG, ShopCategory, useShopStore, selectShopItem } from '../store/shopStore';
+import { SHOP_CATALOG, ShopCategory, useShopStore, selectShopItem, SHOP_CURRENCY } from '../store/shopStore';
 
 interface Props {
   onClose: () => void;
@@ -22,7 +22,7 @@ const CATEGORY_META: { id: ShopCategory; label: string; icon: React.ReactNode; h
  */
 export default function Store({ onClose }: Props) {
   const { theme } = useThemeStore();
-  const { enabled, activeRing, activeSelfCard } = useShopStore();
+  const { enabled, activeRing, activeSelfCard, isOwned, purchase } = useShopStore();
   const [activeCat, setActiveCat] = useState<ShopCategory | 'all'>('all');
 
   const items = SHOP_CATALOG.filter(i => activeCat === 'all' || i.category === activeCat);
@@ -103,15 +103,28 @@ export default function Store({ onClose }: Props) {
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 2 }}>
           {items.map(item => {
             const isActiveItem = isActive(item.id);
+            const owned = isOwned(item.id);
+            const paid = item.price && item.price > 0;
             return (
-              <Box key={item.id} onClick={() => selectShopItem(item.id)}
+              <Box key={item.id} onClick={() => { if (owned) selectShopItem(item.id); }}
                 sx={{
-                  borderRadius: 3, p: 2, cursor: 'pointer',
+                  borderRadius: 3, p: 2,
+                  cursor: owned ? 'pointer' : 'default',
                   bgcolor: theme.bgHover, border: `1px solid ${isActive(item.id) ? theme.accent : theme.border}`,
-                  display: 'flex', flexDirection: 'column', gap: 1.5,
+                  display: 'flex', flexDirection: 'column', gap: 1.5, position: 'relative', overflow: 'hidden',
                   transition: 'border-color 0.2s, transform 0.15s',
-                  '&:hover': { borderColor: theme.accent + '88', transform: 'translateY(-1px)' },
+                  ...(owned ? { '&:hover': { borderColor: theme.accent + '88', transform: 'translateY(-1px)' } } : {}),
                 }}>
+                {!owned && (
+                  <Box sx={{
+                    position: 'absolute', top: 0, right: 0, p: 0.5, pl: 1,
+                    borderBottomLeftRadius: 10,
+                    bgcolor: '#00000088', color: '#fff', display: 'flex', alignItems: 'center', gap: 0.4,
+                    zIndex: 2,
+                  }}>
+                    <Lock sx={{ fontSize: 12 }} />
+                  </Box>
+                )}
                 {/* Превью */}
                 <Box sx={{
                   height: 70, borderRadius: 2,
@@ -121,6 +134,7 @@ export default function Store({ onClose }: Props) {
                     : `linear-gradient(135deg, ${theme.bgInput}, ${theme.bgChat})`,
                   border: `1px solid ${theme.border}`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  filter: owned ? 'none' : 'grayscale(1) blur(0.4px)',
                 }}>
                   <Typography sx={{
                     width: 44, height: 44, borderRadius: '50%',
@@ -138,11 +152,20 @@ export default function Store({ onClose }: Props) {
                     {item.description}
                   </Typography>
                 </Box>
-                <Box sx={{ display: 'flex', alignItems: 'center', mt: 'auto' }}>
-                  <Chip size="small" icon={isActive(item.id) ? <Check sx={{ fontSize: 14 }} /> : undefined}
-                    label={isActive(item.id) ? 'Активно' : 'Открыто'}
-                    sx={{ bgcolor: isActive(item.id) ? theme.accent + '22' : theme.bgInput, color: theme.textSec,
-                      fontSize: 11, height: 24, border: isActive(item.id) ? `1px solid ${theme.accent}` : 'none' }} />
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 'auto', gap: 1 }}>
+                  {paid && !owned ? (
+                    <Button size="small" variant="contained"
+                      onClick={(e) => { e.stopPropagation(); purchase(item.id); selectShopItem(item.id); }}
+                      sx={{ bgcolor: theme.accent, color: '#001018', textTransform: 'none', borderRadius: 999, px: 1.5, '&:hover': { bgcolor: theme.accent + 'BB' } }}>
+                      Купить · {item.price} {SHOP_CURRENCY}
+                    </Button>
+                  ) : (
+                    <Chip size="small" icon={isActive(item.id) ? <Check sx={{ fontSize: 14 }} /> : undefined}
+                      label={isActive(item.id) ? 'Активно' : (owned ? 'Открыто' : 'Куплено')}
+                      sx={{ bgcolor: isActive(item.id) ? theme.accent + '22' : theme.bgInput, color: theme.textSec,
+                        fontSize: 11, height: 24, border: isActive(item.id) ? `1px solid ${theme.accent}` : 'none' }} />
+                  )}
+                  {paid && <Typography sx={{ fontSize: 11, color: theme.textSec, whiteSpace: 'nowrap' }}>{item.price} {SHOP_CURRENCY}</Typography>}
                 </Box>
               </Box>
             );
@@ -153,7 +176,7 @@ export default function Store({ onClose }: Props) {
         <Box sx={{ mt: 3, display: 'flex', alignItems: 'center', gap: 1.5, px: 1 }}>
           <Storefront sx={{ fontSize: 20, color: theme.accent }} />
           <Typography sx={{ fontSize: 12, color: theme.textSec }}>
-            Все возможности принадлежат издателю. Сейчас всё открыто бесплатно — скоро появятся платные, и их можно будет разблокировать здесь.
+            Раздел издателя: часть возможностей платная. Купленное закрепляется и доступно сразу. Покупка локальная — серверная привязка появится позже.
           </Typography>
         </Box>
       </Box>

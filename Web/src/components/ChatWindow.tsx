@@ -10,7 +10,7 @@ import {
   Send, Send as SendIcon, AttachFile, MoreVert, Search, Mic, Stop,
   EmojiEmotions, InfoOutlined, Close, PushPin,
   Call, Videocam, NotificationsOff, NotificationsActive,
-  FormatSize, ExitToApp, ArrowBack,
+  FormatSize, ExitToApp, ArrowBack, Palette,
 } from '@mui/icons-material';
 import { CallModal } from './CallModal';
 import { useCallStore } from '../store/callStore';
@@ -29,6 +29,9 @@ import { membranePressSx, motion } from '../styles/motion';
 import ChatInfoPanel from './ChatInfoPanel';
 import UserProfileModal from './UserProfileModal';
 import { Message, User } from '../types';
+import ChatThemeDialog from './ChatThemeDialog';
+import { useChatThemeStore } from '../store/chatThemeStore';
+import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { saveLiveBg, loadLiveBgUrl, clearLiveBg, hasLiveBg } from '../services/chatLiveBgStorage';
 
 // ── ErrorBoundary ─────────────────────────────────────────────────────────────
@@ -192,6 +195,7 @@ function ChatWindowInner() {
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [showDisplaySettings, setShowDisplaySettings] = useState(false);
   const [notifSettingsOpen, setNotifSettingsOpen] = useState(false);
+  const [chatThemeOpen, setChatThemeOpen] = useState(false);
   const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
   const [activeCall, setActiveCall] = useState<{ type: 'audio' | 'video' } | null>(null);
   const callActive = useCallStore((s) => s.activeChatId === id);
@@ -640,6 +644,27 @@ function ChatWindowInner() {
   const chatAvatar = getChatAvatar();
   const partnerOnline = getPartnerOnline();
 
+  // ── Персональная тема чата (платный товар «Персональные темы») ────────
+  const chatThemeOverride = useChatThemeStore((s) => (id ? s.themes[id] : undefined));
+  // ── Умные обои (платный товар «Умные обои по времени») ────────────────
+  const smartWpActiveId = useShopStore((s) => s.activeSelfCard); // не оно
+  const smartWpItem = React.useMemo(() => {
+    // Ищем активный купленный товар с applyKey === 'smartWallpaper'.
+    // Пока нет отдельного activeWallpaper — берём первый купленный.
+    const owned = useShopStore.getState().owned;
+    return SHOP_CATALOG.find((it) => it.applyKey === 'smartWallpaper' && owned[it.id]);
+  }, [smartWpActiveId]);
+  const smartWpGradient = React.useMemo(() => {
+    if (!smartWpItem || smartWpItem.value?.type !== 'time') return null;
+    const h = new Date().getHours();
+    // Утро / день / вечер / ночь
+    if (h < 6) return 'linear-gradient(135deg,#0b1026 0%,#161a3f 60%,#3a1f5c 100%)';
+    if (h < 11) return 'linear-gradient(135deg,#ffd6a5 0%,#ffb480 50%,#ff8caa 100%)';
+    if (h < 17) return 'linear-gradient(135deg,#7ec8ff 0%,#a5e3ff 50%,#e0f4ff 100%)';
+    if (h < 21) return 'linear-gradient(135deg,#ff9068 0%,#ff5f6d 50%,#4b1248 100%)';
+    return 'linear-gradient(135deg,#0b1026 0%,#20124d 60%,#1a1a2e 100%)';
+  }, [smartWpItem]);
+
   return (
     <Box sx={{ display: 'flex', height: '100%', overflow: 'hidden', background: theme.bgChat, position: 'relative', perspective: 1200 }}>
       {/* ── Main chat area ── */}
@@ -689,6 +714,17 @@ function ChatWindowInner() {
             {toast?.message || ''}
           </Alert>
         </Snackbar>
+
+        {/* ── Умные обои / персональная тема чата (базовый цветной слой) ── */}
+        {(smartWpGradient || chatThemeOverride?.bg) && !liveBgUrl && !theme.chatBgImage && (
+          <Box sx={{
+            position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
+            background: chatThemeOverride?.bg
+              ? `linear-gradient(135deg, ${chatThemeOverride.bg}, ${chatThemeOverride.accent || chatThemeOverride.bg})`
+              : smartWpGradient || undefined,
+            transition: 'background 800ms ease',
+          }} />
+        )}
 
         {/* ── Живые обои (видео-слой, приоритет выше фото) ── */}
         {liveBgUrl && (
@@ -897,6 +933,16 @@ function ChatWindowInner() {
               }}>
               <FormatSize sx={{ fontSize: 18, color: theme.textSec }} />
               Настройки отображения
+            </MenuItem>
+            <MuiDivider sx={{ borderColor: theme.border, my: 0.5 }} />
+            <MenuItem onClick={() => { setAnchorEl(null); setChatThemeOpen(true); }}
+              sx={{
+                gap: 1.5, py: 1.2, px: 2,
+                color: theme.text, fontSize: 14, fontWeight: 500,
+                '&:hover': { bgcolor: theme.bgHover },
+              }}>
+              <Palette sx={{ fontSize: 18, color: theme.textSec }} />
+              Персональная тема чата
             </MenuItem>
             <MuiDivider sx={{ borderColor: theme.border, my: 0.5 }} />
             <MenuItem onClick={() => { setAnchorEl(null); setLeaveConfirmOpen(true); }}
@@ -1633,6 +1679,12 @@ placeholder="Сообщение..."
         open={notifSettingsOpen}
         chatId={id}
         onClose={() => setNotifSettingsOpen(false)}
+      />
+
+      <ChatThemeDialog
+        open={chatThemeOpen}
+        chatId={id || null}
+        onClose={() => setChatThemeOpen(false)}
       />
 
       {/* ── Активный звонок (legacy 1:1 CallModal больше не показываем — используется CallOverlay) ── */}
