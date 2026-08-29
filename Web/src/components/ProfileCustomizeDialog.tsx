@@ -3,9 +3,10 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions, Box, Button,
   TextField, MenuItem, Slider, Typography, Stack, IconButton, Tooltip,
 } from '@mui/material';
-import { Close, RestartAlt, Image as ImageIcon } from '@mui/icons-material';
+import { Close, RestartAlt, Image as ImageIcon, Inventory2, Storefront } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
 import { ActivityKind, useProfileCustomizationStore } from '../store/profileCustomizationStore';
+import { useShopStore } from '../store/shopStore';
 
 interface Props { open: boolean; onClose: () => void; }
 
@@ -17,6 +18,13 @@ interface Props { open: boolean; onClose: () => void; }
 export default function ProfileCustomizeDialog({ open, onClose }: Props) {
   const { theme } = useThemeStore();
   const c = useProfileCustomizationStore();
+
+  // Открыть магазин на нужной вкладке (общий store, поэтому синхронизируется везде).
+  const openShopTab = (tab: 'inventory' | 'shop') => {
+    const s = useShopStore.getState();
+    s.setTab(tab);
+    s.setOpen(true);
+  };
 
   async function pickBanner(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -42,6 +50,29 @@ export default function ProfileCustomizeDialog({ open, onClose }: Props) {
       </DialogTitle>
       <DialogContent dividers sx={{ borderColor: theme.border }}>
         <Stack spacing={2.5}>
+          {/* Косметика магазина: две отдельные точки входа */}
+          <Box>
+            <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 1 }}>Косметика</Typography>
+            <Stack direction="row" spacing={1}>
+              <Button
+                fullWidth size="small" variant="outlined"
+                startIcon={<Inventory2 />}
+                onClick={() => { openShopTab('inventory'); onClose(); }}
+                sx={{ textTransform: 'none', color: theme.text, borderColor: theme.border, '&:hover': { borderColor: theme.accent } }}
+              >
+                Мой инвентарь
+              </Button>
+              <Button
+                fullWidth size="small" variant="contained"
+                startIcon={<Storefront />}
+                onClick={() => { openShopTab('shop'); onClose(); }}
+                sx={{ textTransform: 'none', bgcolor: theme.accent, color: '#001018', '&:hover': { bgcolor: theme.accent + 'BB' } }}
+              >
+                Магазин
+              </Button>
+            </Stack>
+          </Box>
+
           <Box>
             <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 1 }}>Баннер</Typography>
             <Box sx={{

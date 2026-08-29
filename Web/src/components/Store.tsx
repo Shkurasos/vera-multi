@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Box, Typography, IconButton, Button, Chip, CircularProgress } from '@mui/material';
-import { Close, Storefront, Lock, Check, Palette, Wallpaper, Face, AccountCircle, AccountBalanceWallet } from '@mui/icons-material';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Box, Typography, IconButton, Button, Chip, CircularProgress, MenuItem, TextField } from '@mui/material';
+import { Close, Storefront, Lock, Check, Palette, Wallpaper, Face, AccountCircle, AccountBalanceWallet, Sort } from '@mui/icons-material';
 import QRCode from 'qrcode';
 import { useThemeStore } from '../store/themeStore';
-import { SHOP_CATALOG, ShopCategory, useShopStore, selectShopItem, SHOP_CURRENCY } from '../store/shopStore';
+import { SHOP_CATALOG, ShopCategory, ShopTab, useShopStore, selectShopItem, SHOP_CURRENCY } from '../store/shopStore';
 import { walletApi } from '../services/api';
 
 interface Props {
@@ -17,6 +17,16 @@ const CATEGORY_META: { id: ShopCategory; label: string; icon: React.ReactNode; h
   { id: 'wallpaper', label: 'Обои', icon: <Wallpaper />, hint: 'Умные и динамические обои' },
 ];
 
+// Варианты сортировки (и для магазина, и для инвентаря).
+type SortMode = 'default' | 'price-asc' | 'price-desc' | 'name' | 'category';
+const SORT_LABELS: { id: SortMode; label: string }[] = [
+  { id: 'default', label: 'По умолчанию' },
+  { id: 'name', label: 'По имени (А-Я)' },
+  { id: 'price-asc', label: 'Сначала дешевле' },
+  { id: 'price-desc', label: 'Сначала дороже' },
+  { id: 'category', label: 'По категории' },
+];
+
 // Курс и пресеты пополнения (1 USD = 100 ВП — совпадает с сервером).
 const VP_RATE = 100;
 const TOPUP_PRESETS = [50, 100, 300, 700, 1500];
@@ -28,9 +38,9 @@ const TOPUP_PRESETS = [50, 100, 300, 700, 1500];
  */
 export default function Store({ onClose }: Props) {
   const { theme } = useThemeStore();
-  const { enabled, activeRing, activeSelfCard, isOwned, purchase, balanceVp, loadWallet } = useShopStore();
+  const { enabled, activeRing, activeSelfCard, isOwned, purchase, balanceVp, loadWallet, tab, setTab } = useShopStore();
   const [activeCat, setActiveCat] = useState<ShopCategory | 'all'>('all');
-  const [tab, setTab] = useState<'inventory' | 'shop'>('inventory');
+  const [sort, setSort] = useState<SortMode>('default');
   const [buyError, setBuyError] = useState('');
 
   // ── Топ-ап ВП ──
@@ -109,9 +119,24 @@ export default function Store({ onClose }: Props) {
     }
   }, [purchase]);
 
-  const items = SHOP_CATALOG
-    .filter(i => activeCat === 'all' || i.category === activeCat)
-    .filter(i => (tab === 'inventory' ? isOwned(i.id) : true));
+  // Вкладки разделяют каталог:
+  //   «Мой инвентарь» — только то, что уже открыто/куплено.
+  //   «Магазин» — только платные вещи, которых ещё нет (можно купить).
+  // Бесплатные/дефолтные всегда в инвентаре (isOwned → true), в витрине не показываются.
+  const items = useMemo(() => {
+    const base = SHOP_CATALOG
+      .filter(i => activeCat === 'all' || i.category === activeCat)
+      .filter(i => tab === 'inventory' ? isOwned(i.id) : (!isOwned(i.id) && !!(i.price && i.price > 0)));
+    const sorted = [...base];
+    switch (sort) {
+      case 'name': sorted.sort((a, b) => a.name.localeCompare(b.name, 'ru')); break;
+      case 'price-asc': sorted.sort((a, b) => (a.price || 0) - (b.price || 0)); break;
+      case 'price-desc': sorted.sort((a, b) => (b.price || 0) - (a.price || 0)); break;
+      case 'category': sorted.sort((a, b) => a.category.localeCompare(b.category, 'ru') || a.name.localeCompare(b.name, 'ru')); break;
+      default: break;
+    }
+    return sorted;
+  }, [activeCat, tab, isOwned, sort]);
   const activeWallpaper = useShopStore((s) => s.activeWallpaper);
   const setActiveWallpaper = useShopStore((s) => s.setActiveWallpaper);
   const isActive = (id: string) => id === activeRing || id === activeSelfCard || id === activeWallpaper;
@@ -167,19 +192,34 @@ export default function Store({ onClose }: Props) {
           </Box>
         </Box>
 
-        {/* Табы: Инвентарь / Магазин */}
-        <Box sx={{ display: 'flex', gap: 0.5, p: 0.5, bgcolor: theme.bgHover, borderRadius: 999, mb: 2, width: 'fit-content' }}>
-          {(['inventory', 'shop'] as const).map((t) => (
-            <Button key={t} size="small" onClick={() => setTab(t)}
-              sx={{
-                bgcolor: tab === t ? theme.accent : 'transparent',
-                color: tab === t ? '#001018' : theme.textSec,
-                textTransform: 'none', borderRadius: 999, px: 2.5, fontSize: 12, minHeight: 32,
-                '&:hover': { bgcolor: tab === t ? theme.accent : theme.bg + '88' },
-              }}>
-              {t === 'inventory' ? 'Мой инвентарь' : 'Магазин'}
-            </Button>
-          ))}
+        {/* Табы: Инвентарь / Магазин + сортировка */}
+        <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', mb: 2, flexWrap: 'wrap' }}>
+          <Box sx={{ display: 'flex', gap: 0.5, p: 0.5, bgcolor: theme.bgHover, borderRadius: 999, width: 'fit-content' }}>
+            {(['inventory', 'shop'] as const).map((t) => (
+              <Button key={t} size="small" onClick={() => setTab(t)}
+                sx={{
+                  bgcolor: tab === t ? theme.accent : 'transparent',
+                  color: tab === t ? '#001018' : theme.textSec,
+                  textTransform: 'none', borderRadius: 999, px: 2.5, fontSize: 12, minHeight: 32,
+                  '&:hover': { bgcolor: tab === t ? theme.accent : theme.bg + '88' },
+                }}>
+                {t === 'inventory' ? 'Мой инвентарь' : 'Магазин'}
+              </Button>
+            ))}
+          </Box>
+          <TextField
+            select size="small" value={sort} onChange={(e) => setSort(e.target.value as SortMode)}
+            InputProps={{ startAdornment: <Sort sx={{ fontSize: 16, color: theme.textSec, mr: 0.5 }} /> }}
+            sx={{
+              ml: 'auto', minWidth: 170,
+              '& .MuiInputBase-root': { bgcolor: theme.bgHover, color: theme.text, borderRadius: 999, fontSize: 12, height: 34, px: 1.2 },
+              '& .MuiSvgIcon-root': { color: theme.textSec },
+            }}
+          >
+            {SORT_LABELS.map((s) => (
+              <MenuItem key={s.id} value={s.id}>{s.label}</MenuItem>
+            ))}
+          </TextField>
         </Box>
 
         {/* Категории */}
@@ -214,7 +254,7 @@ export default function Store({ onClose }: Props) {
           <Box sx={{ textAlign: 'center', py: 6, opacity: 0.7 }}>
             <Storefront sx={{ fontSize: 44, color: theme.textSec, mb: 1 }} />
             <Typography sx={{ fontSize: 14, color: theme.textSec }}>
-              {tab === 'inventory' ? 'В инвентаре пока пусто. Загляните в «Магазин».' : 'В этой категории ничего нет.'}
+              {tab === 'inventory' ? 'В инвентаре пока пусто. Загляните в «Магазин».' : 'Все доступные платные предметы уже куплены — новинки появятся позже.'}
             </Typography>
           </Box>
         ) : (

@@ -92,6 +92,8 @@ export const SHOP_CURRENCY = 'ВП';
 export type AvatarRingSetting = 'default' | 'rainbow' | 'glow';
 export type SelfCardSetting = 'plain' | 'gradient' | 'badge';
 
+export type ShopTab = 'inventory' | 'shop';
+
 export interface ShopState {
   /** Какие товары куплены (по умолчанию все бесплатные открыты). */
   owned: Record<string, boolean>;
@@ -101,7 +103,10 @@ export interface ShopState {
   enabled: boolean;
   /** Текущее состояние плашки-магазина (открыт/закрыт). */
   open: boolean;
+  /** Активная вкладка магазина (инвентарь / витрина). */
+  tab: ShopTab;
   setOpen: (v: boolean) => void;
+  setTab: (t: ShopTab) => void;
 
   /** id выбранной обводки аватара (из категории 'profile'). */
   activeRing: string;
@@ -150,6 +155,8 @@ export const useShopStore = create<ShopState>()(
         enabled: true,
         open: false,
         setOpen: (v) => set({ open: v }),
+        tab: 'inventory',
+        setTab: (t) => set({ tab: t }),
         activeRing: 'ring-default',
         setActiveRing: (id) => set({ activeRing: id }),
         activeSelfCard: 'selfcard-default',

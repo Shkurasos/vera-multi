@@ -398,12 +398,12 @@ export default function ProfilePage() {
           display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 1,
         }}>
           {[
-            { label: 'Обводка', item: SHOP_CATALOG.find(i => i.id === useShopStore.getState().activeRing) },
-            { label: 'Плашка', item: SHOP_CATALOG.find(i => i.id === useShopStore.getState().activeSelfCard) },
-            { label: 'Магазин', item: null as any, action: true },
+            { label: 'Обводка', item: SHOP_CATALOG.find(i => i.id === useShopStore.getState().activeRing), tab: 'inventory' as const },
+            { label: 'Плашка', item: SHOP_CATALOG.find(i => i.id === useShopStore.getState().activeSelfCard), tab: 'inventory' as const },
+            { label: 'Магазин', item: null as any, action: true, tab: 'shop' as const },
           ].map((c, i) => (
             <Box key={i}
-              onClick={() => useShopStore.getState().setOpen(true)}
+              onClick={() => { useShopStore.getState().setTab(c.tab); useShopStore.getState().setOpen(true); }}
               sx={{
                 p: 1.2, borderRadius: 2, cursor: 'pointer',
                 bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
