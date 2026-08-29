@@ -607,14 +607,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => {
       const chatMsgs = state.messages[message.chatId] || [];
       const normalizedMessage = attachReplyPreview(message, state.messages);
+      // Дедуп по реальному id (если сообщение уже добавлено REST-ответом,
+      // сокет-эхо не должно создавать дубликат).
+      const realIdx = chatMsgs.findIndex((m) => m.id === message.id);
       let tempIdx = -1;
-      for (let i = chatMsgs.length - 1; i >= 0; i--) {
-        if (chatMsgs[i].id.startsWith('temp-') && chatMsgs[i].senderId === message.senderId) {
-          tempIdx = i;
-          break;
+      if (realIdx < 0) {
+        for (let i = chatMsgs.length - 1; i >= 0; i--) {
+          if (chatMsgs[i].id.startsWith('temp-') && chatMsgs[i].senderId === message.senderId) {
+            tempIdx = i;
+            break;
+          }
         }
       }
-      const updatedMsgs = tempIdx >= 0
+      const updatedMsgs = realIdx >= 0
+        ? chatMsgs.map((m, i) => (i === realIdx ? normalizedMessage : m))
+        : tempIdx >= 0
         ? chatMsgs.map((m, i) => (i === tempIdx ? normalizedMessage : m))
         : [...chatMsgs, normalizedMessage];
 
@@ -648,10 +655,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const myId = useAuthStore.getState().user?.id;
       const isActive = state.activeChat?.id === message.chatId;
       const isMine = message.senderId === myId;
+      const existing = state.messages[message.chatId] || [];
+      // Дедуп: если сообщение с таким id уже есть — просто обновляем на месте.
+      const dupIdx = existing.findIndex((m) => m.id === message.id);
+      const nextMsgs = dupIdx >= 0
+        ? existing.map((m, i) => (i === dupIdx ? normalizedMessage : m))
+        : [...existing, normalizedMessage];
       return {
         messages: {
           ...state.messages,
-          [message.chatId]: [...(state.messages[message.chatId] || []), normalizedMessage],
+          [message.chatId]: nextMsgs,
         },
         chats: safeChats.map((c) =>
           c.id === message.chatId

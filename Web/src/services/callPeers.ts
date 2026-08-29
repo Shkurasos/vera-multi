@@ -104,17 +104,31 @@ function createPeer(otherId: string): PeerConn {
   };
 
   pc.ontrack = (e) => {
-    const stream = e.streams[0] || conn.remoteStream;
+    // Принимаем ВСЕ треки от пира: аудио (речь) и видео (камера).
+    // Важно: e.streams может быть пустым (Firefox), поэтому всегда пушим
+    // трек в conn.remoteStream и КАЖДЫЙ раз обновляем стрим в сторе —
+    // иначе CallAudioSink может держать старый MediaStream без новых треков.
     const isScreen = /screen|display/i.test(e.track.label);
     const target = isScreen ? conn.screenStream : conn.remoteStream;
-    if (!target.getTracks().find((t) => t.id === e.track.id)) target.addTrack(e.track);
-    if (e.track.kind === 'audio' && !conn.vaCleanup) {
-      conn.vaCleanup = attachVoiceActivity(stream, otherId);
+    if (!target.getTracks().find((t) => t.id === e.track.id)) {
+      target.addTrack(e.track);
     }
-    useCallStore.getState()._setPeer(otherId, {
-      stream: new MediaStream(conn.remoteStream.getTracks()),
-      screenStream: conn.screenStream.getTracks().length ? new MediaStream(conn.screenStream.getTracks()) : undefined,
-    });
+    if (isScreen) {
+      useCallStore.getState()._setPeer(otherId, {
+        screenStream: new MediaStream(conn.screenStream.getTracks()),
+      });
+    }
+    // Аудио-трек — обновляем стрим в сторе, чтобы CallAudioSink перезватил srcObject.
+    if (e.track.kind === 'audio') {
+      if (!conn.vaCleanup) {
+        conn.vaCleanup = attachVoiceActivity(conn.remoteStream, otherId);
+      }
+      useCallStore.getState()._setPeer(otherId, {
+        stream: new MediaStream(conn.remoteStream.getTracks()),
+        screenStream: conn.screenStream.getTracks().length ? new MediaStream(conn.screenStream.getTracks()) : undefined,
+      });
+    }
+    // Видео — тайл обновится сам из того же conn.remoteStream (CallTile subscribes stream).
   };
 
   pc.onconnectionstatechange = () => {

@@ -814,7 +814,7 @@ function ChatWindowInner() {
             </IconButton>
           </Tooltip>
           <Avatar
-            src={chatAvatar || chatPhotoGlobal || undefined}
+            src={chatAvatar || undefined}
             onClick={handleAvatarClick}
             sx={{
               width: 46, height: 46, fontSize: 17,
@@ -1471,7 +1471,11 @@ function ChatWindowInner() {
             accept="*/*"
             disabled={uploading}
             onChange={handleFileUpload}
-            style={{ display: 'none' }}
+            style={{
+              position: 'fixed', top: 0, left: 0,
+              width: 1, height: 1, opacity: 0,
+              pointerEvents: 'none',
+            }}
           />
 
           <Tooltip title="Эмодзи">

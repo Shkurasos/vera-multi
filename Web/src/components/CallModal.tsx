@@ -106,7 +106,11 @@ export function CallModal({ targetUser, callType = 'audio', onClose }: CallModal
     pcRef.current = pc;
     stream.getTracks().forEach(t => pc.addTrack(t, stream));
 
-    pc.ontrack = (e) => { if (remoteVideoRef.current) remoteVideoRef.current.srcObject = e.streams[0]; };
+    // Удалённое аудио привязываем к srcObject remoteVideoRef (даже в аудио-звонке:
+    // <video> с аудио-треками проигрывает звук, а при video-звонке показывает картинку).
+    pc.ontrack = (e) => {
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = e.streams[0] || new MediaStream([e.track]);
+    };
     pc.onicecandidate = (e) => {
       if (e.candidate) s.emit('call:ice-candidate', { targetUserId: targetUser.id, candidate: e.candidate.toJSON() });
     };
@@ -163,11 +167,15 @@ export function CallModal({ targetUser, callType = 'audio', onClose }: CallModal
       background: 'rgba(0,0,0,0.92)',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
     }}>
-      {callType === 'video' && (
-        <video ref={remoteVideoRef} autoPlay playsInline
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: 0.9 }}
-        />
-      )}
+      {/* Всегда рендерим remote <video>: в видео-звонке показывает картинку,
+          в аудио-звонке скрыт (opacity 0, но элемент жив — аудио играет). */}
+      <video ref={remoteVideoRef} autoPlay playsInline
+        style={{
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          objectFit: 'cover', opacity: callType === 'video' && status === 'connected' ? 0.9 : 0,
+          pointerEvents: 'none', zIndex: 0,
+        }}
+      />
       <div style={{ position: 'relative', zIndex: 1, textAlign: 'center', color: '#fff', marginBottom: 24 }}>
         {targetUser?.avatarUrl
           ? <img src={targetUser.avatarUrl} alt="" style={{ width: 80, height: 80, borderRadius: '50%', objectFit: 'cover', marginBottom: 12 }} />
@@ -255,7 +263,11 @@ export function IncomingCallModal({ data, onClose }: { data: IncomingCallData; o
     const pc = new RTCPeerConnection(ICE_SERVERS);
     pcRef.current = pc;
     stream.getTracks().forEach(t => pc.addTrack(t, stream));
-    pc.ontrack = (e) => { if (remoteVideoRef.current) remoteVideoRef.current.srcObject = e.streams[0]; };
+    pc.ontrack = (e) => {
+      // Аудио из входящего звонка тоже должно играть: привязываем к remoteVideoRef
+      // (в audio-звонке это скрытый <video>, который воспроизводит звук).
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = e.streams[0] || new MediaStream([e.track]);
+    };
     pc.onicecandidate = (e) => {
       if (e.candidate) s.emit('call:ice-candidate', { targetUserId: data.callerId, candidate: e.candidate.toJSON() });
     };
@@ -314,11 +326,16 @@ export function IncomingCallModal({ data, onClose }: { data: IncomingCallData; o
       background: 'rgba(0,0,0,0.92)',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
     }}>
-      {data.type === 'video' && accepted && (
-        <video ref={remoteVideoRef} autoPlay playsInline
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: 0.9 }}
-        />
-      )}
+      {/* Всегда рендерим remote <video>: в видео-звонке показывает картинку,
+          в аудио-звонке скрыт (display none нельзя — надо чтобы аудио играло,
+          поэтому opacity 0 + absolute). */}
+      <video ref={remoteVideoRef} autoPlay playsInline
+        style={{
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          objectFit: 'cover', opacity: data.type === 'video' && accepted ? 0.9 : 0,
+          pointerEvents: 'none', zIndex: 0,
+        }}
+      />
       <div style={{ position: 'relative', zIndex: 1, textAlign: 'center', color: '#fff', marginBottom: 32 }}>
         {data.callerAvatar
           ? <img src={data.callerAvatar} alt="" style={{ width: 80, height: 80, borderRadius: '50%', objectFit: 'cover', marginBottom: 12 }} />

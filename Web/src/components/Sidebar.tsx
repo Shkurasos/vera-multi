@@ -19,6 +19,7 @@ import { useChatPrefsStore } from '../store/chatPrefsStore';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
+import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { chatsApi, usersApi } from '../services/api';
 import { peer, isPeerAvailable } from '../services/peer';
 import { Chat, User } from '../types';
@@ -62,6 +63,29 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   const { user } = useAuthStore();
   const { theme } = useThemeStore();
   const navigate = useNavigate();
+
+  // Обводка аватара из магазина VERA — применяем к своей аватарке (в футере/шапке).
+  // Для аватаров чужих чатов используем тот же стиль, чтобы обводка была
+  // визуальной подсказкой «аккаунт защищён темой».
+  const shopActiveRing = useShopStore((s) => s.activeRing);
+  const ringItem = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === shopActiveRing);
+  const ringVal = ringItem?.value as any;
+  const buildRingSx = (active: boolean): Record<string, any> => {
+    const base: Record<string, any> = {
+      boxShadow: `0 0 0 2px ${active ? theme.accent + '55' : 'rgba(255,255,255,0.08)'}`,
+    };
+    if (ringVal?.type === 'gradient') {
+      base.border = '2px solid transparent';
+      base.backgroundImage = `linear-gradient(${theme.accent + '33'}, ${theme.accent + '33'}), ${ringVal.gradient}`;
+      base.backgroundOrigin = 'border-box';
+      base.backgroundClip = 'padding-box, border-box';
+      base.boxShadow = `0 0 12px ${theme.accent}55`;
+    } else if (ringVal?.type === 'glow') {
+      base.border = `2px solid ${ringVal.color || theme.accent}`;
+      base.boxShadow = `0 0 14px ${ringVal.color || theme.accent}`;
+    }
+    return base;
+  };
 
   const [tab, setTab] = useState<SidebarTab>('chats');
   const [search, setSearch] = useState('');
@@ -446,14 +470,17 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
         </Box>
       )}
 
-      <List onScroll={handleChatListScroll} sx={{ flex: 1, overflowY: 'auto', py: .5, px: open ? 1 : .5, position: 'relative', zIndex: 1, scrollBehavior: 'smooth' }}>
+      <List onScroll={handleChatListScroll} sx={{ flex: 1, overflowY: horizontal ? 'hidden' : 'auto', overflowX: horizontal ? 'auto' : 'hidden', display: horizontal ? 'flex' : 'block', flexDirection: horizontal ? 'row' : 'column', py: .5, px: open ? 1 : .5, position: 'relative', zIndex: 1, scrollBehavior: 'smooth', '&::-webkit-scrollbar': { height: 6 } }}>
         {sorted.map(chat => {
           const name = getChatName(chat);
           const active = activeChat?.id === chat.id;
-           return <ListItem key={chat.id} onClick={() => { setActiveChat(chat); navigate(`/chat/${chat.id}`); }} onContextMenu={(e) => handleContextMenu(e, chat)} sx={{ cursor: 'pointer', px: open ? 1.15 : .65, py: .85, mb: .55, borderRadius: 3.5, bgcolor: active ? theme.bgActive : 'rgba(255,255,255,0.026)', border: `1px solid ${active ? theme.accent + '66' : 'rgba(255,255,255,0.045)'}`, boxShadow: active ? `0 12px 34px ${theme.accent}22` : 'none', backdropFilter: 'blur(14px)', overflow: 'hidden', '&::before': { content: '""', position: 'absolute', inset: 0, opacity: 0, background: 'linear-gradient(90deg, rgba(255,72,105,.34), rgba(255,145,77,.20), transparent 78%)', filter: 'blur(10px)', transform: 'translateX(-18%)', transition: `opacity 260ms ${motion.easeOut}, transform 360ms ${motion.easeOut}` }, '&:hover': { bgcolor: theme.bgHover, transform: 'translateY(-1px)' }, '&:active': { transform: 'translateX(10px) scale(.985)', boxShadow: 'inset 10px 0 28px rgba(255,80,110,.26)' }, '&:active::before': { opacity: 1, transform: 'translateX(0)' }, transition: `background .22s ${motion.easeOut}, transform .28s ${motion.spring}, box-shadow .22s ${motion.easeOut}` }}>
-             <Badge color="success" variant="dot" invisible={!isChatOnline(chat)} overlap="circular">{layout.showAvatarsInList ? <Avatar src={getChatAvatar(chat)} sx={{ width: 46, height: 46, bgcolor: theme.accent, boxShadow: `0 0 0 2px ${active ? theme.accent + '55' : 'rgba(255,255,255,0.08)'}`, transform: scrollPulse ? 'scale(.88)' : 'scale(1)', transition: `transform ${scrollPulse ? 120 : 520}ms ${scrollPulse ? motion.easeIn : motion.spring}`, willChange: 'transform' }}>{getInitials(name)}</Avatar> : <Box sx={{ width: 6, height: 46, borderRadius: 3, bgcolor: active ? theme.accent : 'transparent' }} />}</Badge>
-            {open && <ListItemText sx={{ ml: 1.25, minWidth: 0 }} primary={<Box sx={{ display: 'flex', alignItems: 'center', gap: .5 }}><Typography noWrap sx={{ color: theme.text, fontWeight: isPinned(chat.id) ? 700 : 600, flex: 1 }}>{isPinned(chat.id) ? '📌 ' : ''}{name}</Typography><Typography sx={{ color: theme.textSec, fontSize: 11 }}>{timeAgo(chat.lastMessage?.createdAt || chat.updatedAt || chat.createdAt)}</Typography></Box>} secondary={<Typography noWrap sx={{ color: theme.textSec, fontSize: 13 }}>{chat.lastMessage?.content || (chat.lastMessage?.attachments?.length ? '📎 Вложение' : 'Нет сообщений')}</Typography>} />}
-            {open && !!chat.unreadCount && <Badge badgeContent={chat.unreadCount} color="primary" />}
+           return <ListItem key={chat.id} onClick={() => { setActiveChat(chat); navigate(`/chat/${chat.id}`); }} onContextMenu={(e) => handleContextMenu(e, chat)} sx={{ cursor: 'pointer', ...(horizontal ? { flexDirection: 'column', width: 84, minWidth: 84, mr: .5, py: 1, px: .5, alignItems: 'center', textAlign: 'center' } : { px: open ? 1.15 : .65, py: .85, mb: .55 }), borderRadius: 3.5, bgcolor: active ? theme.bgActive : 'rgba(255,255,255,0.026)', border: `1px solid ${active ? theme.accent + '66' : 'rgba(255,255,255,0.045)'}`, boxShadow: active ? `0 12px 34px ${theme.accent}22` : 'none', backdropFilter: 'blur(14px)', overflow: 'hidden', '&::before': { content: '""', position: 'absolute', inset: 0, opacity: 0, background: 'linear-gradient(90deg, rgba(255,72,105,.34), rgba(255,145,77,.20), transparent 78%)', filter: 'blur(10px)', transform: 'translateX(-18%)', transition: `opacity 260ms ${motion.easeOut}, transform 360ms ${motion.easeOut}` }, '&:hover': { bgcolor: theme.bgHover, transform: 'translateY(-1px)' }, '&:active': { transform: horizontal ? 'scale(.94)' : 'translateX(10px) scale(.985)', boxShadow: horizontal ? `inset 0 0 24px ${theme.accent}33` : 'inset 10px 0 28px rgba(255,80,110,.26)' }, '&:active::before': { opacity: 1, transform: 'translateX(0)' }, transition: `background .22s ${motion.easeOut}, transform .28s ${motion.spring}, box-shadow .22s ${motion.easeOut}` }}>
+             <Badge color="success" variant="dot" invisible={!isChatOnline(chat)} overlap="circular">{layout.showAvatarsInList ? <Avatar src={getChatAvatar(chat)} sx={{ width: horizontal ? 52 : 46, height: horizontal ? 52 : 46, bgcolor: theme.accent, ...buildRingSx(active), transform: scrollPulse ? 'scale(.88)' : 'scale(1)', transition: `transform ${scrollPulse ? 120 : 520}ms ${scrollPulse ? motion.easeIn : motion.spring}, box-shadow .3s ease, border-color .3s ease`, willChange: 'transform' }}>{getInitials(name)}</Avatar> : <Box sx={{ width: horizontal ? 46 : 6, height: horizontal ? 4 : 46, borderRadius: 3, bgcolor: active ? theme.accent : 'transparent' }} />}</Badge>
+            {horizontal
+              ? <Typography noWrap sx={{ mt: .6, color: theme.text, fontSize: 12, fontWeight: isPinned(chat.id) ? 700 : 600, maxWidth: 76 }}>{isPinned(chat.id) ? '📌 ' : ''}{name}</Typography>
+              : (open && <ListItemText sx={{ ml: 1.25, minWidth: 0 }} primary={<Box sx={{ display: 'flex', alignItems: 'center', gap: .5 }}><Typography noWrap sx={{ color: theme.text, fontWeight: isPinned(chat.id) ? 700 : 600, flex: 1 }}>{isPinned(chat.id) ? '📌 ' : ''}{name}</Typography><Typography sx={{ color: theme.textSec, fontSize: 11 }}>{timeAgo(chat.lastMessage?.createdAt || chat.updatedAt || chat.createdAt)}</Typography></Box>} secondary={<Typography noWrap sx={{ color: theme.textSec, fontSize: 13 }}>{chat.lastMessage?.content || (chat.lastMessage?.attachments?.length ? '📎 Вложение' : 'Нет сообщений')}</Typography>} />)}
+            {!horizontal && open && !!chat.unreadCount && <Badge badgeContent={chat.unreadCount} color="primary" />}
+            {horizontal && !!chat.unreadCount && <Box sx={{ position: 'absolute', top: 4, right: 6, minWidth: 18, height: 18, px: .6, borderRadius: 999, bgcolor: theme.accent, color: '#fff', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{chat.unreadCount}</Box>}
           </ListItem>;
         })}
       </List>
