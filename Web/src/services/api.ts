@@ -1,23 +1,71 @@
 
-import axios from 'axios';
+import axios, { AxiosError, AxiosRequestConfig } from 'axios';
 
 const api = axios.create({
   baseURL: '/api',
   withCredentials: true,
 });
 
+// SEC: CSRF double-submit — читаем vera_csrf (non-HttpOnly) и кладём в заголовок.
+function readCookie(name: string): string | null {
+  const m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/([.*+?^${}()|[\]\\])/g, '\\$1') + '=([^;]*)'));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('vera_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  // CSRF нужен только на mutating-запросах, но лишний header не мешает.
+  const csrf = readCookie('vera_csrf');
+  if (csrf) config.headers['X-CSRF-Token'] = csrf;
   return config;
 });
 
+// SEC: одноразовая попытка /auth/refresh на 401. Если удалось — повторяем запрос.
+// Если refresh тоже упал — чистим стейт и ре-бутстрапим.
+let refreshInFlight: Promise<string | null> | null = null;
+async function tryRefresh(): Promise<string | null> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    try {
+      const csrf = readCookie('vera_csrf');
+      const res = await axios.post('/api/auth/refresh', {}, {
+        withCredentials: true,
+        headers: csrf ? { 'X-CSRF-Token': csrf } : {},
+      });
+      const newToken = (res.data as any)?.accessToken;
+      if (newToken) {
+        localStorage.setItem('vera_token', newToken);
+        return newToken;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      // Сбрасываем в следующем tick, чтобы параллельные 401 успели присоединиться.
+      setTimeout(() => { refreshInFlight = null; }, 0);
+    }
+  })();
+  return refreshInFlight;
+}
+
 api.interceptors.response.use(
   (res) => res,
-  (err) => {
-    if (err.response?.status === 401) {
+  async (err: AxiosError) => {
+    const cfg = err.config as AxiosRequestConfig & { _retry?: boolean };
+    const url = cfg?.url || '';
+    const status = err.response?.status;
+    const isBootstrap = url.includes('/auth/device') || url.includes('/auth/me') || url.includes('/auth/refresh');
+    if (status === 401 && !cfg?._retry && !isBootstrap) {
+      cfg._retry = true;
+      const newToken = await tryRefresh();
+      if (newToken) {
+        cfg.headers = { ...(cfg.headers || {}), Authorization: `Bearer ${newToken}` };
+        return api.request(cfg);
+      }
+      // Refresh не удался — полный ре-бутстрап.
       localStorage.removeItem('vera_token');
-      // Аккаунт живёт с устройством: перезагружаем — bootstrap авторизуется заново.
+      localStorage.removeItem('vera_user');
       window.location.href = '/';
     }
     return Promise.reject(err);

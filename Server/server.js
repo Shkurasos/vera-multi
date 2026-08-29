@@ -7,6 +7,10 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 
+// SEC: подгружаем Server/.env локально, чтобы не таскать секреты в PowerShell.
+// В проде (Render) переменные приходят из панели — dotenv их не перезаписывает.
+try { require('dotenv').config({ path: path.join(__dirname, '.env') }); } catch {}
+
 // ─── resolve modules from Server/node_modules (fallback to root workspaces) ───
 const rootModules = path.join(__dirname, 'node_modules');
 
@@ -25,6 +29,8 @@ const jwt = require(tryResolve('jsonwebtoken'));
 const bcrypt = require(tryResolve('bcrypt'));
 const multer = require(tryResolve('multer'));
 const { v4: uuidv4 } = require(tryResolve('uuid'));
+const cookieParser = require(tryResolve('cookie-parser'));
+const crypto = require('crypto');
 
 // ─── paths ────────────────────────────────────────────────────────────────────
 // В проде (Fly/Render) монтируем persistent-volume, путь передаём через env.
@@ -65,10 +71,11 @@ for (const d of [DATA_DIR, UPLOADS_DIR,
 }
 
 // ─── JSON Database ────────────────────────────────────────────────────────────
-let db = { users: [], chats: [], messages: [], tracks: [], chatMembers: [], playlists: [], favorites: [], devices: [], linkInvites: [], callLogs: [], bots: [], aiModels: [], aiSessions: [], walletOrders: [] };
+let db = { users: [], chats: [], messages: [], tracks: [], chatMembers: [], playlists: [], favorites: [], devices: [], linkInvites: [], callLogs: [], bots: [], aiModels: [], aiSessions: [], walletOrders: [], refreshTokens: [] };
 if (fs.existsSync(DB_FILE)) {
   try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch {}
 }
+if (!Array.isArray(db.refreshTokens)) db.refreshTokens = [];
 
 // При старте сервера все пользователи офлайн (сбрасываем stale-статус)
 if (db.users) {
@@ -243,11 +250,26 @@ function createSavedMessagesChat(userId) {
 
 // ─── Express app ─────────────────────────────────────────────────────────────
 const app = express();
+// SEC: скрываем сигнатуру фреймворка (fingerprinting сервера).
+app.disable('x-powered-by');
+// SEC: helmet — базовые security-заголовки. CSP отключаем на уровне модуля,
+// т.к. для /uploads уже поставлен кастомный `Content-Security-Policy: sandbox`.
+try {
+  const helmet = require(tryResolve('helmet'));
+  app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' }, // /uploads отдаём на web-origin
+    crossOriginEmbedderPolicy: false,
+  }));
+} catch (e) {
+  console.warn('[SEC] helmet не установлен — пропускаю security-заголовки. Запустите: npm i helmet (в Server/).');
+}
 // SEC: за прокси Render/Fly — доверяем ровно одному хопу, чтобы req.ip был реальным (для rate-limit).
 app.set('trust proxy', 1);
 const server = http.createServer(app);
 
 app.use(cors({ origin: corsOriginFn, credentials: true }));
+app.use(cookieParser());
 // SEC: лимит тела. Не '1mb', потому что голосовые/файлы отправляются как base64
 // через /api/messages/:chatId/send (data URL). 30mb покрывает длинные ГС и фото.
 app.use(express.json({ limit: '30mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
@@ -289,8 +311,32 @@ function makeRateLimit({ windowMs, max, key = (req) => req.ip }) {
 }
 const authLimiter = makeRateLimit({ windowMs: 60_000, max: 20 }); // 20 auth-запросов/мин с IP
 const searchLimiter = makeRateLimit({ windowMs: 60_000, max: 60 });
-app.use(['/api/auth/device', '/api/auth/verify', '/api/auth/send-code', '/api/auth/verify-code', '/api/auth/logout'], authLimiter);
+// SEC: лимиты на аутентифицированные действия. Ключ — userId, а не IP,
+// иначе один злой юзер за NAT заблокирует всех остальных.
+const byUserKey = (req) => {
+  // authMiddleware ещё не отработал на app.use-уровне, поэтому декодируем JWT best-effort.
+  try {
+    const auth = req.headers.authorization;
+    if (auth && auth.startsWith('Bearer ')) {
+      const p = jwt.verify(auth.slice(7), JWT_SECRET);
+      return 'u:' + p.sub;
+    }
+  } catch {}
+  return 'ip:' + req.ip;
+};
+const messageLimiter = makeRateLimit({ windowMs: 60_000, max: 120, key: byUserKey }); // 120 сообщений/мин
+const uploadLimiter  = makeRateLimit({ windowMs: 60_000, max: 30,  key: byUserKey }); // 30 загрузок/мин
+const writeLimiter   = makeRateLimit({ windowMs: 60_000, max: 300, key: byUserKey }); // 300 mutating-запросов/мин
+app.use(['/api/auth/device', '/api/auth/verify', '/api/auth/send-code', '/api/auth/verify-code', '/api/auth/logout', '/api/auth/refresh'], authLimiter);
 app.use('/api/users/search', searchLimiter);
+app.use(['/api/messages'], messageLimiter);
+app.use(['/api/files', '/api/users/avatar', '/api/users/me/avatar', '/api/music', '/api/ai/models'], uploadLimiter);
+// Общий лимитер на все mutating API (fallback).
+app.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  if (!req.path.startsWith('/api/')) return next();
+  return writeLimiter(req, res, next);
+});
 
 // SEC: /uploads раздаём как attachment + nosniff, чтобы залитый .html/.svg не исполнялся в нашем домене.
 app.use('/uploads', express.static(UPLOADS_DIR, {
@@ -385,19 +431,178 @@ if (fs.existsSync(CLIENT_DIST)) {
 }
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
+// SEC: JWT содержит { sub, deviceId, tv }. Проверяем:
+//   1) подпись/срок;
+//   2) устройство до сих пор привязано (удалённое = мгновенный logout);
+//   3) tokenVersion пользователя совпадает (глобальный "revoke-all-sessions").
+function verifyAccessToken(token) {
+  const payload = jwt.verify(token, JWT_SECRET);
+  const user = db.users.find(u => u.id === payload.sub);
+  if (!user) throw new Error('user_gone');
+  const tv = Number(user.tokenVersion || 0);
+  if (Number(payload.tv || 0) !== tv) throw new Error('token_revoked');
+  if (payload.deviceId) {
+    const dev = (db.devices || []).find(d => d.userId === user.id && d.deviceId === payload.deviceId);
+    if (!dev) throw new Error('device_revoked');
+  }
+  return { userId: user.id, deviceId: payload.deviceId || null };
+}
+
 function authMiddleware(req, res, next) {
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith('Bearer ')) {
     return res.status(401).json({ message: 'Unauthorized' });
   }
   try {
-    const payload = jwt.verify(auth.slice(7), JWT_SECRET);
-    req.userId = payload.sub;
+    const { userId, deviceId } = verifyAccessToken(auth.slice(7));
+    req.userId = userId;
+    req.deviceId = deviceId;
     next();
-  } catch {
-    res.status(401).json({ message: 'Invalid token' });
+  } catch (e) {
+    res.status(401).json({ message: 'Invalid token', reason: e.message });
   }
 }
+
+// Единая точка выпуска access-токена — все /auth/* роуты используют её.
+// SEC: expiresIn=15m. Клиент рефрешит через /auth/refresh (HttpOnly cookie).
+// Существующие 30d-токены остаются валидны до истечения — обратной совместимости не ломаем.
+function issueAccessToken(user, deviceId) {
+  if (typeof user.tokenVersion !== 'number') user.tokenVersion = 0;
+  return jwt.sign(
+    { sub: user.id, deviceId: deviceId || null, tv: user.tokenVersion },
+    JWT_SECRET,
+    { expiresIn: '15m' },
+  );
+}
+
+// ─── Refresh tokens (ротация + reuse-detection) ──────────────────────────────
+// Схема:
+//   - Refresh-токен = случайные 32 байта (не JWT), хранится захэшированным.
+//   - На каждое /auth/refresh старый токен помечается used=true и выдаётся новый
+//     из той же «семьи» (familyId). Если пришёл уже used-токен → reuse-attack:
+//     инвалидируем всю семью и инкрементим tokenVersion (все сессии revoke).
+//   - Refresh хранится 30 дней. Cookie: HttpOnly, Secure (в prod), SameSite=Strict.
+const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const REFRESH_COOKIE = 'vera_refresh';
+const CSRF_COOKIE    = 'vera_csrf';
+
+function hashRefresh(raw) {
+  return crypto.createHash('sha256').update(raw).digest('hex');
+}
+
+function issueRefreshToken(user, deviceId, familyId = null) {
+  const raw = crypto.randomBytes(32).toString('base64url');
+  const rec = {
+    id: uuidv4(),
+    familyId: familyId || uuidv4(),
+    userId: user.id,
+    deviceId: deviceId || null,
+    tokenHash: hashRefresh(raw),
+    createdAt: Date.now(),
+    expiresAt: Date.now() + REFRESH_TTL_MS,
+    usedAt: null,
+    revokedAt: null,
+  };
+  db.refreshTokens.push(rec);
+  // Уборка мусора: старше TTL или использованных давно.
+  const cutoff = Date.now() - REFRESH_TTL_MS;
+  db.refreshTokens = db.refreshTokens.filter(t => t.expiresAt > cutoff);
+  return { raw, rec };
+}
+
+function findRefreshByRaw(raw) {
+  const h = hashRefresh(raw);
+  return db.refreshTokens.find(t => t.tokenHash === h);
+}
+
+function revokeFamily(familyId, reason = 'revoked') {
+  const now = Date.now();
+  for (const t of db.refreshTokens) {
+    if (t.familyId === familyId && !t.revokedAt) {
+      t.revokedAt = now;
+      t.revokeReason = reason;
+    }
+  }
+}
+
+function setAuthCookies(res, refreshRaw) {
+  const csrfToken = crypto.randomBytes(24).toString('base64url');
+  const common = {
+    httpOnly: true,
+    secure: IS_PROD,
+    sameSite: 'strict',
+    path: '/',
+    maxAge: REFRESH_TTL_MS,
+  };
+  res.cookie(REFRESH_COOKIE, refreshRaw, common);
+  // CSRF-cookie не HttpOnly: JS должен прочитать и положить в X-CSRF-Token.
+  res.cookie(CSRF_COOKIE, csrfToken, { ...common, httpOnly: false });
+  return csrfToken;
+}
+
+function clearAuthCookies(res) {
+  res.clearCookie(REFRESH_COOKIE, { path: '/' });
+  res.clearCookie(CSRF_COOKIE,    { path: '/' });
+}
+
+// SEC: double-submit CSRF — cookie должен совпасть с заголовком.
+// Применяется к cookie-зависимым endpoint'ам (refresh, logout при cookie-auth).
+function csrfCheck(req, res, next) {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  const cookieTok = req.cookies?.[CSRF_COOKIE];
+  const headerTok = req.headers['x-csrf-token'];
+  if (!cookieTok || !headerTok || cookieTok !== headerTok) {
+    return res.status(403).json({ message: 'CSRF token missing or mismatched' });
+  }
+  next();
+}
+
+// POST /api/auth/refresh — ротация. Cookie in, cookie out. Возвращает новый accessToken.
+app.post('/api/auth/refresh', csrfCheck, (req, res) => {
+  const raw = req.cookies?.[REFRESH_COOKIE];
+  if (!raw) return res.status(401).json({ message: 'No refresh cookie', reason: 'no_refresh' });
+  const rec = findRefreshByRaw(raw);
+  if (!rec) {
+    clearAuthCookies(res);
+    return res.status(401).json({ message: 'Invalid refresh', reason: 'invalid_refresh' });
+  }
+  if (rec.expiresAt < Date.now() || rec.revokedAt) {
+    clearAuthCookies(res);
+    return res.status(401).json({ message: 'Refresh expired/revoked', reason: 'expired' });
+  }
+  if (rec.usedAt) {
+    // SEC: reuse-attack — токен уже был использован. Инвалидируем всю семью
+    // и глобально инкрементим tokenVersion юзера.
+    revokeFamily(rec.familyId, 'reuse');
+    const user = db.users.find(u => u.id === rec.userId);
+    if (user) user.tokenVersion = Number(user.tokenVersion || 0) + 1;
+    saveDb();
+    clearAuthCookies(res);
+    return res.status(401).json({ message: 'Refresh reuse detected', reason: 'reuse' });
+  }
+  const user = db.users.find(u => u.id === rec.userId);
+  if (!user) {
+    clearAuthCookies(res);
+    return res.status(401).json({ message: 'User not found', reason: 'user_gone' });
+  }
+  // Устройство должно оставаться привязанным.
+  if (rec.deviceId) {
+    const dev = (db.devices || []).find(d => d.userId === user.id && d.deviceId === rec.deviceId);
+    if (!dev) {
+      revokeFamily(rec.familyId, 'device_revoked');
+      saveDb();
+      clearAuthCookies(res);
+      return res.status(401).json({ message: 'Device revoked', reason: 'device_revoked' });
+    }
+  }
+  // Ротация: помечаем старый, выдаём новый из той же семьи.
+  rec.usedAt = Date.now();
+  const { raw: newRaw } = issueRefreshToken(user, rec.deviceId, rec.familyId);
+  saveDb();
+  setAuthCookies(res, newRaw);
+  const accessToken = issueAccessToken(user, rec.deviceId);
+  res.json({ accessToken, user });
+});
 
 // ─── Multer storage ───────────────────────────────────────────────────────────
 // SEC: белые списки MIME/расширений. UUID-имя файла, безопасное расширение.
@@ -471,12 +676,11 @@ app.post('/api/auth/device', (req, res) => {
     user.isOnline = true;
     user.lastSeen = new Date().toISOString();
     saveDb();
-    const accessToken = jwt.sign(
-      { sub: user.id, username: user.username, deviceId },
-      JWT_SECRET,
-      { expiresIn: '365d' },
-    );
-    return res.json({ accessToken, user, isNewUser: false });
+    const accessToken = issueAccessToken(user, deviceId);
+    const { raw: refreshRaw } = issueRefreshToken(user, deviceId);
+    saveDb();
+    const csrfToken = setAuthCookies(res, refreshRaw);
+    return res.json({ accessToken, csrfToken, user, isNewUser: false });
   }
 
   // 2) Новое устройство — создаём аккаунт, устройство помечаем primary.
@@ -515,12 +719,11 @@ app.post('/api/auth/device', (req, res) => {
     return res.status(500).json({ message: dev.message || 'Не удалось создать устройство' });
   }
   saveDb();
-  const accessToken = jwt.sign(
-    { sub: user.id, username: user.username, deviceId },
-    JWT_SECRET,
-    { expiresIn: '365d' },
-  );
-  res.json({ accessToken, user, isNewUser: true });
+  const accessToken = issueAccessToken(user, deviceId);
+  const { raw: refreshRaw } = issueRefreshToken(user, deviceId);
+  saveDb();
+  const csrfToken = setAuthCookies(res, refreshRaw);
+  res.json({ accessToken, csrfToken, user, isNewUser: true });
 });
 
 // ─── Устаревшие маршруты удалены: /auth/request-code, /auth/verify,
@@ -712,9 +915,35 @@ app.post('/api/auth/verify-code', (req, res) => {
 */
 
 // POST /api/auth/logout
+// SEC: инкрементим tokenVersion → все выданные JWT этому юзеру становятся невалидны.
 app.post('/api/auth/logout', authMiddleware, (req, res) => {
   const user = db.users.find(u => u.id === req.userId);
-  if (user) { user.isOnline = false; user.lastSeen = new Date().toISOString(); saveDb(); }
+  if (user) {
+    user.isOnline = false;
+    user.lastSeen = new Date().toISOString();
+    user.tokenVersion = Number(user.tokenVersion || 0) + 1;
+    saveDb();
+  }
+  // SEC: revoke все refresh-семьи для этого устройства (или всех, если deviceId неизвестен).
+  const now = Date.now();
+  for (const t of db.refreshTokens) {
+    if (t.userId === req.userId && !t.revokedAt) {
+      if (!req.deviceId || t.deviceId === req.deviceId) {
+        t.revokedAt = now;
+        t.revokeReason = 'logout';
+      }
+    }
+  }
+  saveDb();
+  clearAuthCookies(res);
+  // Разрываем все активные сокеты этого юзера — они должны переподключиться с новым токеном.
+  try {
+    const sockets = userSockets && userSockets.get && userSockets.get(req.userId);
+    if (sockets) sockets.forEach(sid => {
+      const s = io.sockets.sockets.get(sid);
+      if (s) s.disconnect(true);
+    });
+  } catch {}
   res.json({ success: true });
 });
 
@@ -779,10 +1008,34 @@ app.get('/api/users/search', authMiddleware, (req, res) => {
 });
 
 // GET /api/users/:id
+// SEC: возвращаем только публичные поля. phone/email/tokenVersion/etc не отдаём.
 app.get('/api/users/:id', authMiddleware, (req, res) => {
   const user = db.users.find(u => u.id === req.params.id);
   if (!user) return res.status(404).json({ message: 'Не найден' });
-  res.json(user);
+  const isSelf = user.id === req.userId;
+  const publicFields = {
+    id: user.id,
+    username: user.username,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    avatarUrl: user.avatarUrl,
+    bio: user.bio,
+    isOnline: user.isOnline,
+    lastSeen: user.lastSeen,
+    themeId: user.themeId,
+    createdAt: user.createdAt,
+  };
+  // Себе можно вернуть больше (email/phone для настроек).
+  if (isSelf) {
+    publicFields.email = user.email;
+    publicFields.phone = user.phone;
+    publicFields.birthDate = user.birthDate;
+    publicFields.country = user.country;
+    publicFields.region = user.region;
+    publicFields.city = user.city;
+    publicFields.chatPhoto = user.chatPhoto;
+  }
+  res.json(publicFields);
 });
 
 // PATCH /api/users/me
@@ -958,7 +1211,12 @@ app.post('/api/devices/name', authMiddleware, (req, res) => {
 const NOWPAYMENTS_API_KEY = process.env.NOWPAYMENTS_API_KEY || '';
 const NOWPAYMENTS_IPN_SECRET = process.env.NOWPAYMENTS_IPN_SECRET || '';
 const NOWPAYMENTS_API = 'https://api.nowpayments.io';
-const VP_PER_USD = 100;                  // 1 USD = 100 ВП
+// SEC: стартовый лог, чтобы сразу видеть, реальный шлюз или mock. Ключи не печатаем.
+console.log(
+  `[wallet] NOWPayments mode: ${NOWPAYMENTS_API_KEY ? 'live' : 'mock'} ` +
+  `(IPN signature check: ${NOWPAYMENTS_IPN_SECRET ? 'on' : 'off'})`,
+);
+const VP_PER_RUB = 2;                    // 1 руб = 2 ВП (1 ВП = 0.5 руб)
 const VP_MIN_TOPUP = 50;
 const VP_MAX_TOPUP = 50000;
 const VP_INVOICE_TTL_MS = 30 * 60 * 1000;
@@ -1029,7 +1287,7 @@ app.post('/api/wallet/topup', authMiddleware, async (req, res) => {
   const order = {
     id: uuidv4(), userId: user.id,
     amountVs: amount,
-    priceUsd: Math.round((amount / VP_PER_USD) * 100) / 100,
+    priceRub: Math.round((amount / VP_PER_RUB) * 100) / 100,
     status: 'waiting', createdAt: Date.now(),
   };
   db.walletOrders.push(order);
@@ -1041,8 +1299,8 @@ app.post('/api/wallet/topup', authMiddleware, async (req, res) => {
   if (!NOWPAYMENTS_API_KEY) {
     return res.json({
       orderId: order.id, paymentId: order.id, mock: true,
-      invoiceUrl: '', amountVs: order.amountVs, priceUsd: order.priceUsd,
-      rate: VP_PER_USD, expiresAt: order.createdAt + VP_INVOICE_TTL_MS,
+      invoiceUrl: '', amountVs: order.amountVs, priceRub: order.priceRub,
+      rate: VP_PER_RUB, expiresAt: order.createdAt + VP_INVOICE_TTL_MS,
     });
   }
   try {
@@ -1053,8 +1311,8 @@ app.post('/api/wallet/topup', authMiddleware, async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': NOWPAYMENTS_API_KEY },
       body: JSON.stringify({
-        price_amount: order.priceUsd,
-        price_currency: 'usd',
+        price_amount: order.priceRub,
+        price_currency: 'rub',
         order_id: vpOrderId(order),
         order_description: `VERA — пополнение на ${order.amountVs} ВП`,
         ipn_callback_url: `${base}/api/wallet/webhook`,
@@ -1070,8 +1328,8 @@ app.post('/api/wallet/topup', authMiddleware, async (req, res) => {
     return res.json({
       orderId: order.id, paymentId: js.id,
       mock: false, invoiceUrl: js.invoice_url,
-      amountVs: order.amountVs, priceUsd: order.priceUsd,
-      rate: VP_PER_USD, expiresAt: order.createdAt + VP_INVOICE_TTL_MS,
+      amountVs: order.amountVs, priceRub: order.priceRub,
+      rate: VP_PER_RUB, expiresAt: order.createdAt + VP_INVOICE_TTL_MS,
     });
   } catch (e) {
     console.error('[wallet] NOWPayments invoice error:', e);
@@ -1085,7 +1343,7 @@ app.post('/api/wallet/topup', authMiddleware, async (req, res) => {
 app.get('/api/wallet/orders/:orderId', authMiddleware, (req, res) => {
   const order = (db.walletOrders || []).find(o => o.id === req.params.orderId && o.userId === req.userId);
   if (!order) return res.status(404).json({ message: 'Заказ не найден' });
-  res.json({ status: order.status, amountVs: order.amountVs, priceUsd: order.priceUsd });
+  res.json({ status: order.status, amountVs: order.amountVs, priceRub: order.priceRub });
 });
 
 // Webhook от NOWPayments (IPN) — публичный
@@ -1438,13 +1696,19 @@ app.post('/api/messages/:chatId/reaction', authMiddleware, (req, res) => {
   res.json({ reactions: msg.reactions });
 });
 
-// DELETE /api/chats/:id  (удалить чат — любой участник)
+// DELETE /api/chats/:id  (удалить чат — только owner/admin. Обычный участник → /leave)
 app.delete('/api/chats/:id', authMiddleware, (req, res) => {
   const chatId = req.params.id;
   const member = db.chatMembers.find(m => m.chatId === chatId && m.userId === req.userId);
   if (!member) return res.status(403).json({ message: 'Нет доступа к чату' });
-  // Любой участник может удалить чат (для себя это означает "покинуть и удалить свои сообщения")
-  // Полное удаление чата делает любой участник
+  const chat = db.chats.find(c => c.id === chatId);
+  if (!chat) return res.status(404).json({ message: 'Чат не найден' });
+  // Direct/saved — удалять может любой участник (это их личный чат).
+  // Group/channel — только owner/admin.
+  const isDirect = chat.type === 'direct' || chat.type === 'saved' || chat.type === 'private';
+  if (!isDirect && member.role !== 'owner' && member.role !== 'admin') {
+    return res.status(403).json({ message: 'Удалять чат может только владелец. Используйте «Покинуть чат».' });
+  }
 
   const chatIdx = db.chats.findIndex(c => c.id === chatId);
   if (chatIdx === -1) return res.status(404).json({ message: 'Чат не найден' });
@@ -1465,6 +1729,9 @@ app.delete('/api/chats/:id', authMiddleware, (req, res) => {
 });
 
 // ─── MESSAGES routes ──────────────────────────────────────────────────────────
+// SEC: лимиты содержимого — используются в POST/PUT/WS.
+const MESSAGE_MAX_LEN = 4096;
+const EDIT_WINDOW_MS = 48 * 60 * 60 * 1000;
 
 // GET /api/messages/:chatId
 app.get('/api/messages/:chatId', authMiddleware, (req, res) => {
@@ -1506,12 +1773,17 @@ function handleSendMessage(chatId, userId, body, res) {
   if (!isMember) return res.status(403).json({ message: 'Нет доступа' });
 
   const { text, content, replyToId, attachments, type } = body;
-  const msgContent = content || text || '';
+  const msgContent = String(content || text || '');
+  if (msgContent.length > MESSAGE_MAX_LEN) {
+    return res.status(400).json({ message: 'Сообщение слишком длинное' });
+  }
   if (!msgContent && (!attachments || attachments.length === 0)) {
     return res.status(400).json({ message: 'Пустое сообщение' });
   }
+  // SEC: не даём клиенту прицепить >20 файлов одним сообщением.
+  const safeAttachments = Array.isArray(attachments) ? attachments.slice(0, 20) : [];
 
-  const normAttachments = (attachments || []).map(a => ({
+  const normAttachments = safeAttachments.map(a => ({
     id: a.id || uuidv4(),
     fileUrl: a.url || a.fileUrl || '',
     fileName: a.originalName || a.fileName || '',
@@ -1557,11 +1829,17 @@ app.post('/api/messages/:chatId/send', authMiddleware, (req, res) => {
 
 
 // PUT /api/messages/:id  (edit)
+// SEC: только автор, окно 48ч, длина ≤ 4096.
 app.put('/api/messages/:id', authMiddleware, (req, res) => {
   const msg = db.messages.find(m => m.id === req.params.id);
   if (!msg) return res.status(404).json({ message: 'Не найдено' });
   if (msg.senderId !== req.userId) return res.status(403).json({ message: 'Нет прав' });
-  msg.text = String(req.body?.text ?? '');
+  if (msg.isDeleted) return res.status(400).json({ message: 'Сообщение удалено' });
+  const age = Date.now() - new Date(msg.createdAt).getTime();
+  if (age > EDIT_WINDOW_MS) return res.status(403).json({ message: 'Окно редактирования истекло' });
+  const text = String(req.body?.text ?? '');
+  if (text.length > MESSAGE_MAX_LEN) return res.status(400).json({ message: 'Сообщение слишком длинное' });
+  msg.text = text;
   msg.content = msg.text;
   msg.editedAt = new Date().toISOString();
   msg.isEdited = true;
@@ -2005,7 +2283,8 @@ const io = new IOServer(server, {
 });
 
 const userSockets = new Map(); // userId -> Set<socketId>
-
+// SEC: per-user WS message rate-limit state.
+const wsSendHits = new Map();
 // ─── Discord-style voice rooms (in-memory) ─────────────────────────────────
 // chatId -> Map<userId, { socketId, kind, joinedAt, mic, cam, screen, deaf }>
 const callRooms = new Map();
@@ -2043,11 +2322,12 @@ io.use((socket, next) => {
   const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(' ')[1];
   if (!token) return next(new Error('Unauthorized'));
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    socket.userId = payload.sub;
+    const { userId, deviceId } = verifyAccessToken(token);
+    socket.userId = userId;
+    socket.deviceId = deviceId;
     next();
-  } catch {
-    next(new Error('Invalid token'));
+  } catch (e) {
+    next(new Error('Invalid token: ' + e.message));
   }
 });
 
@@ -2079,12 +2359,28 @@ io.on('connection', (socket) => {
 
   // Send message via socket
   socket.on('message:send', async (data, callback) => {
-    const { chatId, text, content, replyToId, attachments, type } = data;
+    const { chatId, text, content, replyToId, attachments, type } = data || {};
     const isMember = db.chatMembers.find(m => m.chatId === chatId && m.userId === userId);
     if (!isMember) return callback && callback({ error: 'Нет доступа' });
 
-    const msgContent = content || text || '';
-    const normAttachments = (attachments || []).map(a => ({
+    const msgContent = String(content || text || '');
+    if (msgContent.length > MESSAGE_MAX_LEN) {
+      return callback && callback({ error: 'Сообщение слишком длинное' });
+    }
+    // SEC: rate-limit per-user на WS message:send.
+    if (!wsSendHits.has(userId)) wsSendHits.set(userId, []);
+    const hits = wsSendHits.get(userId);
+    const now = Date.now();
+    while (hits.length && hits[0] < now - 60_000) hits.shift();
+    if (hits.length >= 120) {
+      return callback && callback({ error: 'Слишком быстро. Подождите минуту.' });
+    }
+    hits.push(now);
+    const safeAttachments = Array.isArray(attachments) ? attachments.slice(0, 20) : [];
+    if (!msgContent && safeAttachments.length === 0) {
+      return callback && callback({ error: 'Пустое сообщение' });
+    }
+    const normAttachments = safeAttachments.map(a => ({
       id: a.id || uuidv4(),
       fileUrl: a.url || a.fileUrl || '',
       fileName: a.originalName || a.fileName || '',
@@ -2118,15 +2414,24 @@ io.on('connection', (socket) => {
 
   // Typing indicators
   socket.on('typing:start', (chatId) => {
+    // SEC: не даём эмитить typing в чужие чаты.
+    const isMember = db.chatMembers.find(m => m.chatId === chatId && m.userId === userId);
+    if (!isMember) return;
     socket.to(`chat:${chatId}`).emit('typing:start', { userId, chatId });
   });
   socket.on('typing:stop', (chatId) => {
+    const isMember = db.chatMembers.find(m => m.chatId === chatId && m.userId === userId);
+    if (!isMember) return;
     socket.to(`chat:${chatId}`).emit('typing:stop', { userId, chatId });
   });
 
   // Read message
   socket.on('message:read', ({ chatId, messageId }) => {
+    // SEC: проверяем членство в чате и совпадение chatId с сообщением.
+    const isMember = db.chatMembers.find(m => m.chatId === chatId && m.userId === userId);
+    if (!isMember) return;
     const msg = db.messages.find(m => m.id === messageId);
+    if (!msg || msg.chatId !== chatId) return;
     if (msg && !msg.readBy?.includes(userId)) {
       if (!msg.readBy) msg.readBy = [];
       msg.readBy.push(userId);
@@ -2143,8 +2448,17 @@ io.on('connection', (socket) => {
     if (sockets) sockets.forEach(sid => io.to(sid).emit(event, data));
   }
 
+  // SEC: проверка «эти двое состоят в общем direct/group чате» — иначе можно
+  // спамить произвольным юзерам поддельные call-события.
+  function shareChat(a, b) {
+    if (!a || !b || a === b) return false;
+    const aChats = new Set(db.chatMembers.filter(m => m.userId === a).map(m => m.chatId));
+    return db.chatMembers.some(m => m.userId === b && aChats.has(m.chatId));
+  }
+
   // Звонок: сохраняем в журнал
   socket.on('call:offer', (data) => {
+    if (!data || !data.targetUserId || !shareChat(userId, data.targetUserId)) return;
     const caller = db.users.find(u => u.id === userId);
     const callLogEntry = {
       id: uuidv4(),
@@ -2172,6 +2486,7 @@ io.on('connection', (socket) => {
 
   // Ответить на звонок
   socket.on('call:answer', (data) => {
+    if (!data || !data.targetUserId || !shareChat(userId, data.targetUserId)) return;
     sendToUser(data.targetUserId, 'call:answered', {
       answer: data.answer,
       fromUserId: userId,
@@ -2180,6 +2495,7 @@ io.on('connection', (socket) => {
 
   // ICE кандидат
   socket.on('call:ice-candidate', (data) => {
+    if (!data || !data.targetUserId || !shareChat(userId, data.targetUserId)) return;
     sendToUser(data.targetUserId, 'call:ice-candidate', {
       candidate: data.candidate,
       fromUserId: userId,
@@ -2188,12 +2504,12 @@ io.on('connection', (socket) => {
 
   // Завершить / отклонить звонок
   socket.on('call:end', (data) => {
+    if (!data) return;
+    if (data.targetUserId && shareChat(userId, data.targetUserId)) {
+      const reason = data.reason || 'ended';
+      sendToUser(data.targetUserId, 'call:ended', { fromUserId: userId, reason });
+    }
     const reason = data.reason || 'ended';
-    sendToUser(data.targetUserId, 'call:ended', {
-      fromUserId: userId,
-      reason,
-    });
-
     // Отмечаем завершение в журнале звонков
     if (data.callLogId) {
       const entry = (db.callLogs || []).find(e => e.id === data.callLogId);

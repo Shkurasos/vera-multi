@@ -403,7 +403,7 @@ export default function Store({ onClose }: Props) {
                       Режим теста (ключ NOWPayments не задан) — инвойс создан.
                     </Typography>
                     <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 2 }}>
-                      Сумма: {invoice.amountVs} ВП ≈ ${invoice.priceUsd} USD
+                      Сумма: {invoice.amountVs} ВП ≈ {invoice.priceRub} ₽
                     </Typography>
                     {invoiceStatus === 'paid' ? (
                       <Typography sx={{ fontSize: 14, color: '#7dffa8', fontWeight: 700 }}>✅ Оплачено, ВП зачислены!</Typography>
@@ -423,7 +423,7 @@ export default function Store({ onClose }: Props) {
                         ? <img src={qrDataUrl} alt="QR" width={220} height={220} style={{ borderRadius: 12, background: '#fff', padding: 8 }} />
                         : <Box sx={{ width: 220, height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textSec, fontSize: 12 }}>Генерация QR…</Box>}
                       <Typography sx={{ fontSize: 12, color: theme.textSec, mt: 0.5 }}>
-                        {invoiceStatus === 'paid' ? '✅ Оплачено' : `На ${invoice.amountVs} ВП ≈ $${invoice.priceUsd}`}
+                        {invoiceStatus === 'paid' ? '✅ Оплачено' : `На ${invoice.amountVs} ВП ≈ ${invoice.priceRub} ₽`}
                       </Typography>
                     </Box>
                     <Box sx={{ flex: 1, minWidth: 220 }}>

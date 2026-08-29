@@ -21,6 +21,19 @@ services:
         value: /tmp/vera/uploads
       - key: DB_FILE
         value: /tmp/vera/vera.json
+      # SEC: JWT_SECRET Render генерирует сам (32+ байта).
       - key: JWT_SECRET
         generateValue: true
+      # Крипто-кошелёк NOWPayments. Оба ключа — из личного кабинета
+      # nowpayments.io (см. DEPLOY.md, раздел «Крипто-кошелёк»).
+      # Пока не задан — /api/wallet/topup работает в mock-режиме.
+      - key: NOWPAYMENTS_API_KEY
+        sync: false
+      - key: NOWPAYMENTS_IPN_SECRET
+        sync: false
+      # Опционально: белый список Origin для CORS (CSV). Публичный URL Render
+      # добавляется автоматически (RENDER_EXTERNAL_URL). Заполнять, если
+      # десктоп/Electron подключается с кастомного origin.
+      - key: CORS_ORIGIN
+        sync: false
 
