@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { walletApi } from '../services/api';
 
 /**
  * МАГАЗИН VERA
@@ -94,6 +95,8 @@ export type SelfCardSetting = 'plain' | 'gradient' | 'badge';
 export interface ShopState {
   /** Какие товары куплены (по умолчанию все бесплатные открыты). */
   owned: Record<string, boolean>;
+  /** Текущий баланс ВП (с сервера). */
+  balanceVp: number;
   /** Скрывает UI новых платных-возможностей, пока продукт не готов. */
   enabled: boolean;
   /** Текущее состояние плашки-магазина (открыт/закрыт). */
@@ -110,9 +113,16 @@ export interface ShopState {
   activeWallpaper: string;
   setActiveWallpaper: (id: string) => void;
 
-  purchase: (id: string) => void;
+  purchase: (id: string) => Promise<void>;
   isOwned: (id: string) => boolean;
   toggleEnabled: () => void;
+
+  /** Загрузить баланс + купленное с сервера (при открытии магазина / после входа). */
+  loadWallet: () => Promise<void>;
+  /** Обновить баланс с сервера (событие wallet:updated). */
+  setBalance: (n: number) => void;
+  /** Влить купленные товары от сервера (событие shop:owned / ответ покупки). */
+  mergeOwned: (ids: string[]) => void;
 }
 
 /** Кладёт активный выбор по категории: если это profile/selfcard — фиксирует его. */
@@ -136,6 +146,7 @@ export const useShopStore = create<ShopState>()(
       };
       return {
         owned: {},
+        balanceVp: 0,
         enabled: true,
         open: false,
         setOpen: (v) => set({ open: v }),
@@ -145,7 +156,38 @@ export const useShopStore = create<ShopState>()(
         setActiveSelfCard: (id) => set({ activeSelfCard: id }),
         activeWallpaper: '',
         setActiveWallpaper: (id) => set({ activeWallpaper: id }),
-        purchase: (id) => set(s => ({ owned: { ...s.owned, [id]: true } })),
+        purchase: async (id) => {
+          const item = SHOP_CATALOG.find(i => i.id === id);
+          if (!item) return;
+          const price = item.price && item.price > 0 ? item.price : 0;
+          if (price > 0) {
+            // Платная покупка — списываем ВП на сервере.
+            const { data } = await walletApi.buy(id);
+            set(s => ({
+              balanceVp: data.balance,
+              owned: { ...s.owned, [id]: true },
+            }));
+            return;
+          }
+          // Бесплатные открываются сразу.
+          set(s => ({ owned: { ...s.owned, [id]: true } }));
+        },
+        loadWallet: async () => {
+          try {
+            const { data } = await walletApi.get();
+            const serverOwned: string[] = Array.isArray(data.ownedItems) ? data.ownedItems : [];
+            set(s => ({
+              balanceVp: typeof data.balance === 'number' ? data.balance : 0,
+              owned: { ...s.owned, ...Object.fromEntries(serverOwned.map((oid) => [oid, true])) },
+            }));
+          } catch (err) {
+            console.warn('[shop] loadWallet failed:', err);
+          }
+        },
+        setBalance: (n) => set({ balanceVp: n }),
+        mergeOwned: (ids) => set(s => ({
+          owned: { ...s.owned, ...Object.fromEntries(ids.map((id) => [id, true])) },
+        })),
         isOwned,
         toggleEnabled: () => set(s => ({ enabled: !s.enabled })),
       };
@@ -156,6 +198,7 @@ export const useShopStore = create<ShopState>()(
         activeSelfCard: s.activeSelfCard,
         activeWallpaper: s.activeWallpaper,
         owned: s.owned,
+        balanceVp: s.balanceVp,
       }) }
   )
 );

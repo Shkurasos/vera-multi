@@ -65,7 +65,7 @@ for (const d of [DATA_DIR, UPLOADS_DIR,
 }
 
 // ─── JSON Database ────────────────────────────────────────────────────────────
-let db = { users: [], chats: [], messages: [], tracks: [], chatMembers: [], playlists: [], favorites: [], devices: [], linkInvites: [], callLogs: [], bots: [], aiModels: [], aiSessions: [] };
+let db = { users: [], chats: [], messages: [], tracks: [], chatMembers: [], playlists: [], favorites: [], devices: [], linkInvites: [], callLogs: [], bots: [], aiModels: [], aiSessions: [], walletOrders: [] };
 if (fs.existsSync(DB_FILE)) {
   try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch {}
 }
@@ -250,7 +250,7 @@ const server = http.createServer(app);
 app.use(cors({ origin: corsOriginFn, credentials: true }));
 // SEC: лимит тела. Не '1mb', потому что голосовые/файлы отправляются как base64
 // через /api/messages/:chatId/send (data URL). 30mb покрывает длинные ГС и фото.
-app.use(express.json({ limit: '30mb' }));
+app.use(express.json({ limit: '30mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true, limit: '30mb' }));
 
 // SEC: базовые security headers (без внешней зависимости).
@@ -951,6 +951,174 @@ app.post('/api/devices/name', authMiddleware, (req, res) => {
 
 // GET /link — показывает страницу SPA, дальше фронт сам читает ?token=
 // (например /link?token=vera-link-xxx) и вызывает accept.
+
+// ─── ВП / крипто-кошелёк (NOWPayments) ─────────────────────────────────────────────
+// Без NOWPAYMENTS_API_KEY все пополнения работают в mock-режиме (тест потока).
+// Ключи задаются через env: NOWPAYMENTS_API_KEY, NOWPAYMENTS_IPN_SECRET.
+const NOWPAYMENTS_API_KEY = process.env.NOWPAYMENTS_API_KEY || '';
+const NOWPAYMENTS_IPN_SECRET = process.env.NOWPAYMENTS_IPN_SECRET || '';
+const NOWPAYMENTS_API = 'https://api.nowpayments.io';
+const VP_PER_USD = 100;                  // 1 USD = 100 ВП
+const VP_MIN_TOPUP = 50;
+const VP_MAX_TOPUP = 50000;
+const VP_INVOICE_TTL_MS = 30 * 60 * 1000;
+
+// Серверный каталог цен — копия платных товаров из клиентского SHOP_CATALOG.
+const SHOP_PRICES = {
+  'wp-time': 120,
+  'wp-parallax': 180,
+  'wp-touch': 200,
+  'chat-theme': 250,
+};
+function getShopItemPrice(itemId) {
+  return Object.prototype.hasOwnProperty.call(SHOP_PRICES, itemId) ? SHOP_PRICES[itemId] : undefined;
+}
+function ensureWallet(user) {
+  if (!user) return user;
+  if (typeof user.walletBalance !== 'number') user.walletBalance = 0;
+  if (!Array.isArray(user.ownedItems)) user.ownedItems = [];
+  return user;
+}
+function vpOrderId(order) { return 'vp_' + String(order.id).replace(/-/g, ''); }
+function pushWalletEmit(user) {
+  const sockets = userSockets.get(user.id);
+  if (sockets) sockets.forEach(sid => {
+    io.to(sid).emit('wallet:updated', { balance: user.walletBalance });
+    io.to(sid).emit('shop:owned', { ownedItems: user.ownedItems });
+  });
+}
+
+// Баланс + купленные товары
+app.get('/api/wallet', authMiddleware, (req, res) => {
+  const user = ensureWallet(db.users.find(u => u.id === req.userId));
+  if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
+  res.json({ balance: user.walletBalance, ownedItems: user.ownedItems });
+});
+
+// Создать инвойс на пополнение (amount в ВП)
+app.post('/api/wallet/topup', authMiddleware, async (req, res) => {
+  const amount = Math.floor(Number(req.body?.amount));
+  if (!isFinite(amount) || amount < VP_MIN_TOPUP || amount > VP_MAX_TOPUP) {
+    return res.status(400).json({ message: `Сумма пополнения — от ${VP_MIN_TOPUP} до ${VP_MAX_TOPUP} ВП` });
+  }
+  const user = ensureWallet(db.users.find(u => u.id === req.userId));
+  if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
+  if (!db.walletOrders) db.walletOrders = [];
+  const order = {
+    id: uuidv4(), userId: user.id,
+    amountVs: amount,
+    priceUsd: Math.round((amount / VP_PER_USD) * 100) / 100,
+    status: 'waiting', createdAt: Date.now(),
+  };
+  db.walletOrders.push(order);
+  // чистим старые (старше суток) — мусор не копим
+  db.walletOrders = db.walletOrders.filter(o => Date.now() - (o.createdAt || 0) < 24 * 60 * 60 * 1000);
+  saveDb();
+
+  // Mock-режим: ключа NOWPAYMENTS ещё нет
+  if (!NOWPAYMENTS_API_KEY) {
+    return res.json({
+      orderId: order.id, paymentId: order.id, mock: true,
+      invoiceUrl: '', amountVs: order.amountVs, priceUsd: order.priceUsd,
+      rate: VP_PER_USD, expiresAt: order.createdAt + VP_INVOICE_TTL_MS,
+    });
+  }
+  try {
+    const proto = (req.headers['x-forwarded-proto'] === 'https' || req.secure) ? 'https' : 'http';
+    const host = req.headers.host || 'localhost:3000';
+    const base = `${proto}://${host}`;
+    const call = await fetch(`${NOWPAYMENTS_API}/v1/invoice`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': NOWPAYMENTS_API_KEY },
+      body: JSON.stringify({
+        price_amount: order.priceUsd,
+        price_currency: 'usd',
+        order_id: vpOrderId(order),
+        order_description: `VERA — пополнение на ${order.amountVs} ВП`,
+        ipn_callback_url: `${base}/api/wallet/webhook`,
+        success_url: `${base}?topup=ok`,
+        cancel_url: `${base}`,
+      }),
+    });
+    const js = await call.json();
+    if (!js?.id || !js?.invoice_url) throw new Error(js?.message || 'NOWPayments не вернул инвойс');
+    order.paymentId = js.id;
+    order.invoiceUrl = js.invoice_url;
+    saveDb();
+    return res.json({
+      orderId: order.id, paymentId: js.id,
+      mock: false, invoiceUrl: js.invoice_url,
+      amountVs: order.amountVs, priceUsd: order.priceUsd,
+      rate: VP_PER_USD, expiresAt: order.createdAt + VP_INVOICE_TTL_MS,
+    });
+  } catch (e) {
+    console.error('[wallet] NOWPayments invoice error:', e);
+    db.walletOrders = db.walletOrders.filter(o => o.id !== order.id);
+    saveDb();
+    return res.status(502).json({ message: 'Не удалось создать инвойс. Попробуйте позже.' });
+  }
+});
+
+// Статус заказа (клиент поллит каждые ~4с)
+app.get('/api/wallet/orders/:orderId', authMiddleware, (req, res) => {
+  const order = (db.walletOrders || []).find(o => o.id === req.params.orderId && o.userId === req.userId);
+  if (!order) return res.status(404).json({ message: 'Заказ не найден' });
+  res.json({ status: order.status, amountVs: order.amountVs, priceUsd: order.priceUsd });
+});
+
+// Webhook от NOWPayments (IPN) — публичный
+app.post('/api/wallet/webhook', (req, res) => {
+  if (NOWPAYMENTS_IPN_SECRET) {
+    const sig = req.headers['x-nowpayments-sig'];
+    const calc = require('crypto').createHmac('sha512', NOWPAYMENTS_IPN_SECRET).update(req.rawBody || '').digest('hex');
+    if (!sig || String(sig).toLowerCase() !== calc) return res.status(401).json({ error: 'bad signature' });
+  }
+  const body = req.body || {};
+  const order = (db.walletOrders || []).find(o => vpOrderId(o) === body.order_id);
+  if (!order) return res.json({ ok: true }); // не наш заказ — игнорируем
+  if ((body.payment_status === 'finished' || body.payment_status === 'partially_paid') && order.status !== 'paid') {
+    const user = ensureWallet(db.users.find(u => u.id === order.userId));
+    if (user) {
+      user.walletBalance = (user.walletBalance || 0) + order.amountVs;
+      order.status = 'paid'; order.paidAt = Date.now();
+      saveDb();
+      pushWalletEmit(user);
+    }
+  }
+  res.json({ ok: true });
+});
+
+// МОК-оплата (только без NOWPAYMENTS_API_KEY) — для теста потока пополнения
+app.post('/api/wallet/mock-pay', authMiddleware, (req, res) => {
+  if (NOWPAYMENTS_API_KEY) return res.status(400).json({ message: 'Mock-оплата отключена (ключ NOWPAYMENTS задан)' });
+  const order = (db.walletOrders || []).find(o => o.id === req.body?.orderId && o.userId === req.userId);
+  if (!order) return res.status(404).json({ message: 'Заказ не найден' });
+  const user = ensureWallet(db.users.find(u => u.id === req.userId));
+  if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
+  if (order.status !== 'paid') {
+    user.walletBalance = (user.walletBalance || 0) + order.amountVs;
+    order.status = 'paid'; order.paidAt = Date.now();
+    saveDb();
+    pushWalletEmit(user);
+  }
+  res.json({ ok: true, balance: user.walletBalance });
+});
+
+// Купить платный товар (списание с баланса ВП)
+app.post('/api/shop/buy', authMiddleware, (req, res) => {
+  const itemId = String(req.body?.itemId || '');
+  const price = getShopItemPrice(itemId);
+  if (price === undefined) return res.status(400).json({ message: 'Товар не найден' });
+  const user = ensureWallet(db.users.find(u => u.id === req.userId));
+  if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
+  if (user.ownedItems.includes(itemId)) return res.json({ ok: true, already: true, balance: user.walletBalance, ownedItems: user.ownedItems });
+  if ((user.walletBalance || 0) < price) return res.status(400).json({ message: `Недостаточно ВП. Нужно ${price} ВП — пополните баланс.` });
+  user.walletBalance -= price;
+  user.ownedItems.push(itemId);
+  saveDb();
+  pushWalletEmit(user);
+  res.json({ ok: true, balance: user.walletBalance, ownedItems: user.ownedItems });
+});
 
 // ─── CHATS routes ─────────────────────────────────────────────────────────────
 

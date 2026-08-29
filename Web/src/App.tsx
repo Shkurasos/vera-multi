@@ -289,6 +289,16 @@ export default function App() {
         setUserOffline(userId);
       });
 
+      // Баланс ВП / купленные товары изменились на сервере (покупка, пополнение,
+      // или действие с другого устройства) — синхронизируем магазин.
+      socket.on('wallet:updated', ({ balance }: { balance: number }) => {
+        useShopStore.getState().setBalance(balance);
+      });
+
+      socket.on('shop:owned', ({ ownedItems }: { ownedItems: string[] }) => {
+        useShopStore.getState().mergeOwned(ownedItems || []);
+      });
+
       socket.on('disconnect', () => {
         clearOnlineUsers();
       });

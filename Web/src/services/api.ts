@@ -68,6 +68,20 @@ export const devicesApi = {
   callLog: () => api.get('/call-log'),
 };
 
+/* ─── ВП-кошелёк / крипто-пополнение (NOWPayments) ─────────────────────── */
+export const walletApi = {
+  /** Баланс ВП + купленные товары. */
+  get: () => api.get('/wallet'),
+  /** Создать инвойс на пополнение (amount — в ВП). */
+  topup: (amount: number) => api.post('/wallet/topup', { amount }),
+  /** Статус инвойса (поллинг). */
+  orderStatus: (orderId: string) => api.get(`/wallet/orders/${orderId}`),
+  /** Mock-оплата (только когда NOWPAYMENTS_API_KEY не задан). */
+  mockPay: (orderId: string) => api.post('/wallet/mock-pay', { orderId }),
+  /** Купить платный товар — списание ВП с баланса. */
+  buy: (itemId: string) => api.post('/shop/buy', { itemId }),
+};
+
 export const usersApi = {
   me: () => api.get('/auth/me'),
   update: (data: any) => api.patch('/users/me', data),
