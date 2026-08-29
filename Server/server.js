@@ -969,6 +969,28 @@ const SHOP_PRICES = {
   'wp-parallax': 180,
   'wp-touch': 200,
   'chat-theme': 250,
+  // ── Линейка редкостей (21×2, id = ring-r-<tier> / selfcard-r-<tier>) ──
+  'ring-r-common': 40,        'selfcard-r-common': 40,
+  'ring-r-uncommon': 90,      'selfcard-r-uncommon': 90,
+  'ring-r-rare': 160,         'selfcard-r-rare': 160,
+  'ring-r-epic': 260,         'selfcard-r-epic': 260,
+  'ring-r-legendary': 400,    'selfcard-r-legendary': 400,
+  'ring-r-mythic': 600,       'selfcard-r-mythic': 600,
+  'ring-r-divine': 850,       'selfcard-r-divine': 850,
+  'ring-r-transcendent': 1150,'selfcard-r-transcendent': 1150,
+  'ring-r-absolute': 1500,    'selfcard-r-absolute': 1500,
+  'ring-r-exclusive': 1900,   'selfcard-r-exclusive': 1900,
+  'ring-r-crystal': 2350,     'selfcard-r-crystal': 2350,
+  'ring-r-plasma': 2850,      'selfcard-r-plasma': 2850,
+  'ring-r-digital': 3400,     'selfcard-r-digital': 3400,
+  'ring-r-relic': 4000,       'selfcard-r-relic': 4000,
+  'ring-r-holo': 4650,        'selfcard-r-holo': 4650,
+  'ring-r-mechanic': 5350,    'selfcard-r-mechanic': 5350,
+  'ring-r-royal': 6100,       'selfcard-r-royal': 6100,
+  'ring-r-anomaly': 6900,     'selfcard-r-anomaly': 6900,
+  'ring-r-core': 7750,        'selfcard-r-core': 7750,
+  'ring-r-infinity': 8650,    'selfcard-r-infinity': 8650,
+  'ring-r-cult': 12000,       'selfcard-r-cult': 12000,
 };
 function getShopItemPrice(itemId) {
   return Object.prototype.hasOwnProperty.call(SHOP_PRICES, itemId) ? SHOP_PRICES[itemId] : undefined;

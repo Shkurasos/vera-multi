@@ -5,6 +5,7 @@ import QRCode from 'qrcode';
 import { useThemeStore } from '../store/themeStore';
 import { SHOP_CATALOG, ShopCategory, ShopTab, useShopStore, selectShopItem, SHOP_CURRENCY } from '../store/shopStore';
 import { walletApi } from '../services/api';
+import { RARITY_META } from '../utils/rarityStyles';
 
 interface Props {
   onClose: () => void;
@@ -18,12 +19,13 @@ const CATEGORY_META: { id: ShopCategory; label: string; icon: React.ReactNode; h
 ];
 
 // Варианты сортировки (и для магазина, и для инвентаря).
-type SortMode = 'default' | 'price-asc' | 'price-desc' | 'name' | 'category';
+type SortMode = 'default' | 'price-asc' | 'price-desc' | 'name' | 'category' | 'rarity';
 const SORT_LABELS: { id: SortMode; label: string }[] = [
   { id: 'default', label: 'По умолчанию' },
   { id: 'name', label: 'По имени (А-Я)' },
   { id: 'price-asc', label: 'Сначала дешевле' },
   { id: 'price-desc', label: 'Сначала дороже' },
+  { id: 'rarity', label: 'По редкости' },
   { id: 'category', label: 'По категории' },
 ];
 
@@ -133,6 +135,11 @@ export default function Store({ onClose }: Props) {
       case 'price-asc': sorted.sort((a, b) => (a.price || 0) - (b.price || 0)); break;
       case 'price-desc': sorted.sort((a, b) => (b.price || 0) - (a.price || 0)); break;
       case 'category': sorted.sort((a, b) => a.category.localeCompare(b.category, 'ru') || a.name.localeCompare(b.name, 'ru')); break;
+      case 'rarity': sorted.sort((a, b) => {
+        const ao = a.rarity ? RARITY_META[a.rarity].order : 999;
+        const bo = b.rarity ? RARITY_META[b.rarity].order : 999;
+        return ao - bo || a.name.localeCompare(b.name, 'ru');
+      }); break;
       default: break;
     }
     return sorted;
@@ -311,6 +318,14 @@ export default function Store({ onClose }: Props) {
                 </Box>
                 <Box>
                   <Typography sx={{ fontSize: 15, fontWeight: 700 }}>{item.name}</Typography>
+                  {item.rarity && (
+                    <Box sx={{
+                      display: 'inline-block', mt: 0.5, px: 0.8, py: 0.2,
+                      fontSize: 10, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase',
+                      color: '#fff', bgcolor: RARITY_META[item.rarity].color + '33',
+                      border: `1px solid ${RARITY_META[item.rarity].color}`, borderRadius: 1,
+                    }}>{RARITY_META[item.rarity].label}</Box>
+                  )}
                   <Typography sx={{ fontSize: 12, color: theme.textSec, mt: 0.5, minHeight: 32 }}>
                     {item.description}
                   </Typography>

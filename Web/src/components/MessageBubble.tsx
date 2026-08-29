@@ -13,6 +13,7 @@ import { useThemeStore } from '../store/themeStore';
 import { useAuthStore } from '../store/authStore';
 import { useChatSettingsStore } from '../store/chatSettingsStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
+import { buildRingSx, buildPlaqueSx } from '../utils/rarityStyles';
 import { voiceApi } from '../services/api';
 import ContextMenu from './ContextMenu';
 import { membranePressSx, motion } from '../styles/motion';
@@ -331,7 +332,9 @@ function MessageBubble({
     transition: 'box-shadow 0.3s ease, border-color 0.3s ease',
   };
   if (ringVal) {
-    if (ringVal.type === 'gradient') {
+    if (ringVal.type === 'rarity') {
+      Object.assign(avatarSx, buildRingSx(ringVal.rarity, theme.accent, false));
+    } else if (ringVal.type === 'gradient') {
       avatarSx.border = '2px solid transparent';
       avatarSx.backgroundImage = `linear-gradient(${theme.accent + '33'}, ${theme.accent + '33'}), ${ringVal.gradient}`;
       avatarSx.backgroundOrigin = 'border-box';
@@ -351,7 +354,9 @@ function MessageBubble({
   };
   const selfVal = selfCardItem?.value;
   if (selfVal) {
-    if (selfVal.type === 'gradient') {
+    if (selfVal.type === 'rarity') {
+      Object.assign(selfPlaqueSx, buildPlaqueSx(selfVal.rarity, theme.accent));
+    } else if (selfVal.type === 'gradient') {
       selfPlaqueSx.background = selfVal.gradient;
       selfPlaqueSx.color = '#fff';
       selfPlaqueSx.boxShadow = `0 2px 8px rgba(0,0,0,0.25)`;

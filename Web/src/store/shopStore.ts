@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { walletApi } from '../services/api';
+import { RARITY_META, RARITY_ORDER } from '../utils/rarityStyles';
 
 /**
  * МАГАЗИН VERA
@@ -33,6 +34,8 @@ export interface ShopItem {
   price?: number;
   /** Признак «показывать как купленное/активное». */
   ownedByDefault?: boolean;
+  /** Уровень редкости (для платных ring/selfcard из линейки редкостей). */
+  rarity?: import('../utils/rarityStyles').RarityTier;
 }
 
 /** Каталог — зашит в клиент, значит все товары принадлежат нам (издателю). */
@@ -85,6 +88,34 @@ export const SHOP_CATALOG: ShopItem[] = [
     applyKey: 'perChatTheme', value: { type: 'perchat' },
     previewColor: 'linear-gradient(90deg,#4dd0ff,#a04dff,#ff4870)', price: 250, ownedByDefault: false },
 ];
+
+// ─── Линейка редкостей (21×2 = 42 платных предмета) ────────────────────────
+// Генерируется из RARITY_META (общий источник истины для UI-стилей и цен).
+// id: `ring-r-<rarity>` / `selfcard-r-<rarity>` — префикс `-r-` защищает от
+// коллизий со старыми `ring-default` / `selfcard-default`.
+for (const r of RARITY_ORDER) {
+  const meta = RARITY_META[r];
+  SHOP_CATALOG.push({
+    id: `ring-r-${r}`, category: 'profile',
+    name: `Обводка «${meta.codename}»`,
+    description: `${meta.label} редкость — стиль ${meta.codename}`,
+    applyKey: 'avatarRing',
+    value: { type: 'rarity', rarity: r },
+    previewColor: meta.color,
+    price: meta.price,
+    rarity: r,
+  });
+  SHOP_CATALOG.push({
+    id: `selfcard-r-${r}`, category: 'selfcard',
+    name: `Плашка «${meta.codename}»`,
+    description: `${meta.label} редкость — плашка своих сообщений`,
+    applyKey: 'selfCard',
+    value: { type: 'rarity', rarity: r },
+    previewColor: meta.color,
+    price: meta.price,
+    rarity: r,
+  });
+}
 
 /** Валюта магазина — «Вера-баллы» (пока виртуальные, покупка локальная). */
 export const SHOP_CURRENCY = 'ВП';

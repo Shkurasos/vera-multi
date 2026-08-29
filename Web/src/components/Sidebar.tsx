@@ -20,6 +20,7 @@ import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
+import { buildRingSx as buildRarityRingSx } from '../utils/rarityStyles';
 import { chatsApi, usersApi } from '../services/api';
 import { peer, isPeerAvailable } from '../services/peer';
 import { Chat, User } from '../types';
@@ -74,7 +75,9 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
     const base: Record<string, any> = {
       boxShadow: `0 0 0 2px ${active ? theme.accent + '55' : 'rgba(255,255,255,0.08)'}`,
     };
-    if (ringVal?.type === 'gradient') {
+    if (ringVal?.type === 'rarity') {
+      Object.assign(base, buildRarityRingSx(ringVal.rarity, theme.accent, active));
+    } else if (ringVal?.type === 'gradient') {
       base.border = '2px solid transparent';
       base.backgroundImage = `linear-gradient(${theme.accent + '33'}, ${theme.accent + '33'}), ${ringVal.gradient}`;
       base.backgroundOrigin = 'border-box';
