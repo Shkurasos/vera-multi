@@ -249,4 +249,48 @@ export const downloadsApi = {
   list: () => api.get<{ files: Array<{ platform: 'win' | 'mac' | 'linux' | 'other'; filename: string; size: number; url: string }> }>('/downloads'),
 };
 
+/* ─── Creator / Кастомный магазин ────────────────────────────────────────── */
+export interface CustomSpec {
+  bg: { type: 'solid' | 'linear' | 'radial'; color1: string; color2: string; angle: number };
+  border: { width: number; color: string; style: 'solid' | 'dashed' | 'dotted' | 'double'; radius: number };
+  glow: { enabled: boolean; color: string; intensity: number };
+  shadow: { enabled: boolean; x: number; y: number; blur: number; color: string };
+  text: { color: string; weight: '300' | '400' | '500' | '600' | '700' | '800' };
+  animation: 'none' | 'pulse' | 'shimmer' | 'float';
+  opacity: number;
+  padding: number;
+  emoji: string;
+}
+export type CustomCategory = 'profile' | 'selfcard' | 'wallpaper' | 'bubble';
+export interface CustomItem {
+  id: string;
+  authorId?: string;
+  category: CustomCategory;
+  name: string;
+  description: string;
+  price: number;
+  spec: CustomSpec;
+  status?: 'draft' | 'published' | 'hidden';
+  createdAt?: number;
+  publishedAt?: number;
+  salesCount?: number;
+  revenueVp?: number;
+  author?: { id: string; username: string; avatar?: string } | null;
+}
+
+export const creatorApi = {
+  me: () => api.get<{ feePaid: boolean; isAdmin: boolean; feeRub: number; revenueVp: number }>('/creator/me'),
+  joinFee: () => api.post<{ orderId: string; mock?: boolean; priceRub: number; invoiceUrl: string }>('/creator/join-fee'),
+  mockPayFee: (orderId: string) => api.post<{ ok: boolean; feePaid: boolean }>('/creator/mock-pay-fee', { orderId }),
+  myItems: () => api.get<{ items: CustomItem[] }>('/creator/items'),
+  create: (dto: Partial<CustomItem>) => api.post<{ item: CustomItem }>('/creator/items', dto),
+  update: (id: string, dto: Partial<CustomItem>) => api.patch<{ item: CustomItem }>(`/creator/items/${id}`, dto),
+  publish: (id: string) => api.post<{ item: CustomItem }>(`/creator/items/${id}/publish`),
+  unpublish: (id: string) => api.post<{ item: CustomItem }>(`/creator/items/${id}/unpublish`),
+  remove: (id: string) => api.delete<{ ok: boolean }>(`/creator/items/${id}`),
+  hide: (id: string) => api.post<{ item: CustomItem }>(`/creator/items/${id}/hide`),
+  restore: (id: string) => api.post<{ item: CustomItem }>(`/creator/items/${id}/restore`),
+  publicList: () => api.get<{ items: CustomItem[] }>('/shop/custom'),
+};
+
 export default api;

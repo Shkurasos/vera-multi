@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Box, Typography, IconButton, Button, Chip, CircularProgress, MenuItem, TextField } from '@mui/material';
-import { Close, Storefront, Lock, Check, Palette, Wallpaper, Face, AccountCircle, AccountBalanceWallet, Sort } from '@mui/icons-material';
+import { Close, Storefront, Lock, Check, Palette, Wallpaper, Face, AccountCircle, AccountBalanceWallet, Sort, Build } from '@mui/icons-material';
 import QRCode from 'qrcode';
 import { useThemeStore } from '../store/themeStore';
 import { SHOP_CATALOG, ShopCategory, ShopTab, useShopStore, selectShopItem, SHOP_CURRENCY } from '../store/shopStore';
-import { walletApi } from '../services/api';
+import { walletApi, creatorApi, CustomItem } from '../services/api';
 import { RARITY_META } from '../utils/rarityStyles';
+import CustomItemPreview from './CustomItemPreview';
+import Workshop from './Workshop';
 
 interface Props {
   onClose: () => void;
@@ -53,6 +55,35 @@ export default function Store({ onClose }: Props) {
   const [invoice, setInvoice] = useState<any | null>(null);
   const [invoiceStatus, setInvoiceStatus] = useState<'waiting' | 'paid'>('waiting');
   const [qrDataUrl, setQrDataUrl] = useState('');
+
+  // Кастомные предметы (от авторов) + мастерская
+  const [customItems, setCustomItems] = useState<CustomItem[]>([]);
+  const [workshopOpen, setWorkshopOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const loadCustom = useCallback(async () => {
+    try {
+      const [list, me] = await Promise.all([creatorApi.publicList(), creatorApi.me().catch(() => null)]);
+      setCustomItems(list.data.items);
+      if (me) setIsAdmin(!!me.data.isAdmin);
+    } catch (e) { console.warn('[shop] custom load failed', e); }
+  }, []);
+  useEffect(() => { loadCustom(); }, [loadCustom]);
+  const handleBuyCustom = async (id: string) => {
+    setBuyError('');
+    try {
+      const { data } = await walletApi.buy(`custom:${id}`);
+      useShopStore.setState(s => ({
+        balanceVp: data.balance,
+        owned: { ...s.owned, [`custom:${id}`]: true },
+      }));
+    } catch (e: any) {
+      setBuyError(e?.response?.data?.message || 'Не удалось купить');
+    }
+  };
+  const handleHideCustom = async (id: string) => {
+    try { await creatorApi.hide(id); await loadCustom(); }
+    catch (e: any) { setBuyError(e?.response?.data?.message || 'Не удалось скрыть'); }
+  };
 
   // Загружаем баланс при каждом открытии магазина.
   useEffect(() => { loadWallet(); }, [loadWallet]);
@@ -191,6 +222,10 @@ export default function Store({ onClose }: Props) {
             <Button size="small" variant="contained" onClick={() => { setTopupOpen(v => !v); setInvoice(null); setInvoiceStatus('waiting'); }}
               sx={{ bgcolor: theme.accent, color: '#001018', textTransform: 'none', borderRadius: 999, px: 1.6, fontSize: 12, minHeight: 28, fontWeight: 700, '&:hover': { bgcolor: theme.accent + 'BB' } }}>
               Пополнить
+            </Button>
+            <Button size="small" variant="outlined" startIcon={<Build sx={{ fontSize: 14 }} />} onClick={() => setWorkshopOpen(true)}
+              sx={{ borderColor: theme.accent, color: theme.accent, textTransform: 'none', borderRadius: 999, px: 1.6, fontSize: 12, minHeight: 28, fontWeight: 700 }}>
+              Мастерская
             </Button>
             {!enabled && <Chip size="small" icon={<Lock sx={{ fontSize: 13 }} />} label="Закрыто" sx={{ bgcolor: theme.bgHover, color: theme.textSec, fontSize: 11, height: 24 }} />}
 <IconButton onClick={onClose} sx={{ color: theme.text, opacity: 0.6, '&:hover': { opacity: 1, bgcolor: theme.bgHover } }}>
@@ -351,6 +386,52 @@ export default function Store({ onClose }: Props) {
         </Box>
         )}
 
+        {/* Секция «От авторов сообщества» */}
+        {customItems.length > 0 && (
+          <Box sx={{ mt: 4 }}>
+            <Typography sx={{ fontSize: 14, fontWeight: 800, mb: 1.5, color: theme.text }}>
+              От авторов сообщества
+            </Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 1.5 }}>
+              {customItems.map(item => {
+                const oid = `custom:${item.id}`;
+                const owned = !!useShopStore.getState().owned[oid];
+                return (
+                  <Box key={item.id} sx={{
+                    p: 1.5, borderRadius: 2, bgcolor: theme.bgInput,
+                    border: `1px solid ${theme.border}`,
+                    display: 'flex', flexDirection: 'column', gap: 1,
+                  }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
+                      <CustomItemPreview spec={item.spec} label={item.name} size={80} />
+                    </Box>
+                    <Typography sx={{ fontSize: 14, fontWeight: 700, color: theme.text }}>{item.name}</Typography>
+                    <Typography sx={{ fontSize: 11, color: theme.textSec }}>
+                      {item.category} · от @{item.author?.username || '—'}
+                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 'auto' }}>
+                      {!owned ? (
+                        <Button size="small" variant="contained"
+                          onClick={() => handleBuyCustom(item.id)}
+                          sx={{ bgcolor: theme.accent, color: '#001018', textTransform: 'none', borderRadius: 999, px: 1.5 }}>
+                          Купить · {item.price} {SHOP_CURRENCY}
+                        </Button>
+                      ) : (
+                        <Chip size="small" label="Куплено" sx={{ bgcolor: theme.bgInput, color: theme.textSec, fontSize: 11 }} />
+                      )}
+                      {isAdmin && (
+                        <Button size="small" color="error" onClick={() => handleHideCustom(item.id)} sx={{ ml: 'auto', textTransform: 'none', fontSize: 11 }}>
+                          Скрыть
+                        </Button>
+                      )}
+                    </Box>
+                  </Box>
+                );
+              })}
+            </Box>
+          </Box>
+        )}
+
         {/* Подпись */}
         <Box sx={{ mt: 3, display: 'flex', alignItems: 'center', gap: 1.5, px: 1 }}>
           <Storefront sx={{ fontSize: 20, color: theme.accent }} />
@@ -358,6 +439,8 @@ export default function Store({ onClose }: Props) {
             Раздел издателя: часть возможностей платная. Купленное привязывается к аккаунту на сервере — доступно на всех устройствах.
           </Typography>
         </Box>
+
+        <Workshop open={workshopOpen} onClose={() => { setWorkshopOpen(false); loadCustom(); }} />
 
         {/* ── Пополнение ВП через крипту (NOWPayments) ── */}
         {topupOpen && (

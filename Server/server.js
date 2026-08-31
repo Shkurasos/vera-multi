@@ -76,6 +76,9 @@ if (fs.existsSync(DB_FILE)) {
   try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch {}
 }
 if (!Array.isArray(db.refreshTokens)) db.refreshTokens = [];
+if (!Array.isArray(db.customItems)) db.customItems = [];
+if (!db.creatorProfiles || typeof db.creatorProfiles !== 'object') db.creatorProfiles = {};
+if (typeof db.platformRevenueVp !== 'number') db.platformRevenueVp = 0;
 
 // При старте сервера все пользователи офлайн (сбрасываем stale-статус)
 if (db.users) {
@@ -1389,12 +1392,19 @@ app.post('/api/wallet/webhook', (req, res) => {
   const order = (db.walletOrders || []).find(o => vpOrderId(o) === body.order_id);
   if (!order) return res.json({ ok: true }); // не наш заказ — игнорируем
   if ((body.payment_status === 'finished' || body.payment_status === 'partially_paid') && order.status !== 'paid') {
-    const user = ensureWallet(db.users.find(u => u.id === order.userId));
-    if (user) {
-      user.walletBalance = (user.walletBalance || 0) + order.amountVs;
+    if (order.kind === 'creator-fee') {
+      const prof = creatorProfile(order.userId);
+      prof.feePaid = true; prof.feeOrderId = order.id; prof.joinedAt = Date.now();
       order.status = 'paid'; order.paidAt = Date.now();
       saveDb();
-      pushWalletEmit(user);
+    } else {
+      const user = ensureWallet(db.users.find(u => u.id === order.userId));
+      if (user) {
+        user.walletBalance = (user.walletBalance || 0) + order.amountVs;
+        order.status = 'paid'; order.paidAt = Date.now();
+        saveDb();
+        pushWalletEmit(user);
+      }
     }
   }
   res.json({ ok: true });
@@ -1419,13 +1429,46 @@ app.post('/api/wallet/mock-pay', authMiddleware, (req, res) => {
 // Купить платный товар (списание с баланса ВП)
 app.post('/api/shop/buy', authMiddleware, (req, res) => {
   const itemId = String(req.body?.itemId || '');
-  const price = getShopItemPrice(itemId);
-  if (price === undefined) return res.status(400).json({ message: 'Товар не найден' });
   const user = ensureWallet(db.users.find(u => u.id === req.userId));
   if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
   if (user.ownedItems.includes(itemId)) return res.json({ ok: true, already: true, balance: user.walletBalance, ownedItems: user.ownedItems });
-  // DEV-режим по IP — покупки бесплатны.
   const devFree = isDevIp(req);
+
+  // Кастомные предметы от авторов: id вида "custom:<uuid>"
+  if (itemId.startsWith('custom:')) {
+    const cid = itemId.slice(7);
+    const item = (db.customItems || []).find(i => i.id === cid);
+    if (!item) return res.status(400).json({ message: 'Кастомный товар не найден' });
+    if (item.status !== 'published') return res.status(400).json({ message: 'Товар недоступен' });
+    const price = Number(item.price) || 0;
+    if (!devFree && (user.walletBalance || 0) < price) {
+      return res.status(400).json({ message: `Недостаточно ВП. Нужно ${price} ВП — пополните баланс.` });
+    }
+    if (!devFree) user.walletBalance -= price;
+    user.ownedItems.push(itemId);
+    // Разделение 85/15
+    if (!devFree && price > 0) {
+      const authorShare = Math.floor(price * 0.85);
+      const platformShare = price - authorShare;
+      db.platformRevenueVp = (db.platformRevenueVp || 0) + platformShare;
+      if (item.authorId && item.authorId !== user.id) {
+        const author = ensureWallet(db.users.find(u => u.id === item.authorId));
+        if (author) {
+          author.walletBalance = (author.walletBalance || 0) + authorShare;
+          item.revenueVp = (item.revenueVp || 0) + authorShare;
+          pushWalletEmit(author);
+        }
+      }
+    }
+    item.salesCount = (item.salesCount || 0) + 1;
+    saveDb();
+    pushWalletEmit(user);
+    return res.json({ ok: true, balance: user.walletBalance, ownedItems: user.ownedItems });
+  }
+
+  // Обычный каталожный товар
+  const price = getShopItemPrice(itemId);
+  if (price === undefined) return res.status(400).json({ message: 'Товар не найден' });
   if (!devFree && (user.walletBalance || 0) < price) return res.status(400).json({ message: `Недостаточно ВП. Нужно ${price} ВП — пополните баланс.` });
   if (!devFree) user.walletBalance -= price;
   user.ownedItems.push(itemId);
@@ -1433,6 +1476,241 @@ app.post('/api/shop/buy', authMiddleware, (req, res) => {
   pushWalletEmit(user);
   res.json({ ok: true, balance: user.walletBalance, ownedItems: user.ownedItems });
 });
+
+
+// ─── CREATOR / CUSTOM SHOP ITEMS ─────────────────────────────────────────────
+const CREATOR_FEE_RUB = 200;
+const CUSTOM_CATEGORIES = new Set(['profile', 'selfcard', 'wallpaper', 'bubble']);
+const CUSTOM_MIN_PRICE = 20;
+const CUSTOM_MAX_PRICE = 20000;
+
+function isAdminReq(req) { return isDevIp(req); }
+function creatorProfile(userId) {
+  if (!db.creatorProfiles[userId]) db.creatorProfiles[userId] = { feePaid: false };
+  return db.creatorProfiles[userId];
+}
+function canCreate(req, userId) {
+  if (isAdminReq(req)) return true;
+  return !!creatorProfile(userId).feePaid;
+}
+
+/**
+ * Санитайзер спецификации кастомного предмета.
+ * Только типизированные поля — ни строк CSS, ни HTML, ни url().
+ */
+function sanitizeCustomSpec(raw) {
+  const s = raw && typeof raw === 'object' ? raw : {};
+  const out = {};
+  const hex = v => (typeof v === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(v)) ? v : null;
+  const num = (v, min, max, def) => {
+    const n = Number(v);
+    if (!isFinite(n)) return def;
+    return Math.max(min, Math.min(max, n));
+  };
+  const str = (v, max = 40) => (typeof v === 'string' ? v.slice(0, max) : '');
+  const bool = v => !!v;
+  const one = (v, allowed, def) => allowed.includes(v) ? v : def;
+
+  out.bg = {
+    type: one(s.bg?.type, ['solid', 'linear', 'radial'], 'solid'),
+    color1: hex(s.bg?.color1) || '#1e1e2e',
+    color2: hex(s.bg?.color2) || '#7c6af7',
+    angle: num(s.bg?.angle, 0, 360, 135),
+  };
+  out.border = {
+    width: num(s.border?.width, 0, 12, 0),
+    color: hex(s.border?.color) || '#7c6af7',
+    style: one(s.border?.style, ['solid', 'dashed', 'dotted', 'double'], 'solid'),
+    radius: num(s.border?.radius, 0, 64, 12),
+  };
+  out.glow = {
+    enabled: bool(s.glow?.enabled),
+    color: hex(s.glow?.color) || '#7c6af7',
+    intensity: num(s.glow?.intensity, 0, 40, 12),
+  };
+  out.shadow = {
+    enabled: bool(s.shadow?.enabled),
+    x: num(s.shadow?.x, -40, 40, 0),
+    y: num(s.shadow?.y, -40, 40, 6),
+    blur: num(s.shadow?.blur, 0, 80, 18),
+    color: hex(s.shadow?.color) || '#00000066',
+  };
+  out.text = {
+    color: hex(s.text?.color) || '#ffffff',
+    weight: one(String(s.text?.weight ?? '500'), ['300','400','500','600','700','800'], '500'),
+  };
+  out.animation = one(s.animation, ['none', 'pulse', 'shimmer', 'float'], 'none');
+  out.opacity = num(s.opacity, 0.1, 1, 1);
+  out.padding = num(s.padding, 0, 40, 12);
+  out.emoji = str(s.emoji, 8);
+  return out;
+}
+function sanitizeItem(input) {
+  const category = CUSTOM_CATEGORIES.has(input?.category) ? input.category : 'profile';
+  const name = typeof input?.name === 'string' ? input.name.trim().slice(0, 60) : '';
+  const description = typeof input?.description === 'string' ? input.description.trim().slice(0, 300) : '';
+  let price = Math.floor(Number(input?.price));
+  if (!isFinite(price)) price = CUSTOM_MIN_PRICE;
+  price = Math.max(CUSTOM_MIN_PRICE, Math.min(CUSTOM_MAX_PRICE, price));
+  return { category, name, description, price, spec: sanitizeCustomSpec(input?.spec) };
+}
+
+
+app.get('/api/creator/me', authMiddleware, (req, res) => {
+  const prof = creatorProfile(req.userId);
+  res.json({
+    feePaid: !!prof.feePaid || isAdminReq(req),
+    isAdmin: isAdminReq(req),
+    feeRub: CREATOR_FEE_RUB,
+    revenueVp: prof.revenueVp || 0,
+  });
+});
+
+app.post('/api/creator/join-fee', authMiddleware, async (req, res) => {
+  const prof = creatorProfile(req.userId);
+  if (prof.feePaid || isAdminReq(req)) return res.json({ ok: true, already: true });
+  if (!db.walletOrders) db.walletOrders = [];
+  const order = {
+    id: uuidv4(), userId: req.userId, kind: 'creator-fee',
+    amountVs: 0, priceRub: CREATOR_FEE_RUB,
+    status: 'waiting', createdAt: Date.now(),
+  };
+  db.walletOrders.push(order);
+  saveDb();
+  if (!NOWPAYMENTS_API_KEY) {
+    return res.json({ orderId: order.id, mock: true, priceRub: CREATOR_FEE_RUB, invoiceUrl: '' });
+  }
+  try {
+    const r = await fetch(`${NOWPAYMENTS_API}/v1/invoice`, {
+      method: 'POST',
+      headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        price_amount: CREATOR_FEE_RUB, price_currency: 'rub',
+        order_id: vpOrderId(order),
+        order_description: 'Vera Creator join fee',
+        ipn_callback_url: `${(req.headers['x-forwarded-proto'] === 'https' || req.secure) ? 'https' : 'http'}://${req.headers.host || 'localhost:3000'}/api/wallet/webhook`,
+      }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data?.message || 'invoice failed');
+    order.invoiceUrl = data.invoice_url || '';
+    saveDb();
+    res.json({ orderId: order.id, priceRub: CREATOR_FEE_RUB, invoiceUrl: order.invoiceUrl });
+  } catch (e) {
+    console.error('[creator-fee] invoice error:', e);
+    db.walletOrders = db.walletOrders.filter(o => o.id !== order.id);
+    saveDb();
+    res.status(502).json({ message: 'Не удалось создать инвойс.' });
+  }
+});
+
+app.post('/api/creator/mock-pay-fee', authMiddleware, (req, res) => {
+  if (NOWPAYMENTS_API_KEY) return res.status(400).json({ message: 'Mock отключён' });
+  const order = (db.walletOrders || []).find(o => o.id === req.body?.orderId && o.userId === req.userId && o.kind === 'creator-fee');
+  if (!order) return res.status(404).json({ message: 'Заказ не найден' });
+  const prof = creatorProfile(req.userId);
+  prof.feePaid = true; prof.feeOrderId = order.id; prof.joinedAt = Date.now();
+  order.status = 'paid'; order.paidAt = Date.now();
+  saveDb();
+  res.json({ ok: true, feePaid: true });
+});
+
+app.get('/api/creator/items', authMiddleware, (req, res) => {
+  const list = (db.customItems || []).filter(i => i.authorId === req.userId);
+  res.json({ items: list });
+});
+
+app.post('/api/creator/items', authMiddleware, (req, res) => {
+  if (!canCreate(req, req.userId)) return res.status(402).json({ message: 'Сначала оплатите взнос автора (200₽).' });
+  const clean = sanitizeItem(req.body);
+  if (!clean.name) return res.status(400).json({ message: 'Название обязательно.' });
+  const item = {
+    id: uuidv4(), authorId: req.userId, ...clean,
+    status: 'draft', createdAt: Date.now(),
+    salesCount: 0, revenueVp: 0,
+  };
+  db.customItems.push(item);
+  saveDb();
+  res.json({ item });
+});
+app.patch('/api/creator/items/:id', authMiddleware, (req, res) => {
+  const item = (db.customItems || []).find(i => i.id === req.params.id);
+  if (!item) return res.status(404).json({ message: 'Не найден' });
+  if (item.authorId !== req.userId) return res.status(403).json({ message: 'Не ваш предмет' });
+  if (item.status !== 'draft' && !isAdminReq(req)) return res.status(400).json({ message: 'Снимите с публикации перед редактированием.' });
+  const clean = sanitizeItem({ ...item, ...req.body });
+  Object.assign(item, clean);
+  saveDb();
+  res.json({ item });
+});
+
+app.post('/api/creator/items/:id/publish', authMiddleware, (req, res) => {
+  const item = (db.customItems || []).find(i => i.id === req.params.id);
+  if (!item) return res.status(404).json({ message: 'Не найден' });
+  if (item.authorId !== req.userId && !isAdminReq(req)) return res.status(403).json({ message: 'Не ваш предмет' });
+  if (!canCreate(req, item.authorId)) return res.status(402).json({ message: 'Взнос автора не оплачен.' });
+  if (!item.name) return res.status(400).json({ message: 'Название обязательно.' });
+  item.status = 'published'; item.publishedAt = Date.now();
+  saveDb();
+  res.json({ item });
+});
+
+app.post('/api/creator/items/:id/unpublish', authMiddleware, (req, res) => {
+  const item = (db.customItems || []).find(i => i.id === req.params.id);
+  if (!item) return res.status(404).json({ message: 'Не найден' });
+  if (item.authorId !== req.userId && !isAdminReq(req)) return res.status(403).json({ message: 'Нет прав' });
+  item.status = 'draft';
+  saveDb();
+  res.json({ item });
+});
+
+app.delete('/api/creator/items/:id', authMiddleware, (req, res) => {
+  const idx = (db.customItems || []).findIndex(i => i.id === req.params.id);
+  if (idx < 0) return res.status(404).json({ message: 'Не найден' });
+  const item = db.customItems[idx];
+  if (item.authorId !== req.userId && !isAdminReq(req)) return res.status(403).json({ message: 'Нет прав' });
+  if (item.status === 'published' && !isAdminReq(req)) return res.status(400).json({ message: 'Сначала снимите с публикации.' });
+  db.customItems.splice(idx, 1);
+  saveDb();
+  res.json({ ok: true });
+});
+
+app.post('/api/creator/items/:id/hide', authMiddleware, (req, res) => {
+  if (!isAdminReq(req)) return res.status(403).json({ message: 'Только админ' });
+  const item = (db.customItems || []).find(i => i.id === req.params.id);
+  if (!item) return res.status(404).json({ message: 'Не найден' });
+  item.status = 'hidden'; item.hiddenAt = Date.now();
+  saveDb();
+  res.json({ item });
+});
+app.post('/api/creator/items/:id/restore', authMiddleware, (req, res) => {
+  if (!isAdminReq(req)) return res.status(403).json({ message: 'Только админ' });
+  const item = (db.customItems || []).find(i => i.id === req.params.id);
+  if (!item) return res.status(404).json({ message: 'Не найден' });
+  item.status = 'published';
+  saveDb();
+  res.json({ item });
+});
+
+// Публичный список опубликованных кастомных предметов
+app.get('/api/shop/custom', (req, res) => {
+  const items = (db.customItems || [])
+    .filter(i => i.status === 'published')
+    .map(i => {
+      const author = db.users.find(u => u.id === i.authorId);
+      return {
+        id: i.id, category: i.category,
+        name: i.name, description: i.description,
+        price: i.price, spec: i.spec,
+        author: author ? { id: author.id, username: author.username, avatar: author.avatar } : null,
+        salesCount: i.salesCount || 0, publishedAt: i.publishedAt,
+      };
+    });
+  res.json({ items });
+});
+
+
+
 
 // ─── CHATS routes ─────────────────────────────────────────────────────────────
 
