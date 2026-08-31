@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { walletApi } from '../services/api';
 import { RARITY_META, RARITY_ORDER } from '../utils/rarityStyles';
+import { useAuthStore } from './authStore';
 
 /**
  * МАГАЗИН VERA
@@ -17,7 +18,8 @@ export type ShopCategory =
   | 'profile'     // обводки аватара профиля
   | 'selfcard'    // кастомная «плашка» своих сообщений (видимая у других)
   | 'theme'       // режимы/варианты тем
-  | 'wallpaper';  // обои (умные, градиенты, жидкое стекло и т.д.)
+  | 'wallpaper'   // обои (умные, градиенты, жидкое стекло и т.д.)
+  | 'bubble';     // стили пузырей сообщений
 
 export interface ShopItem {
   id: string;
@@ -87,6 +89,111 @@ export const SHOP_CATALOG: ShopItem[] = [
     description: 'Свой фон и цвет пузырей для каждого чата отдельно (продаётся издателем)',
     applyKey: 'perChatTheme', value: { type: 'perchat' },
     previewColor: 'linear-gradient(90deg,#4dd0ff,#a04dff,#ff4870)', price: 250, ownedByDefault: false },
+
+  // ── Стили пузырей сообщений — ПЛАТНЫЕ ──────────────────────────────────────
+  { id: 'bubble-neon', category: 'bubble', name: 'Неоновые пузыри',
+    description: 'Пузыри с неоновой подсветкой краёв', applyKey: 'bubbleStyle',
+    value: { type: 'neon' }, previewColor: '#00e5ff', price: 150 },
+  { id: 'bubble-glass', category: 'bubble', name: 'Стеклянные пузыри',
+    description: 'Frosted glass — полупрозрачные пузыри с размытием', applyKey: 'bubbleStyle',
+    value: { type: 'glass' }, previewColor: 'rgba(255,255,255,0.18)', price: 180 },
+  { id: 'bubble-shadow', category: 'bubble', name: 'Глубокая тень',
+    description: 'Пузыри с объёмной тенью и поднятым эффектом', applyKey: 'bubbleStyle',
+    value: { type: 'shadow' }, previewColor: '#1a1a2e', price: 120 },
+  { id: 'bubble-gradient-sunset', category: 'bubble', name: 'Пузыри Закат',
+    description: 'Пузыри с градиентом тёплого заката', applyKey: 'bubbleStyle',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg,#f7971e,#ffd200,#ff4870)' },
+    previewColor: 'linear-gradient(135deg,#f7971e,#ff4870)', price: 200 },
+  { id: 'bubble-gradient-ocean', category: 'bubble', name: 'Пузыри Океан',
+    description: 'Пузыри с морским голубым градиентом', applyKey: 'bubbleStyle',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg,#0575e6,#021b79)' },
+    previewColor: 'linear-gradient(135deg,#0575e6,#021b79)', price: 200 },
+  { id: 'bubble-gradient-forest', category: 'bubble', name: 'Пузыри Лес',
+    description: 'Пузыри с зелёным лесным градиентом', applyKey: 'bubbleStyle',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg,#134e5e,#71b280)' },
+    previewColor: 'linear-gradient(135deg,#134e5e,#71b280)', price: 200 },
+  { id: 'bubble-minimal', category: 'bubble', name: 'Минимализм',
+    description: 'Тонкая рамка вместо заливки — ультра-чистый вид', applyKey: 'bubbleStyle',
+    value: { type: 'minimal' }, previewColor: false, price: 90 },
+  { id: 'bubble-rounded', category: 'bubble', name: 'Мягкие пузыри',
+    description: 'Максимальное скругление углов — pill-форма', applyKey: 'bubbleStyle',
+    value: { type: 'rounded' }, previewColor: false, price: 100 },
+  { id: 'bubble-sharp', category: 'bubble', name: 'Острые углы',
+    description: 'Прямые острые углы — брутальный стиль', applyKey: 'bubbleStyle',
+    value: { type: 'sharp' }, previewColor: false, price: 100 },
+  { id: 'bubble-retro', category: 'bubble', name: 'Ретро',
+    description: 'Пузыри в стиле SMS-эпохи с хвостиком', applyKey: 'bubbleStyle',
+    value: { type: 'retro' }, previewColor: '#fffde7', price: 130 },
+  { id: 'bubble-candy', category: 'bubble', name: 'Конфеты',
+    description: 'Яркие пастельные цвета каждого пузыря', applyKey: 'bubbleStyle',
+    value: { type: 'candy' }, previewColor: 'linear-gradient(90deg,#f9a8d4,#a5f3fc,#bbf7d0)', price: 160 },
+  { id: 'bubble-mono', category: 'bubble', name: 'Монохром',
+    description: 'Чёрно-белые пузыри с сильным контрастом', applyKey: 'bubbleStyle',
+    value: { type: 'mono' }, previewColor: '#e5e5e5', price: 110 },
+  { id: 'bubble-aurora', category: 'bubble', name: 'Аврора',
+    description: 'Переливающийся северный свет в каждом пузыре', applyKey: 'bubbleStyle',
+    value: { type: 'aurora' },
+    previewColor: 'linear-gradient(135deg,#43e97b,#38f9d7,#4facfe,#a18cd1)', price: 220 },
+  { id: 'bubble-cyber', category: 'bubble', name: 'Кибер',
+    description: 'Кибер-панк: неон + тёмный фон + рамка', applyKey: 'bubbleStyle',
+    value: { type: 'cyber' }, previewColor: '#0d0d1a', price: 240 },
+
+  // ── Дополнительные обои — ПЛАТНЫЕ ─────────────────────────────────────────
+  { id: 'wp-gradient-fire', category: 'wallpaper', name: 'Обои Огонь',
+    description: 'Тёплый огненный градиент фона чата', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(160deg,#f7971e 0%,#ff4870 100%)' },
+    previewColor: 'linear-gradient(160deg,#f7971e,#ff4870)', price: 90 },
+  { id: 'wp-gradient-ocean', category: 'wallpaper', name: 'Обои Океан',
+    description: 'Морской градиент от бирюзы до тёмно-синего', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(160deg,#0575e6 0%,#021b79 100%)' },
+    previewColor: 'linear-gradient(160deg,#0575e6,#021b79)', price: 90 },
+  { id: 'wp-gradient-forest', category: 'wallpaper', name: 'Обои Лес',
+    description: 'Спокойный зелёный градиент', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(160deg,#134e5e 0%,#71b280 100%)' },
+    previewColor: 'linear-gradient(160deg,#134e5e,#71b280)', price: 90 },
+  { id: 'wp-gradient-cosmic', category: 'wallpaper', name: 'Обои Космос',
+    description: 'Тёмный космический градиент с фиолетовым', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(160deg,#0f0c29 0%,#302b63 50%,#24243e 100%)' },
+    previewColor: 'linear-gradient(160deg,#0f0c29,#302b63,#24243e)', price: 110 },
+  { id: 'wp-gradient-candy', category: 'wallpaper', name: 'Обои Конфета',
+    description: 'Яркий пастельный градиент', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(160deg,#f9a8d4 0%,#a5f3fc 50%,#bbf7d0 100%)' },
+    previewColor: 'linear-gradient(160deg,#f9a8d4,#a5f3fc,#bbf7d0)', price: 90 },
+  { id: 'wp-particles', category: 'wallpaper', name: 'Частицы',
+    description: 'Анимированные летящие частицы на фоне', applyKey: 'smartWallpaper',
+    value: { type: 'particles' }, previewColor: false, price: 160 },
+  { id: 'wp-waves', category: 'wallpaper', name: 'Волны',
+    description: 'Плавно анимированные волны на фоне чата', applyKey: 'smartWallpaper',
+    value: { type: 'waves' }, previewColor: 'linear-gradient(90deg,#4dd0ff,#4d88ff)', price: 140 },
+  { id: 'wp-grid', category: 'wallpaper', name: 'Сетка',
+    description: 'Тонкая сетка в стиле технических чертежей', applyKey: 'smartWallpaper',
+    value: { type: 'grid' }, previewColor: false, price: 80 },
+  { id: 'wp-dots-animate', category: 'wallpaper', name: 'Живые точки',
+    description: 'Анимированные плавающие точки на фоне', applyKey: 'smartWallpaper',
+    value: { type: 'dots-animate' }, previewColor: false, price: 130 },
+  { id: 'wp-aurora', category: 'wallpaper', name: 'Северное сияние',
+    description: 'Живое северное сияние на фоне чата', applyKey: 'smartWallpaper',
+    value: { type: 'aurora' },
+    previewColor: 'linear-gradient(160deg,#43e97b,#38f9d7,#4facfe)', price: 250 },
+  { id: 'wp-matrix', category: 'wallpaper', name: 'Матрица',
+    description: 'Зелёные символы падают как в фильме', applyKey: 'smartWallpaper',
+    value: { type: 'matrix' }, previewColor: '#001a00', price: 200 },
+  { id: 'wp-snow', category: 'wallpaper', name: 'Снегопад',
+    description: 'Медленно падающий снег на фоне', applyKey: 'smartWallpaper',
+    value: { type: 'snow' }, previewColor: '#e8f4fd', price: 150 },
+  { id: 'wp-rain', category: 'wallpaper', name: 'Дождь',
+    description: 'Анимированный дождь по стеклу', applyKey: 'smartWallpaper',
+    value: { type: 'rain' }, previewColor: '#1a2a3a', price: 150 },
+  { id: 'wp-stars', category: 'wallpaper', name: 'Звёздное небо',
+    description: 'Мерцающие звёзды на ночном небе', applyKey: 'smartWallpaper',
+    value: { type: 'stars' }, previewColor: '#0a0a1a', price: 180 },
+  { id: 'wp-noise', category: 'wallpaper', name: 'Шум-плёнка',
+    description: 'Плёночный шум поверх фона — киношный вид', applyKey: 'smartWallpaper',
+    value: { type: 'noise' }, previewColor: '#2a2a2a', price: 100 },
+  { id: 'wp-blob', category: 'wallpaper', name: 'Живые блобы',
+    description: 'Мягкие цветные капли плавают по фону', applyKey: 'smartWallpaper',
+    value: { type: 'blob' },
+    previewColor: 'linear-gradient(135deg,#a18cd1,#fbc2eb)', price: 170 },
 ];
 
 // ─── Линейка редкостей (21×2 = 42 платных предмета) ────────────────────────
@@ -176,6 +283,10 @@ export const useShopStore = create<ShopState>()(
       const isOwned = (id: string) => {
         const item = SHOP_CATALOG.find(i => i.id === id);
         if (!item) return false;
+        // Dev-режим: всё открыто.
+        try {
+          if (useAuthStore.getState().user?.isDev) return true;
+        } catch {}
         // Бесплатные (price: 0) и дефолтные открыты всегда; платные — только после purchase().
         if (item.ownedByDefault || !item.price || item.price <= 0) return true;
         return !!get().owned[id];

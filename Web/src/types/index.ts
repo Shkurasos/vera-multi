@@ -21,6 +21,8 @@ export interface User {
   neutralRatingsCount?: number;
   communityTrustScore?: number;
   reputationScore?: number;
+  /** DEV-режим по IP (сервер выставляет). Открывает весь магазин и inspector. */
+  isDev?: boolean;
 }
 
 export type ReputationVoteValue = 'positive' | 'neutral' | 'negative';

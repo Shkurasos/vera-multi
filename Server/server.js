@@ -132,6 +132,27 @@ function normalizeUserRecord(user) {
   return user;
 }
 
+// ─── DEV-режим по IP ─────────────────────────────────────────────────────────
+// DEV_IPS: CSV список IP (v4/v6). Пользователь, зашедший с любого из них,
+// получает в ответах auth флаг isDev:true. Клиент по нему открывает весь
+// магазин и оверлей-инспектор (Ctrl+ПКМ).
+const DEV_IPS = String(process.env.DEV_IPS || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
+function clientIp(req) {
+  let ip = String(req.ip || '');
+  // IPv4-mapped IPv6: ::ffff:1.2.3.4 → 1.2.3.4
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  return ip;
+}
+function isDevIp(req) {
+  if (!DEV_IPS.length) return false;
+  const ip = clientIp(req);
+  return DEV_IPS.includes(ip);
+}
+function withDevFlag(req, user) {
+  return { ...user, isDev: isDevIp(req) };
+}
+
 function normalizeAllUsers() {
   if (!Array.isArray(db.users)) db.users = [];
   db.users.forEach(normalizeUserRecord);
@@ -680,7 +701,7 @@ app.post('/api/auth/device', (req, res) => {
     const { raw: refreshRaw } = issueRefreshToken(user, deviceId);
     saveDb();
     const csrfToken = setAuthCookies(res, refreshRaw);
-    return res.json({ accessToken, csrfToken, user, isNewUser: false });
+    return res.json({ accessToken, csrfToken, user: withDevFlag(req, user), isNewUser: false });
   }
 
   // 2) Новое устройство — создаём аккаунт, устройство помечаем primary.
@@ -723,7 +744,7 @@ app.post('/api/auth/device', (req, res) => {
   const { raw: refreshRaw } = issueRefreshToken(user, deviceId);
   saveDb();
   const csrfToken = setAuthCookies(res, refreshRaw);
-  res.json({ accessToken, csrfToken, user, isNewUser: true });
+  res.json({ accessToken, csrfToken, user: withDevFlag(req, user), isNewUser: true });
 });
 
 // ─── Устаревшие маршруты удалены: /auth/request-code, /auth/verify,
@@ -953,7 +974,7 @@ app.get('/api/auth/me', authMiddleware, (req, res) => {
   if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
   // Добавляем инфу об устройствах, чтобы клиент мог показать QR-экран
   const devices = (db.devices || []).filter(d => d.userId === user.id);
-  res.json({ ...user, devices: devices.map(d => ({
+  res.json({ ...withDevFlag(req, user), devices: devices.map(d => ({
     id: d.id, deviceId: d.deviceId, name: d.name,
     isPrimary: !!d.isPrimary, linkedViaQr: !!d.linkedViaQr,
     createdAt: d.createdAt, lastSeenAt: d.lastSeenAt,
@@ -1249,6 +1270,17 @@ const SHOP_PRICES = {
   'ring-r-core': 7750,        'selfcard-r-core': 7750,
   'ring-r-infinity': 8650,    'selfcard-r-infinity': 8650,
   'ring-r-cult': 12000,       'selfcard-r-cult': 12000,
+  // ── Новые платные (bubble + доп. обои) ─────────────────────────────────
+  'bubble-neon': 150, 'bubble-glass': 180, 'bubble-shadow': 120,
+  'bubble-gradient-sunset': 200, 'bubble-gradient-ocean': 200, 'bubble-gradient-forest': 200,
+  'bubble-minimal': 90, 'bubble-rounded': 100, 'bubble-sharp': 100,
+  'bubble-retro': 130, 'bubble-candy': 160, 'bubble-mono': 110,
+  'bubble-aurora': 220, 'bubble-cyber': 240,
+  'wp-gradient-fire': 90, 'wp-gradient-ocean': 90, 'wp-gradient-forest': 90,
+  'wp-gradient-cosmic': 110, 'wp-gradient-candy': 90,
+  'wp-particles': 160, 'wp-waves': 140, 'wp-grid': 80, 'wp-dots-animate': 130,
+  'wp-aurora': 250, 'wp-matrix': 200, 'wp-snow': 150, 'wp-rain': 150,
+  'wp-stars': 180, 'wp-noise': 100, 'wp-blob': 170,
 };
 function getShopItemPrice(itemId) {
   return Object.prototype.hasOwnProperty.call(SHOP_PRICES, itemId) ? SHOP_PRICES[itemId] : undefined;
@@ -1392,8 +1424,10 @@ app.post('/api/shop/buy', authMiddleware, (req, res) => {
   const user = ensureWallet(db.users.find(u => u.id === req.userId));
   if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
   if (user.ownedItems.includes(itemId)) return res.json({ ok: true, already: true, balance: user.walletBalance, ownedItems: user.ownedItems });
-  if ((user.walletBalance || 0) < price) return res.status(400).json({ message: `Недостаточно ВП. Нужно ${price} ВП — пополните баланс.` });
-  user.walletBalance -= price;
+  // DEV-режим по IP — покупки бесплатны.
+  const devFree = isDevIp(req);
+  if (!devFree && (user.walletBalance || 0) < price) return res.status(400).json({ message: `Недостаточно ВП. Нужно ${price} ВП — пополните баланс.` });
+  if (!devFree) user.walletBalance -= price;
   user.ownedItems.push(itemId);
   saveDb();
   pushWalletEmit(user);

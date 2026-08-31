@@ -36,4 +36,8 @@ services:
       # десктоп/Electron подключается с кастомного origin.
       - key: CORS_ORIGIN
         sync: false
+      # DEV-режим по IP (CSV). Пользователь с этого IP получает isDev:true —
+      # весь магазин открыт, покупки бесплатны, оверлей-инспектор включён.
+      - key: DEV_IPS
+        sync: false
 

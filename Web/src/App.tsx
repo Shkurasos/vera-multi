@@ -28,6 +28,7 @@ import { useUserSettingsStore } from './store/userSettingsStore';
 import { useShopStore } from './store/shopStore';
 import Store, { StoreOpen } from './components/Store';
 import AppLockGate from './components/AppLockGate';
+import DevInspector from './components/DevInspector';
 
 // Звук уведомления
 let audioCtx: AudioContext | null = null;
@@ -386,6 +387,9 @@ export default function App() {
 
       {/* Мобильная нижняя навигация — глобально на всех авторизованных экранах */}
       {isAuthenticated && <MobileBottomNav />}
+
+      {/* DEV-инспектор — активен только у пользователей с isDev (DEV_IPS на сервере). */}
+      {isAuthenticated && <DevInspector />}
 
       {/* Discord-style звонки */}
       {isAuthenticated && (
