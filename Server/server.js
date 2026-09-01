@@ -79,6 +79,7 @@ if (!Array.isArray(db.refreshTokens)) db.refreshTokens = [];
 if (!Array.isArray(db.customItems)) db.customItems = [];
 if (!db.creatorProfiles || typeof db.creatorProfiles !== 'object') db.creatorProfiles = {};
 if (typeof db.platformRevenueVp !== 'number') db.platformRevenueVp = 0;
+if (!Array.isArray(db.admins)) db.admins = [];
 
 // При старте сервера все пользователи офлайн (сбрасываем stale-статус)
 if (db.users) {
@@ -153,7 +154,27 @@ function isDevIp(req) {
   return DEV_IPS.includes(ip);
 }
 function withDevFlag(req, user) {
-  return { ...user, isDev: isDevIp(req) };
+  return { ...user, isDev: isDevIp(req), isAdmin: isAdminUser(req, user) };
+}
+
+// ─── Админы по username ──────────────────────────────────────────────────────
+// Источники: ENV ADMIN_USERNAMES (CSV, задаётся в панели Render) + db.admins
+// (редактируется через консоль сервера командой `admin add/del`). Регистр
+// не важен, символ '@' в начале игнорируется.
+const ADMIN_ENV = (() => {
+  const raw = String(process.env.ADMIN_USERNAMES || 'admin3');
+  return raw.split(',').map(s => s.trim().replace(/^@+/, '').toLowerCase()).filter(Boolean);
+})();
+function normAdminName(v) { return String(v || '').trim().replace(/^@+/, '').toLowerCase(); }
+function isAdminUsername(username) {
+  const n = normAdminName(username);
+  if (!n) return false;
+  if (ADMIN_ENV.includes(n)) return true;
+  return (db.admins || []).map(normAdminName).includes(n);
+}
+function isAdminUser(req, user) {
+  if (isDevIp(req)) return true;
+  return isAdminUsername(user?.username);
 }
 
 function normalizeAllUsers() {
@@ -709,11 +730,20 @@ app.post('/api/auth/device', (req, res) => {
 
   // 2) Новое устройство — создаём аккаунт, устройство помечаем primary.
   const shortId = deviceId.replace(/[^a-z0-9]/gi, '').slice(-8) || Date.now().toString(36);
+  // Гарантируем уникальность username: если base занят — добавляем суффикс.
+  const baseName = 'user_' + shortId;
+  let uniqueName = baseName;
+  let attempt = 0;
+  while (db.users.some(u => normalizeIdentifier(u.username) === normalizeIdentifier(uniqueName))) {
+    attempt += 1;
+    uniqueName = baseName + '_' + attempt;
+    if (attempt > 9999) { uniqueName = baseName + '_' + Date.now().toString(36); break; }
+  }
   const user = {
     id: uuidv4(),
     email: null,
     phone: null,
-    username: 'user_' + shortId,
+    username: uniqueName,
     firstName: null, lastName: null, birthDate: null,
     country: null, region: null, city: null,
     avatarUrl: null, bio: null,
@@ -995,6 +1025,29 @@ app.post('/api/admin/reload-db', authMiddleware, (req, res) => {
   res.json({ success: true, users: db.users.length, tracks: db.tracks.length, chats: db.chats.length });
 });
 
+// POST /api/admin/grant  — назначить/снять админа по username.
+// Аутентификация: заголовок X-Admin-Token со значением env ADMIN_BOOTSTRAP_TOKEN.
+// Задумано для запуска из Render Shell:
+//   curl -X POST $URL/api/admin/grant -H "X-Admin-Token: $T" \
+//        -H "Content-Type: application/json" -d '{"username":"myname"}'
+// Действие: add (по умолчанию) | remove. Возвращает актуальный список.
+app.post('/api/admin/grant', (req, res) => {
+  const token = String(req.headers['x-admin-token'] || '');
+  const expected = String(process.env.ADMIN_BOOTSTRAP_TOKEN || '');
+  if (!expected || token !== expected) return res.status(403).json({ message: 'Forbidden' });
+  const username = normAdminName(req.body?.username);
+  const action = String(req.body?.action || 'add').toLowerCase();
+  if (!username) return res.status(400).json({ message: 'username обязателен' });
+  if (!Array.isArray(db.admins)) db.admins = [];
+  if (action === 'remove' || action === 'del') {
+    db.admins = db.admins.filter(a => normAdminName(a) !== username);
+  } else {
+    if (!db.admins.map(normAdminName).includes(username)) db.admins.push(username);
+  }
+  saveDb();
+  res.json({ ok: true, admins: db.admins, env: ADMIN_ENV });
+});
+
 // ─── USERS routes ─────────────────────────────────────────────────────────────
 
 // GET /api/users/search?q=...
@@ -1048,6 +1101,7 @@ app.get('/api/users/:id', authMiddleware, (req, res) => {
     lastSeen: user.lastSeen,
     themeId: user.themeId,
     createdAt: user.createdAt,
+    pinnedPlaylistId: user.pinnedPlaylistId || null,
   };
   // Себе можно вернуть больше (email/phone для настроек).
   if (isSelf) {
@@ -1066,14 +1120,37 @@ app.get('/api/users/:id', authMiddleware, (req, res) => {
 app.patch('/api/users/me', authMiddleware, (req, res) => {
   const user = db.users.find(u => u.id === req.userId);
   if (!user) return res.status(404).json({ message: 'Не найден' });
-  const allowed = ['firstName', 'lastName', 'username', 'bio', 'birthDate', 'country', 'region', 'city', 'themeId', 'chatPhoto'];
+  const allowed = ['firstName', 'lastName', 'username', 'bio', 'birthDate', 'country', 'region', 'city', 'themeId', 'chatPhoto', 'pinnedPlaylistId'];
+
+  // Валидация username: формат + уникальность (регистронезависимо).
+  if (req.body.username !== undefined) {
+    const raw = String(req.body.username || '').trim().replace(/^@+/, '');
+    if (!/^[a-zA-Z0-9_.]{3,32}$/.test(raw)) {
+      return res.status(400).json({ message: 'Юзернейм: 3–32 символа, латиница, цифры, _ и .' });
+    }
+    const low = raw.toLowerCase();
+    const taken = db.users.some(u => u.id !== user.id && normalizeIdentifier(u.username) === low);
+    if (taken) return res.status(409).json({ message: 'Этот юзернейм уже занят' });
+    req.body.username = raw;
+  }
+
   for (const k of allowed) {
     if (req.body[k] !== undefined) user[k] = req.body[k];
   }
-  // username обязательно строка если задан
-  if (req.body.username) user.username = req.body.username.trim();
   saveDb();
   res.json(user);
+});
+
+// GET /api/users/username-available?u=<name>
+// Быстрая проверка занятости никнейма (используется формой редактирования).
+app.get('/api/users/username-available', authMiddleware, (req, res) => {
+  const raw = String(req.query.u || '').trim().replace(/^@+/, '');
+  if (!/^[a-zA-Z0-9_.]{3,32}$/.test(raw)) {
+    return res.json({ available: false, reason: 'format' });
+  }
+  const low = raw.toLowerCase();
+  const taken = db.users.some(u => u.id !== req.userId && normalizeIdentifier(u.username) === low);
+  res.json({ available: !taken });
 });
 
 // POST /api/users/avatar  (legacy)
@@ -1484,7 +1561,11 @@ const CUSTOM_CATEGORIES = new Set(['profile', 'selfcard', 'wallpaper', 'bubble']
 const CUSTOM_MIN_PRICE = 20;
 const CUSTOM_MAX_PRICE = 20000;
 
-function isAdminReq(req) { return isDevIp(req); }
+function isAdminReq(req) {
+  if (isDevIp(req)) return true;
+  const u = db.users.find(x => x.id === req.userId);
+  return isAdminUsername(u?.username);
+}
 function creatorProfile(userId) {
   if (!db.creatorProfiles[userId]) db.creatorProfiles[userId] = { feePaid: false };
   return db.creatorProfiles[userId];
@@ -2064,6 +2145,7 @@ app.get('/api/messages/:chatId', authMiddleware, (req, res) => {
       fileName: a.originalName || a.fileName || '',
       fileSize: a.size || a.fileSize || 0,
       mimeType: a.mimeType || '',
+      data: a.data || null,
     }));
     return {
       ...m,
@@ -2101,6 +2183,7 @@ function handleSendMessage(chatId, userId, body, res) {
     fileName: a.originalName || a.fileName || '',
     fileSize: a.size || a.fileSize || 0,
     mimeType: a.mimeType || '',
+    data: a.data || null,
   }));
 
   const message = {
@@ -2343,6 +2426,180 @@ app.delete('/api/music/:id', authMiddleware, (req, res) => {
   res.json({ success: true });
 });
 
+// ─── MUSIC: import from URL / import ZIP / playlist zip ─────────────────────
+const AdmZip = require('adm-zip');
+const archiver = require('archiver');
+const { spawn } = require('child_process');
+
+// Multer в память для zip-архивов (до 500 МБ).
+const uploadZipMem = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 500 * 1024 * 1024 },
+});
+
+const AUDIO_EXT_RE = /\.(mp3|wav|ogg|flac|aac|m4a|opus)$/i;
+
+// POST /api/music/import-zip — массовый импорт mp3 из ZIP.
+app.post('/api/music/import-zip', authMiddleware, uploadZipMem.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ message: 'Файл не загружен' });
+  if (!(req.file.originalname || '').toLowerCase().endsWith('.zip')) {
+    return res.status(400).json({ message: 'Ожидается .zip' });
+  }
+  let zip;
+  try { zip = new AdmZip(req.file.buffer); }
+  catch { return res.status(400).json({ message: 'Битый архив' }); }
+
+  const musicDir = path.join(UPLOADS_DIR, 'music');
+  if (!fs.existsSync(musicDir)) fs.mkdirSync(musicDir, { recursive: true });
+
+  const created = [];
+  const skipped = [];
+  for (const entry of zip.getEntries()) {
+    if (entry.isDirectory) continue;
+    const base = path.basename(entry.entryName || entry.name || '');
+    if (!base || base.startsWith('.') || (entry.entryName || '').startsWith('__MACOSX')) continue;
+    if (!AUDIO_EXT_RE.test(base)) { skipped.push(base); continue; }
+    if (entry.header && entry.header.size > 50 * 1024 * 1024) { skipped.push(base + ' (>50MB)'); continue; }
+    const ext = path.extname(base);
+    const filename = `zip_${Date.now()}_${uuidv4().slice(0, 8)}${ext}`;
+    try { fs.writeFileSync(path.join(musicDir, filename), entry.getData()); }
+    catch { skipped.push(base + ' (io)'); continue; }
+    const track = {
+      id: uuidv4(),
+      title: base.replace(/\.[^.]+$/, ''),
+      artist: 'Неизвестный',
+      album: null,
+      duration: 0,
+      fileUrl: `/uploads/music/${filename}`,
+      coverUrl: null,
+      uploadedById: req.userId,
+      playsCount: 0,
+      createdAt: new Date().toISOString(),
+    };
+    db.tracks.push(track);
+    created.push(track);
+  }
+  saveDb();
+  const uploadedBy = db.users.find(u => u.id === req.userId) || null;
+  res.json({
+    imported: created.length,
+    skipped,
+    tracks: created.map(t => ({ ...t, uploadedBy })),
+  });
+});
+
+// POST /api/music/import-url — скачать аудио по ссылке через yt-dlp.
+// Требует yt-dlp и ffmpeg в PATH. Лимит — 6 минут.
+app.post('/api/music/import-url', authMiddleware, express.json(), async (req, res) => {
+  const url = String(req.body?.url || '').trim();
+  if (!/^https?:\/\//i.test(url)) return res.status(400).json({ message: 'Некорректный URL' });
+
+  const run = (cmd, args) => new Promise((resolve) => {
+    let stdout = '', stderr = '';
+    let proc;
+    try { proc = spawn(cmd, args, { windowsHide: true }); }
+    catch (e) { return resolve({ code: -1, stdout: '', stderr: String(e && e.message || e) }); }
+    proc.stdout && proc.stdout.on('data', (d) => { stdout += d.toString(); });
+    proc.stderr && proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('error', (e) => resolve({ code: -1, stdout, stderr: stderr + '\n' + String(e && e.message || e) }));
+    proc.on('close', (code) => resolve({ code, stdout, stderr }));
+  });
+
+  const meta = await run('yt-dlp', ['-J', '--no-warnings', '--no-playlist', url]);
+  if (meta.code !== 0) {
+    return res.status(500).json({
+      message: 'yt-dlp недоступен или ссылка не поддерживается. Установите yt-dlp и ffmpeg на сервере.',
+      detail: (meta.stderr || '').slice(0, 500),
+    });
+  }
+  let info;
+  try { info = JSON.parse(meta.stdout); }
+  catch { return res.status(500).json({ message: 'Не удалось разобрать метаданные' }); }
+  const duration = Number(info.duration) || 0;
+  if (duration <= 0) return res.status(400).json({ message: 'Не удалось определить длительность' });
+  if (duration > 360) return res.status(400).json({ message: 'Длительность более 6 минут — импорт запрещён' });
+
+  const title = String(info.title || 'Импорт').slice(0, 200);
+  const artist = String(info.uploader || info.channel || 'Неизвестный').slice(0, 200);
+
+  const musicDir = path.join(UPLOADS_DIR, 'music');
+  if (!fs.existsSync(musicDir)) fs.mkdirSync(musicDir, { recursive: true });
+  const baseName = `url_${Date.now()}_${uuidv4().slice(0, 8)}`;
+  const outTemplate = path.join(musicDir, baseName + '.%(ext)s');
+
+  const dl = await run('yt-dlp', [
+    '-x', '--audio-format', 'mp3', '--audio-quality', '0',
+    '--no-playlist', '--no-warnings',
+    '-o', outTemplate, url,
+  ]);
+  if (dl.code !== 0) {
+    return res.status(500).json({
+      message: 'Не удалось скачать аудио (нужен ffmpeg).',
+      detail: (dl.stderr || '').slice(0, 500),
+    });
+  }
+  const filename = baseName + '.mp3';
+  const finalPath = path.join(musicDir, filename);
+  if (!fs.existsSync(finalPath)) {
+    const alt = fs.readdirSync(musicDir).find(f => f.startsWith(baseName + '.'));
+    if (!alt) return res.status(500).json({ message: 'Файл не появился на диске' });
+    fs.renameSync(path.join(musicDir, alt), finalPath);
+  }
+  const track = {
+    id: uuidv4(),
+    title, artist, album: null,
+    duration: Math.round(duration),
+    fileUrl: `/uploads/music/${filename}`,
+    coverUrl: null,
+    uploadedById: req.userId,
+    playsCount: 0,
+    createdAt: new Date().toISOString(),
+    sourceUrl: url,
+  };
+  db.tracks.push(track);
+  saveDb();
+  const uploadedBy = db.users.find(u => u.id === req.userId) || null;
+  res.status(201).json({ ...track, uploadedBy });
+});
+
+// GET /api/music/playlists/:id/zip — скачать плейлист архивом.
+app.get('/api/music/playlists/:id/zip', authMiddleware, (req, res) => {
+  const playlist = (db.playlists || []).find(p =>
+    p.id === req.params.id && (p.userId === req.userId || p.isPublic));
+  if (!playlist) return res.status(404).json({ message: 'Плейлист не найден' });
+  const trackIds = playlist.trackIds || [];
+  const tracks = trackIds.map(id => db.tracks.find(t => t.id === id)).filter(Boolean);
+  if (!tracks.length) return res.status(400).json({ message: 'Плейлист пуст' });
+
+  const safeName = String(playlist.name || 'playlist').replace(/[^\w\-. ]+/g, '_').slice(0, 60) || 'playlist';
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="${safeName}.zip"`);
+
+  const archive = archiver('zip', { zlib: { level: 5 } });
+  archive.on('error', (err) => {
+    console.error('[playlist zip] archiver error:', err);
+    try { res.status(500).end(); } catch {}
+  });
+  archive.pipe(res);
+
+  const used = new Set();
+  tracks.forEach((t, idx) => {
+    const file = path.join(UPLOADS_DIR, 'music', path.basename(t.fileUrl || ''));
+    if (!fs.existsSync(file)) return;
+    const ext = path.extname(file) || '.mp3';
+    let name = `${String(idx + 1).padStart(2, '0')}. ${(t.artist ? t.artist + ' - ' : '') + (t.title || 'track')}`;
+    name = name.replace(/[^\w\-. ()]+/g, '_').slice(0, 100) + ext;
+    let uniq = name, n = 1;
+    while (used.has(uniq)) { uniq = name.replace(ext, `_${n++}${ext}`); }
+    used.add(uniq);
+    archive.file(file, { name: uniq });
+  });
+  archive.finalize();
+});
+
+
+
+
 // ─── PLAYLISTS routes ─────────────────────────────────────────────────────────
 
 function playlistWithTracks(playlist) {
@@ -2405,6 +2662,18 @@ function updatePlaylist(req, res) {
 }
 app.patch('/api/music/playlists/:id', authMiddleware, updatePlaylist);
 app.patch('/api/playlists/:id', authMiddleware, updatePlaylist);
+
+// GET /api/playlists/:id — читать одиночный плейлист.
+// Свой — всегда, чужой — только если isPublic.
+function getPlaylistOne(req, res) {
+  const p = (db.playlists || []).find(x => x.id === req.params.id);
+  if (!p) return res.status(404).json({ message: 'Не найден' });
+  if (p.userId !== req.userId && !p.isPublic) return res.status(403).json({ message: 'Нет доступа' });
+  res.json(playlistWithTracks(p));
+}
+app.get('/api/music/playlists/:id', authMiddleware, getPlaylistOne);
+app.get('/api/playlists/:id', authMiddleware, getPlaylistOne);
+
 
 // POST /api/music/playlists/:id/tracks
 function addTrackToPlaylist(req, res) {
@@ -2531,6 +2800,91 @@ app.post('/api/ai/chat', authMiddleware, (req, res) => {
 app.get('/api/ai/stats', authMiddleware, (req, res) => {
   res.json({ models: (db.aiModels || []).length, sessions: (db.aiSessions || []).length });
 });
+
+// ─── AI Theme Generator ──────────────────────────────────────────────────────
+// Стоимость: 50₽ / 10 тем = 5₽ за тему = 10 ВП (VP_PER_RUB=2).
+const AI_THEME_COST_VP = 10;
+
+// Простой локальный генератор темы по описанию: разбирает ключевые слова
+// (цветовые/настроенческие) и собирает согласованную палитру. Работает без
+// внешних сервисов и гарантирует валидный Theme на выходе.
+function generateThemeLocal(desc) {
+  const s = String(desc || '').toLowerCase();
+  // Базовые палитры по ключевым словам
+  const palettes = [
+    { keys: ['неон', 'киберпанк', 'cyber', 'neon'],       bg:'#0a0016', accent:'#ff2ec4', accent2:'#00e5ff', dark:true },
+    { keys: ['океан', 'море', 'вода', 'ocean', 'water'],  bg:'#001a2c', accent:'#00c2ff', accent2:'#7dffb2', dark:true },
+    { keys: ['лес', 'природа', 'forest', 'green'],        bg:'#0d1a0f', accent:'#7dff8a', accent2:'#c8ff7d', dark:true },
+    { keys: ['закат', 'огонь', 'sunset', 'fire'],         bg:'#1a0810', accent:'#ff6b3d', accent2:'#ffd23d', dark:true },
+    { keys: ['космос', 'галактика', 'space', 'galaxy'],   bg:'#05061a', accent:'#8a5cff', accent2:'#ff5cf0', dark:true },
+    { keys: ['минимал', 'светл', 'бел', 'light', 'clean'],bg:'#f7f8fb', accent:'#5b7cff', accent2:'#a97dff', dark:false },
+    { keys: ['ретро', 'винтаж', 'retro', 'vintage'],      bg:'#1c1410', accent:'#e8a94b', accent2:'#c96f4a', dark:true },
+    { keys: ['пастел', 'нежн', 'pastel', 'soft'],         bg:'#fdf6f9', accent:'#ff8fb7', accent2:'#a0c8ff', dark:false },
+    { keys: ['готик', 'мрачн', 'gothic', 'dark'],         bg:'#050208', accent:'#a020f0', accent2:'#ff2050', dark:true },
+    { keys: ['золот', 'роскош', 'gold', 'royal'],         bg:'#12100a', accent:'#f5c94b', accent2:'#c9a44a', dark:true },
+  ];
+  const hit = palettes.find(p => p.keys.some(k => s.includes(k))) || palettes[0];
+  const isDark = hit.dark;
+  const withAlpha = (hex, a) => {
+    const n = parseInt(hex.replace('#',''), 16);
+    const r = (n>>16)&255, g = (n>>8)&255, b = n&255;
+    return `rgba(${r},${g},${b},${a})`;
+  };
+  const shift = (hex, amt) => {
+    const n = parseInt(hex.replace('#',''), 16);
+    const r = Math.max(0, Math.min(255, ((n>>16)&255) + amt));
+    const g = Math.max(0, Math.min(255, ((n>>8)&255) + amt));
+    const b = Math.max(0, Math.min(255, (n&255) + amt));
+    return '#' + ((1<<24) + (r<<16) + (g<<8) + b).toString(16).slice(1);
+  };
+  const bg = hit.bg;
+  const text = isDark ? '#f4f6ff' : '#181a20';
+  const textSec = isDark ? '#a0a7bd' : '#5a6172';
+  const border = withAlpha(hit.accent, 0.15);
+  const bgSidebar = isDark ? shift(bg, 8) : shift(bg, -6);
+  const bgChat = bg;
+  const bgHeader = isDark ? shift(bg, -6) : shift(bg, -10);
+  const bgInput = isDark ? shift(bg, 18) : shift(bg, -14);
+  const bgHover = withAlpha(hit.accent, 0.10);
+  const bgActive = withAlpha(hit.accent, 0.22);
+  const bubbleOwnGradient = `linear-gradient(135deg, ${hit.accent} 0%, ${hit.accent2} 100%)`;
+  const bubbleOwnShadow = `0 8px 28px ${withAlpha(hit.accent, 0.30)}, 0 0 0 1px rgba(255,255,255,0.10) inset`;
+  const sidebarGradient = `linear-gradient(180deg, ${shift(bg, isDark?14:-4)} 0%, ${bg} 100%)`;
+  const headerGradient = `linear-gradient(90deg, ${shift(bg,-8)} 0%, ${withAlpha(hit.accent,0.10)} 50%, ${shift(bg,-8)} 100%)`;
+  const name = String(desc || 'AI Theme').slice(0, 40) || 'AI Theme';
+  return {
+    id: 0, // клиент подставит свой
+    name: 'AI: ' + name,
+    bg, text, accent: hit.accent,
+    bgSidebar, bgChat, bgHeader, bgInput,
+    bgBubbleOwn: hit.accent,
+    bgBubbleOther: isDark ? shift(bg, 22) : shift(bg, -12),
+    bgHover, bgActive, textSec, border,
+    online: hit.accent2,
+    bubbleOwnGradient, bubbleOwnShadow,
+    bubbleOtherShadow: isDark ? '0 6px 18px rgba(0,0,0,0.35)' : '0 6px 18px rgba(0,0,0,0.08)',
+    sidebarGradient, headerGradient,
+    bubbleOwnText: isDark ? '#0a0812' : '#ffffff',
+  };
+}
+
+app.post('/api/ai/theme', authMiddleware, async (req, res) => {
+  const description = String(req.body?.description || '').trim().slice(0, 500);
+  if (!description) return res.status(400).json({ message: 'Опишите тему' });
+  const user = ensureWallet(db.users.find(u => u.id === req.userId));
+  if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
+  const devFree = isAdminReq(req);
+  if (!devFree && (user.walletBalance || 0) < AI_THEME_COST_VP) {
+    return res.status(400).json({ message: `Недостаточно ВП. Нужно ${AI_THEME_COST_VP} ВП.` });
+  }
+  const theme = generateThemeLocal(description);
+  if (!devFree) {
+    user.walletBalance -= AI_THEME_COST_VP;
+    saveDb();
+    pushWalletEmit(user);
+  }
+  res.json({ ok: true, theme, cost: devFree ? 0 : AI_THEME_COST_VP, balance: user.walletBalance });
+});
 app.get('/api/ai-lmm/health', authMiddleware, (req, res) => {
   res.json({ status: 'ok', engine: 'lmm-simple' });
 });
@@ -2542,6 +2896,80 @@ app.post('/api/ai-lmm/chat', authMiddleware, (req, res) => {
 // Voice: транскрибация (заглушка, сохранение состояния)
 app.post('/api/voice/transcribe/:attachmentId', authMiddleware, (req, res) => {
   res.json({ text: '', status: 'unavailable', message: 'Распознавание речи доступно в версии с ai-engine' });
+});
+
+// ─── PROFILE COMMENTS (Steam-style стена) ────────────────────────────────────
+// Хранятся на сервере, чтобы владелец профиля видел записи от других.
+// Модель: { id, targetUserId, authorId, text, createdAt }. Автор+текст —
+// подтягиваются на клиенте по authorId (актуальный ник/аватар).
+if (!Array.isArray(db.profileComments)) db.profileComments = [];
+
+app.get('/api/users/:id/comments', authMiddleware, (req, res) => {
+  const targetUserId = req.params.id;
+  const items = (db.profileComments || [])
+    .filter(c => c.targetUserId === targetUserId)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 200)
+    .map(c => {
+      const author = db.users.find(u => u.id === c.authorId);
+      return {
+        id: c.id,
+        targetUserId: c.targetUserId,
+        authorId: c.authorId,
+        authorName: author
+          ? ([author.firstName, author.lastName].filter(Boolean).join(' ') || author.username)
+          : 'Пользователь',
+        authorAvatar: author?.avatarUrl || null,
+        text: c.text,
+        ts: new Date(c.createdAt).getTime(),
+      };
+    });
+  res.json(items);
+});
+
+app.post('/api/users/:id/comments', authMiddleware, (req, res) => {
+  const targetUserId = req.params.id;
+  const text = String(req.body?.text || '').trim().slice(0, 1000);
+  if (!text) return res.status(400).json({ message: 'Пустой комментарий' });
+  const target = db.users.find(u => u.id === targetUserId);
+  if (!target) return res.status(404).json({ message: 'Пользователь не найден' });
+  const record = {
+    id: uuidv4(),
+    targetUserId,
+    authorId: req.userId,
+    text,
+    createdAt: new Date().toISOString(),
+  };
+  db.profileComments.push(record);
+  saveDb();
+  const author = db.users.find(u => u.id === req.userId);
+  const payload = {
+    id: record.id,
+    targetUserId,
+    authorId: record.authorId,
+    authorName: author
+      ? ([author.firstName, author.lastName].filter(Boolean).join(' ') || author.username)
+      : 'Пользователь',
+    authorAvatar: author?.avatarUrl || null,
+    text,
+    ts: new Date(record.createdAt).getTime(),
+  };
+  try { io.emit('profileComment:new', payload); } catch {}
+  res.json(payload);
+});
+
+app.delete('/api/users/:id/comments/:commentId', authMiddleware, (req, res) => {
+  const { id: targetUserId, commentId } = req.params;
+  const idx = (db.profileComments || []).findIndex(c => c.id === commentId && c.targetUserId === targetUserId);
+  if (idx === -1) return res.status(404).json({ message: 'Не найден' });
+  const c = db.profileComments[idx];
+  // Удалять может: автор комментария, владелец стены, админ.
+  const isOwner = c.authorId === req.userId || c.targetUserId === req.userId;
+  if (!isOwner && !isAdminReq(req)) return res.status(403).json({ message: 'Нет прав' });
+  db.profileComments.splice(idx, 1);
+  saveDb();
+  try { io.emit('profileComment:deleted', { id: commentId, targetUserId }); } catch {}
+  res.json({ ok: true });
 });
 
 // ─── FAVORITES routes ─────────────────────────────────────────────────────────
@@ -2698,6 +3126,7 @@ io.on('connection', (socket) => {
       fileName: a.originalName || a.fileName || '',
       fileSize: a.size || a.fileSize || 0,
       mimeType: a.mimeType || '',
+      data: a.data || null,
     }));
 
     const message = {
@@ -3009,6 +3438,9 @@ function printHelp() {
   delchat <chatId>  — удалить чат и все его сообщения
   kick <userId>     — удалить пользователя
   stats             — статистика базы данных
+  admins             — список админов (env + db)
+  admin add <user>   — назначить пользователя админом (по username)
+  admin del <user>   — снять админа
   clear             — очистить консоль
   exit              — остановить сервер
 `);
@@ -3079,6 +3511,34 @@ rl.on('line', (line) => {
       console.log(`  Плейлистов: ${(db.playlists||[]).length}`);
       console.log(`  Онлайн: ${db.users.filter(u=>u.isOnline).length}`);
       break;
+    case 'admins': {
+      const envList = ADMIN_ENV.length ? ADMIN_ENV.join(', ') : '(пусто)';
+      const dbList = (db.admins || []).length ? db.admins.join(', ') : '(пусто)';
+      console.log(`👑 Админы:\n  ENV (ADMIN_USERNAMES): ${envList}\n  DB:                    ${dbList}`);
+      break;
+    }
+    case 'admin': {
+      const sub = args[0];
+      const name = normAdminName(args[1]);
+      if (!sub || !name) { console.log('Использование: admin add <username> | admin del <username>'); break; }
+      if (!Array.isArray(db.admins)) db.admins = [];
+      if (sub === 'add') {
+        if (db.admins.map(normAdminName).includes(name)) { console.log(`Уже админ: ${name}`); break; }
+        const u = db.users.find(x => normAdminName(x.username) === name);
+        if (!u) console.log(`⚠ Пользователь @${name} не найден в базе — запись всё равно добавлена, сработает при регистрации.`);
+        db.admins.push(name);
+        saveDb();
+        console.log(`✅ @${name} назначен админом`);
+      } else if (sub === 'del' || sub === 'remove' || sub === 'rm') {
+        const before = db.admins.length;
+        db.admins = db.admins.filter(a => normAdminName(a) !== name);
+        saveDb();
+        console.log(db.admins.length < before ? `✅ @${name} больше не админ` : `Не найден в db-списке: ${name}`);
+      } else {
+        console.log('Неизвестный подкоманд. add | del');
+      }
+      break;
+    }
     case 'clear':
       console.clear(); break;
     case 'exit':

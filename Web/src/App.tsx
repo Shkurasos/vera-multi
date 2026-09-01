@@ -26,9 +26,11 @@ import { bindSocketHandlers as bindCallHandlers } from './services/callPeers';
 import { peer, isPeerAvailable } from './services/peer';
 import { useUserSettingsStore } from './store/userSettingsStore';
 import { useShopStore } from './store/shopStore';
+import { useCustomEquipStore } from './store/customEquipStore';
 import Store, { StoreOpen } from './components/Store';
 import AppLockGate from './components/AppLockGate';
 import DevInspector from './components/DevInspector';
+import { GlobalStyles } from '@mui/material';
 
 // Звук уведомления
 let audioCtx: AudioContext | null = null;
@@ -352,6 +354,13 @@ export default function App() {
     document.documentElement.style.fontSize = `${16 * textScale}px`;
   }, [brightness, textScale]);
 
+  // Подгружаем каталог кастомных предметов (от авторов) один раз после авторизации.
+  useEffect(() => {
+    if (isAuthenticated) {
+      useCustomEquipStore.getState().load();
+    }
+  }, [isAuthenticated]);
+
   if (isLoading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" height="100vh"
@@ -363,6 +372,28 @@ export default function App() {
 
   return (
     <AppLockGate>
+      <GlobalStyles
+        styles={{
+          '@keyframes vera-pulse': {
+            '0%,100%': { transform: 'scale(1)' },
+            '50%':     { transform: 'scale(1.04)' },
+          },
+          '@keyframes vera-shimmer': {
+            '0%':   { backgroundPosition: '-200% 0' },
+            '100%': { backgroundPosition: '200% 0' },
+          },
+          '@keyframes vera-float': {
+            '0%,100%': { transform: 'translateY(0)' },
+            '50%':     { transform: 'translateY(-4px)' },
+          },
+          '.vera-anim-pulse':   { animation: 'vera-pulse 1.8s ease-in-out infinite' },
+          '.vera-anim-shimmer': {
+            backgroundSize: '200% 100% !important',
+            animation: 'vera-shimmer 3s linear infinite',
+          },
+          '.vera-anim-float':   { animation: 'vera-float 3s ease-in-out infinite' },
+        }}
+      />
       <Routes>
         <Route path="/link" element={<AcceptLinkPage />} />
         <Route path="/download" element={<DownloadPage />} />

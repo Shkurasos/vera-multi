@@ -8,14 +8,18 @@ export default defineConfig({
   base: './',
   plugins: [react()],
   resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-      '@components': path.resolve(__dirname, './src/components'),
-      '@pages': path.resolve(__dirname, './src/pages'),
-      '@hooks': path.resolve(__dirname, './src/hooks'),
-      '@store': path.resolve(__dirname, './src/store'),
-      '@services': path.resolve(__dirname, './src/services'),
-    },
+    alias: [
+      // Точный алиас: только bare-импорт "@mui/icons-material" → шим с паками иконок.
+      // Подпути "@mui/icons-material/Foo" продолжают идти в оригинальный пакет,
+      // что критично для самого шима (он импортирует Foo, FooOutlined и т.д.).
+      { find: /^@mui\/icons-material$/, replacement: path.resolve(__dirname, './src/mui-icons-shim.tsx') },
+      { find: '@', replacement: path.resolve(__dirname, './src') },
+      { find: '@components', replacement: path.resolve(__dirname, './src/components') },
+      { find: '@pages', replacement: path.resolve(__dirname, './src/pages') },
+      { find: '@hooks', replacement: path.resolve(__dirname, './src/hooks') },
+      { find: '@store', replacement: path.resolve(__dirname, './src/store') },
+      { find: '@services', replacement: path.resolve(__dirname, './src/services') },
+    ],
   },
   server: {
     port: 5173,

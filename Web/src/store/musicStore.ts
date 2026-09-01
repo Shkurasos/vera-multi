@@ -40,6 +40,8 @@ interface MusicState {
   uploadTrack: (formData: FormData, onProgress?: (p: number) => void) => Promise<Track>;
   updateTrack: (trackId: string, formData: FormData) => Promise<Track>;
   deleteTrack: (trackId: string) => Promise<void>;
+  importUrl: (url: string) => Promise<Track>;
+  importZip: (formData: FormData, onProgress?: (p: number) => void) => Promise<{ imported: number; skipped: string[]; tracks: Track[] }>;
 }
 
 export const useMusicStore = create<MusicState>()(
@@ -290,6 +292,22 @@ export const useMusicStore = create<MusicState>()(
         isPlaying: removedCurrent ? false : s.isPlaying,
       };
     });
+  },
+
+  importUrl: async (url) => {
+    const res = await musicApi.importUrl(url);
+    const created: Track = res.data;
+    set((s) => ({ tracks: [created, ...s.tracks] }));
+    return created;
+  },
+
+  importZip: async (formData, onProgress) => {
+    const res = await musicApi.importZip(formData, onProgress);
+    const payload = res.data as { imported: number; skipped: string[]; tracks: Track[] };
+    if (payload.tracks?.length) {
+      set((s) => ({ tracks: [...payload.tracks, ...s.tracks] }));
+    }
+    return payload;
   },
     }),
     {

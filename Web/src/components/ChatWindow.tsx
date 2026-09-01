@@ -32,6 +32,8 @@ import { Message, User } from '../types';
 import ChatThemeDialog from './ChatThemeDialog';
 import { useChatThemeStore } from '../store/chatThemeStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
+import { useCustomEquipStore } from '../store/customEquipStore';
+import { specToStyle, specAnimationClass } from '../utils/customStyle';
 import { saveLiveBg, loadLiveBgUrl, clearLiveBg, hasLiveBg } from '../services/chatLiveBgStorage';
 
 // ── ErrorBoundary ─────────────────────────────────────────────────────────────
@@ -610,6 +612,9 @@ function ChatWindowInner() {
     return 'linear-gradient(135deg,#0b1026 0%,#20124d 60%,#1a1a2e 100%)';
   }, [smartWpItem]);
 
+  // Кастомные обои от авторов (перебивают smart-обои).
+  const customWallpaperSpec = useCustomEquipStore((s) => s.equipped.wallpaper ? s.items[s.equipped.wallpaper]?.spec : undefined);
+
   if (!activeChat) {
     // If there's a chat id in URL — we're loading, not waiting for selection
     if (id) {
@@ -717,14 +722,16 @@ function ChatWindowInner() {
         </Snackbar>
 
         {/* ── Умные обои / персональная тема чата (базовый цветной слой) ── */}
-        {(smartWpGradient || chatThemeOverride?.bg) && !liveBgUrl && !theme.chatBgImage && (
+        {(smartWpGradient || chatThemeOverride?.bg || customWallpaperSpec) && !liveBgUrl && !theme.chatBgImage && (
           <Box sx={{
             position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
-            background: chatThemeOverride?.bg
-              ? `linear-gradient(135deg, ${chatThemeOverride.bg}, ${chatThemeOverride.accent || chatThemeOverride.bg})`
-              : smartWpGradient || undefined,
+            background: customWallpaperSpec
+              ? (specToStyle(customWallpaperSpec).background as string | undefined)
+              : chatThemeOverride?.bg
+                ? `linear-gradient(135deg, ${chatThemeOverride.bg}, ${chatThemeOverride.accent || chatThemeOverride.bg})`
+                : smartWpGradient || undefined,
             transition: 'background 800ms ease',
-          }} />
+          }} className={customWallpaperSpec ? specAnimationClass(customWallpaperSpec) : ''} />
         )}
 
         {/* ── Живые обои (видео-слой, приоритет выше фото) ── */}

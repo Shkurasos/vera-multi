@@ -1,9 +1,20 @@
-import React from 'react';
-import { Box, Avatar, Typography, TextField, Button, IconButton, Stack, Tooltip } from '@mui/material';
+﻿import React from 'react';
+import { Box, Avatar, Typography, TextField, IconButton, Stack, Tooltip } from '@mui/material';
 import { Delete, Send } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
 import { useAuthStore } from '../store/authStore';
-import { addComment, deleteComment, listComments, ProfileComment } from '../services/profileCommentsStorage';
+import api from '../services/api';
+import { getSocket } from '../services/socket';
+
+export interface ProfileComment {
+  id: string;
+  targetUserId: string;
+  authorId: string;
+  authorName: string;
+  authorAvatar?: string | null;
+  text: string;
+  ts: number;
+}
 
 function timeAgo(ts: number): string {
   const s = Math.max(1, Math.floor((Date.now() - ts) / 1000));
@@ -19,8 +30,9 @@ interface Props {
 }
 
 /**
- * Steam-style стена комментариев. Хранение локальное (IndexedDB) — синк по P2P
- * запланирован отдельно и подключается сверху без изменения UI.
+ * Steam-style стена комментариев. Хранение серверное:
+ * GET/POST/DELETE /api/users/:id/comments. Обновления в реальном времени —
+ * по сокету profileComment:new / profileComment:deleted.
  */
 export default function ProfileCommentsWall({ targetUserId, targetUserName }: Props) {
   const { theme } = useThemeStore();
@@ -30,10 +42,31 @@ export default function ProfileCommentsWall({ targetUserId, targetUserName }: Pr
   const [busy, setBusy] = React.useState(false);
 
   const reload = React.useCallback(() => {
-    listComments(targetUserId).then(setItems).catch(() => setItems([]));
+    api.get<ProfileComment[]>(`/users/${targetUserId}/comments`)
+      .then((r) => setItems(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setItems([]));
   }, [targetUserId]);
 
   React.useEffect(() => { reload(); }, [reload]);
+
+  React.useEffect(() => {
+    const s = getSocket();
+    if (!s) return;
+    const onNew = (c: ProfileComment) => {
+      if (c.targetUserId !== targetUserId) return;
+      setItems((prev) => (prev.some((x) => x.id === c.id) ? prev : [c, ...prev]));
+    };
+    const onDel = ({ id, targetUserId: t }: { id: string; targetUserId: string }) => {
+      if (t !== targetUserId) return;
+      setItems((prev) => prev.filter((x) => x.id !== id));
+    };
+    s.on('profileComment:new', onNew);
+    s.on('profileComment:deleted', onDel);
+    return () => {
+      s.off('profileComment:new', onNew);
+      s.off('profileComment:deleted', onDel);
+    };
+  }, [targetUserId]);
 
   const canDelete = (c: ProfileComment) => !!me && (c.authorId === me.id || targetUserId === me.id);
 
@@ -42,23 +75,21 @@ export default function ProfileCommentsWall({ targetUserId, targetUserName }: Pr
     if (!t || !me) return;
     setBusy(true);
     try {
-      await addComment({
-        targetUserId,
-        authorId: me.id,
-        authorName: [me.firstName, me.lastName].filter(Boolean).join(' ') || me.username,
-        authorAvatar: me.avatarUrl,
-        text: t,
-      });
+      const r = await api.post<ProfileComment>(`/users/${targetUserId}/comments`, { text: t });
       setText('');
-      reload();
+      setItems((prev) => (prev.some((x) => x.id === r.data.id) ? prev : [r.data, ...prev]));
+    } catch {
+      // тихо: серверная ошибка не критична для UI
     } finally {
       setBusy(false);
     }
   }
 
   async function remove(id: string) {
-    await deleteComment(id);
-    reload();
+    try {
+      await api.delete(`/users/${targetUserId}/comments/${id}`);
+      setItems((prev) => prev.filter((x) => x.id !== id));
+    } catch {}
   }
 
   return (
@@ -124,10 +155,6 @@ export default function ProfileCommentsWall({ targetUserId, targetUserName }: Pr
           </Box>
         ))}
       </Stack>
-
-      <Typography sx={{ mt: 1.5, fontSize: 11, color: theme.textSec, textAlign: 'center' }}>
-        Комментарии хранятся локально на этом устройстве. Синхронизация по P2P — в разработке.
-      </Typography>
     </Box>
   );
 }

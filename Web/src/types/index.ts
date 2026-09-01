@@ -23,6 +23,8 @@ export interface User {
   reputationScore?: number;
   /** DEV-режим по IP (сервер выставляет). Открывает весь магазин и inspector. */
   isDev?: boolean;
+  /** ID закреплённого плейлиста, отображается на профиле как мини-плеер. */
+  pinnedPlaylistId?: string | null;
 }
 
 export type ReputationVoteValue = 'positive' | 'neutral' | 'negative';
@@ -84,6 +86,8 @@ export interface MessageAttachment {
   height?: number;
   duration?: number;
   thumbnailUrl?: string;
+  /** Произвольный payload для встроенных карточек (например, vera-playlist — JSON-строка). */
+  data?: string | object | null;
 }
 
 export interface MessageReaction {

@@ -20,6 +20,8 @@ import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
+import { useCustomEquipStore } from '../store/customEquipStore';
+import { specToStyle } from '../utils/customStyle';
 import { buildRingSx as buildRarityRingSx } from '../utils/rarityStyles';
 import { chatsApi, usersApi } from '../services/api';
 import { peer, isPeerAvailable } from '../services/peer';
@@ -71,6 +73,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   const shopActiveRing = useShopStore((s) => s.activeRing);
   const ringItem = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === shopActiveRing);
   const ringVal = ringItem?.value as any;
+  const customProfileSpec = useCustomEquipStore((s) => s.equipped.profile ? s.items[s.equipped.profile]?.spec : undefined);
   const buildRingSx = (active: boolean): Record<string, any> => {
     const base: Record<string, any> = {
       boxShadow: `0 0 0 2px ${active ? theme.accent + '55' : 'rgba(255,255,255,0.08)'}`,
@@ -86,6 +89,13 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
     } else if (ringVal?.type === 'glow') {
       base.border = `2px solid ${ringVal.color || theme.accent}`;
       base.boxShadow = `0 0 14px ${ringVal.color || theme.accent}`;
+    }
+    // Кастомный «профиль» от авторов — только для собственной аватарки.
+    if (active && customProfileSpec) {
+      const st = specToStyle(customProfileSpec);
+      if (st.border) base.border = st.border;
+      if (st.background) base.background = st.background;
+      if (st.boxShadow) base.boxShadow = st.boxShadow;
     }
     return base;
   };
@@ -473,7 +483,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
         </Box>
       )}
 
-      <List onScroll={handleChatListScroll} sx={{ flex: 1, overflowY: horizontal ? 'hidden' : 'auto', overflowX: horizontal ? 'auto' : 'hidden', display: horizontal ? 'flex' : 'block', flexDirection: horizontal ? 'row' : 'column', py: .5, px: open ? 1 : .5, position: 'relative', zIndex: 1, scrollBehavior: 'smooth', '&::-webkit-scrollbar': { height: 6 } }}>
+      <List data-vera-list onScroll={handleChatListScroll} sx={{ flex: 1, overflowY: horizontal ? 'hidden' : 'auto', overflowX: horizontal ? 'auto' : 'hidden', display: horizontal ? 'flex' : 'block', flexDirection: horizontal ? 'row' : 'column', py: .5, px: open ? 1 : .5, position: 'relative', zIndex: 1, scrollBehavior: 'smooth', '&::-webkit-scrollbar': { height: 6 } }}>
         {sorted.map(chat => {
           const name = getChatName(chat);
           const active = activeChat?.id === chat.id;

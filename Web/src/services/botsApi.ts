@@ -24,6 +24,8 @@ export const aiApi = {
   chat: (message: string, modelId?: string) => api.post('/ai/chat', { message, modelId }),
   stats: () => api.get('/ai/stats'),
   clearModel: (modelId: string) => api.post(`/ai/models/${modelId}/clear`),
+  generateTheme: (description: string) =>
+    api.post<{ ok: boolean; theme: any; cost: number; balance: number }>('/ai/theme', { description }),
 };
 
 export const adminApi = {

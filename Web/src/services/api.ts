@@ -196,6 +196,19 @@ export const musicApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
   delete: (id: string) => api.delete(`/music/${id}`),
+  // Импорт по URL (yt-dlp на сервере, лимит 6 минут).
+  importUrl: (url: string) => api.post('/music/import-url', { url }),
+  // Массовый импорт mp3 из ZIP-архива.
+  importZip: (formData: FormData, onProgress?: (p: number) => void) =>
+    api.post('/music/import-zip', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (e) => {
+        if (onProgress && e.total) onProgress(Math.round((e.loaded * 100) / e.total));
+      },
+    }),
+  // Скачать все треки плейлиста одним zip. Возвращает Blob.
+  downloadPlaylistZip: (playlistId: string) =>
+    api.get(`/music/playlists/${playlistId}/zip`, { responseType: 'blob' }),
   // Плейлисты
   getPlaylists: () => api.get('/playlists'),
   createPlaylist: (name: string, description?: string, isPublic?: boolean) => api.post('/playlists', { name, description, isPublic }),

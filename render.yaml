@@ -40,4 +40,8 @@ services:
       # весь магазин открыт, покупки бесплатны, оверлей-инспектор включён.
       - key: DEV_IPS
         sync: false
+      - key: ADMIN_USERNAMES
+        sync: false
+      - key: ADMIN_BOOTSTRAP_TOKEN
+        sync: false
 

@@ -2,6 +2,8 @@ import React, { useState, useCallback, useRef } from 'react';
 import { Box, Typography, TextField, Button, InputAdornment, IconButton } from '@mui/material';
 import { ContentCopy } from '@mui/icons-material';
 import { useThemeStore, CUSTOM_THEME_ID_START, Theme, themeToLink, themeFromLink } from '../store/themeStore';
+import { aiApi } from '../services/botsApi';
+import { useShopStore } from '../store/shopStore';
 
 // ─── SVG паттерны ─────────────────────────────────────────────────────────────
 function svgUrl(content: string) {
@@ -90,6 +92,28 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
   const [patternId, setPatternId] = useState('none');
   const [patternColor, setPatternColor] = useState('#7c6af7');
   const [themeLink, setThemeLink] = useState('');
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState('');
+
+  const handleAiGenerate = async () => {
+    const desc = aiPrompt.trim();
+    if (!desc) { setAiError('Опишите желаемую тему'); return; }
+    setAiLoading(true); setAiError('');
+    try {
+      const res = await aiApi.generateTheme(desc);
+      const t = (res.data as any).theme as Theme;
+      // Сохраняем id/имя пользователя, заливаем остальные поля из ИИ
+      setDraft(d => ({ ...t, id: d.id, name: t.name || d.name }));
+      setPatternId('none');
+      const balance = (res.data as any).balance;
+      if (typeof balance === 'number') useShopStore.getState().setBalance(balance);
+    } catch (e: any) {
+      setAiError(e?.response?.data?.message || 'Ошибка генерации');
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   const upd = useCallback((key: keyof Theme, val: string) => {
     setDraft(d => ({ ...d, [key]: val }));
@@ -246,6 +270,46 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
           onChange={e => upd('name', e.target.value)}
           style={{ ...inputStyle, marginBottom: 14 }}
         />
+
+        {/* ИИ-генератор темы */}
+        <div style={{
+          marginBottom: 16, padding: 12, borderRadius: 10,
+          border: '1px solid ' + theme.accent + '44',
+          background: `linear-gradient(135deg, ${theme.accent}10, transparent)`,
+        }}>
+          <div style={{ ...sectionLabel, marginTop: 0, color: theme.accent, opacity: 0.9 }}>
+            ✨ Генерация темы ИИ (10 ВП / тема)
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              value={aiPrompt}
+              onChange={e => { setAiPrompt(e.target.value); setAiError(''); }}
+              placeholder="Опишите тему: например «неоновый киберпанк» или «нежные пастельные тона»"
+              disabled={aiLoading}
+              style={{ ...inputStyle, flex: '1 1 260px' }}
+              onKeyDown={e => { if (e.key === 'Enter' && !aiLoading) handleAiGenerate(); }}
+            />
+            <button
+              onClick={handleAiGenerate}
+              disabled={aiLoading || !aiPrompt.trim()}
+              style={{
+                padding: '6px 16px', borderRadius: 7, border: 'none',
+                background: aiLoading ? theme.bgHover : theme.accent,
+                color: '#fff', fontSize: 13, fontWeight: 600,
+                cursor: aiLoading ? 'wait' : 'pointer',
+                opacity: aiPrompt.trim() ? 1 : 0.5,
+              }}
+            >
+              {aiLoading ? 'Генерирую…' : 'Сгенерировать'}
+            </button>
+          </div>
+          {aiError && (
+            <div style={{ fontSize: 12, color: '#f87171', marginTop: 6 }}>{aiError}</div>
+          )}
+          <div style={{ fontSize: 11, opacity: 0.55, marginTop: 6 }}>
+            Меняет всю палитру, градиенты и тени. После генерации можно доработать вручную.
+          </div>
+        </div>
 
         {/* Основная сетка */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>

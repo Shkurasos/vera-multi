@@ -13,8 +13,11 @@ import { useThemeStore } from '../store/themeStore';
 import { useAuthStore } from '../store/authStore';
 import { useChatSettingsStore } from '../store/chatSettingsStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
+import { useCustomEquipStore } from '../store/customEquipStore';
+import { specToStyle, specAnimationClass } from '../utils/customStyle';
 import { buildRingSx, buildPlaqueSx } from '../utils/rarityStyles';
 import { voiceApi } from '../services/api';
+import PlaylistMessageCard, { VeraPlaylistPayload } from './PlaylistMessageCard';
 import ContextMenu from './ContextMenu';
 import { membranePressSx, motion } from '../styles/motion';
 
@@ -214,6 +217,32 @@ function VideoPlayer({ src }: { src: string }) {
   );
 }
 
+// Распарсить payload плейлиста из attachment (data — JSON-строка).
+function parsePlaylistPayload(attachment: any): VeraPlaylistPayload {
+  const fallback: VeraPlaylistPayload = {
+    playlistId: '',
+    name: attachment?.fileName || 'Плейлист',
+    tracks: [],
+  };
+  const raw = attachment?.data;
+  if (!raw) return fallback;
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return {
+      playlistId: String(parsed.playlistId || ''),
+      name: String(parsed.name || fallback.name),
+      ownerName: parsed.ownerName ? String(parsed.ownerName) : undefined,
+      tracks: Array.isArray(parsed.tracks) ? parsed.tracks.map((t: any) => ({
+        id: String(t.id || ''),
+        title: String(t.title || ''),
+        artist: t.artist ? String(t.artist) : undefined,
+      })) : [],
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 // ── Документ ────────────────────────────────────────────────────────────────
 function DocumentPreview({ url, fileName, mimeType, accent }: { url: string; fileName?: string; mimeType?: string; accent: string }) {
   const isImage = mimeType?.startsWith('image/');
@@ -260,6 +289,11 @@ function MessageBubble({
   const shopActiveSelfCard = useShopStore((s) => s.activeSelfCard);
   const ringItem = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === shopActiveRing);
   const selfCardItem = SHOP_CATALOG.find(i => i.applyKey === 'selfCard' && i.id === shopActiveSelfCard);
+
+  // Кастомные предметы от авторов (перебивают выбор из фиксированного каталога).
+  const customProfileSpec = useCustomEquipStore((s) => s.equipped.profile ? s.items[s.equipped.profile]?.spec : undefined);
+  const customSelfcardSpec = useCustomEquipStore((s) => s.equipped.selfcard ? s.items[s.equipped.selfcard]?.spec : undefined);
+  const customBubbleSpec = useCustomEquipStore((s) => s.equipped.bubble ? s.items[s.equipped.bubble]?.spec : undefined);
 
   const [showActions, setShowActions] = useState(false);
   const [openReply, setOpenReply] = useState(false);
@@ -345,6 +379,13 @@ function MessageBubble({
       avatarSx.boxShadow = `0 0 14px ${ringVal.color || theme.accent}`;
     }
   }
+  // Кастомная обводка (spec от авторов) — только для собственной аватарки.
+  if (isOwn && customProfileSpec) {
+    const st = specToStyle(customProfileSpec);
+    avatarSx.border = st.border || avatarSx.border;
+    avatarSx.background = st.background;
+    avatarSx.boxShadow = st.boxShadow || avatarSx.boxShadow;
+  }
 
   // ─── «Плашка» своих сообщений (вид у других) ────────────────────────
   const selfPlaqueSx: Record<string, any> = {
@@ -366,6 +407,12 @@ function MessageBubble({
       selfPlaqueSx.borderRadius = 999;
       selfPlaqueSx.px = 0.8;
     }
+  }
+  // Кастомная плашка от авторов перебивает.
+  let selfPlaqueClass = '';
+  if (customSelfcardSpec) {
+    Object.assign(selfPlaqueSx, specToStyle(customSelfcardSpec));
+    selfPlaqueClass = specAnimationClass(customSelfcardSpec);
   }
 
   return (
@@ -395,14 +442,16 @@ function MessageBubble({
         )}
         {isOwn && (
           <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 0.4 }}>
-            <Typography component="span" sx={selfPlaqueSx}>
+            <Typography component="span" sx={selfPlaqueSx} className={selfPlaqueClass}>
               Вы
             </Typography>
           </Box>
         )}
 
         <Box
+          data-vera-bubble
           onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY }); }}
+          className={isOwn && customBubbleSpec ? specAnimationClass(customBubbleSpec) : ''}
           sx={{
             position: 'relative',
             background: isOwn
@@ -423,6 +472,8 @@ function MessageBubble({
             ...(isOwn
               ? { boxShadow: `${theme.bubbleOwnShadow || ''}, 0 0 0 1px ${theme.accent}18 inset` }
               : {}),
+            // Кастомный «пузырь» от авторов — перекрывает базовый стиль (только для своих).
+            ...(isOwn && customBubbleSpec ? specToStyle(customBubbleSpec) : {}),
           }}
         >
           {message.replyToId && (
@@ -497,7 +548,11 @@ function MessageBubble({
 
               {isDocument && attachment && (
                 <Box sx={{ mt: 0.75 }}>
-                  <DocumentPreview url={attachmentUrl} fileName={attachment.fileName} mimeType={attachment.mimeType} accent={theme.accent} />
+                  {attachment.mimeType === 'application/x-vera-playlist' ? (
+                    <PlaylistMessageCard payload={parsePlaylistPayload(attachment)} />
+                  ) : (
+                    <DocumentPreview url={attachmentUrl} fileName={attachment.fileName} mimeType={attachment.mimeType} accent={theme.accent} />
+                  )}
                 </Box>
               )}
 

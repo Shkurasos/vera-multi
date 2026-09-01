@@ -7,12 +7,13 @@ import {
 } from '@mui/material';
 import {
   GraphicEq, Add, MoreVert, Edit, Delete, MusicNote, ArrowBack,
-  DragIndicator, LibraryMusic, Search, QueueMusic,
+  DragIndicator, LibraryMusic, Search, QueueMusic, Send,
 } from '@mui/icons-material';
 import { usePlaylistStore } from '../store/playlistStore';
 import { useMusicStore } from '../store/musicStore';
 import { useThemeStore } from '../store/themeStore';
 import { Playlist, Track } from '../types';
+import SendPlaylistDialog from './SendPlaylistDialog';
 
 function formatDuration(s: number): string {
   const m = Math.floor(s / 60);
@@ -63,6 +64,7 @@ export default function PlaylistsPanel({ initialPlaylistId }: PlaylistsPanelProp
 
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
   const [menuPlaylist, setMenuPlaylist] = useState<Playlist | null>(null);
+  const [sendTo, setSendTo] = useState<Playlist | null>(null);
 
   useEffect(() => { load(); }, [load]);
 
@@ -312,7 +314,7 @@ export default function PlaylistsPanel({ initialPlaylistId }: PlaylistsPanelProp
           </Box>
         ) : (
           <>
-            <List sx={{
+            <List data-vera-list sx={{
               flex: 1, overflowY: 'auto', px: 1, py: 0.5,
               '&::-webkit-scrollbar': { width: 4 },
               '&::-webkit-scrollbar-thumb': { bgcolor: theme.accent + '30', borderRadius: 4 },
@@ -580,7 +582,7 @@ export default function PlaylistsPanel({ initialPlaylistId }: PlaylistsPanelProp
         </Box>
       ) : (
         <>
-          <List sx={{
+          <List data-vera-list sx={{
             flex: 1, overflowY: 'auto', px: 1, pt: 1,
             '&::-webkit-scrollbar': { width: 4 },
             '&::-webkit-scrollbar-thumb': { bgcolor: theme.accent + '30', borderRadius: 4 },
@@ -661,10 +663,20 @@ export default function PlaylistsPanel({ initialPlaylistId }: PlaylistsPanelProp
         }}>
           <Edit fontSize="small" sx={{ mr: 1 }} /> Переименовать
         </MenuItem>
+        <MenuItem onClick={() => {
+          if (!menuPlaylist) return;
+          setSendTo(menuPlaylist);
+          setMenuAnchor(null);
+          setMenuPlaylist(null);
+        }}>
+          <Send fontSize="small" sx={{ mr: 1 }} /> Отправить в чат
+        </MenuItem>
         <MenuItem onClick={() => menuPlaylist && handleDeletePlaylist(menuPlaylist)} sx={{ color: '#f44336' }}>
           <Delete fontSize="small" sx={{ mr: 1 }} /> Удалить
         </MenuItem>
       </Menu>
+
+      <SendPlaylistDialog open={!!sendTo} playlist={sendTo} onClose={() => setSendTo(null)} />
 
       {/* =========== DIALOG: Создание =========== */}
       <Dialog

@@ -8,6 +8,7 @@ import { walletApi, creatorApi, CustomItem } from '../services/api';
 import { RARITY_META } from '../utils/rarityStyles';
 import CustomItemPreview from './CustomItemPreview';
 import Workshop from './Workshop';
+import { useCustomEquipStore } from '../store/customEquipStore';
 
 interface Props {
   onClose: () => void;
@@ -64,6 +65,9 @@ export default function Store({ onClose }: Props) {
     try {
       const [list, me] = await Promise.all([creatorApi.publicList(), creatorApi.me().catch(() => null)]);
       setCustomItems(list.data.items);
+      // Кладём в глобальный кэш, чтобы UI мог отрисовать `spec` по id.
+      const eq = useCustomEquipStore.getState();
+      list.data.items.forEach(it => eq.upsertItem(it));
       if (me) setIsAdmin(!!me.data.isAdmin);
     } catch (e) { console.warn('[shop] custom load failed', e); }
   }, []);
@@ -76,6 +80,9 @@ export default function Store({ onClose }: Props) {
         balanceVp: data.balance,
         owned: { ...s.owned, [`custom:${id}`]: true },
       }));
+      // Автоэкип купленного (можно снять/сменить кнопками ниже).
+      const item = useCustomEquipStore.getState().items[id];
+      if (item) useCustomEquipStore.getState().setEquipped(item.category, id);
     } catch (e: any) {
       setBuyError(e?.response?.data?.message || 'Не удалось купить');
     }
@@ -417,7 +424,10 @@ export default function Store({ onClose }: Props) {
                           Купить · {item.price} {SHOP_CURRENCY}
                         </Button>
                       ) : (
-                        <Chip size="small" label="Куплено" sx={{ bgcolor: theme.bgInput, color: theme.textSec, fontSize: 11 }} />
+                        <>
+                          <Chip size="small" label="Куплено" sx={{ bgcolor: theme.bgInput, color: theme.textSec, fontSize: 11 }} />
+                          <EquipToggle itemId={item.id} category={item.category} theme={theme} />
+                        </>
                       )}
                       {isAdmin && (
                         <Button size="small" color="error" onClick={() => handleHideCustom(item.id)} sx={{ ml: 'auto', textTransform: 'none', fontSize: 11 }}>
@@ -562,4 +572,26 @@ export function StoreOpen() {
   const setOpen = useShopStore((s) => s.setOpen);
   if (!open) return null;
   return <Store onClose={() => setOpen(false)} />;
+}
+
+/** Мини-кнопка «Надеть/Снять» для купленного кастомного предмета. */
+function EquipToggle({ itemId, category, theme }: { itemId: string; category: CustomItem['category']; theme: any }) {
+  const equippedId = useCustomEquipStore((s) => s.equipped[category]);
+  const setEquipped = useCustomEquipStore((s) => s.setEquipped);
+  const isOn = equippedId === itemId;
+  return (
+    <Button
+      size="small"
+      variant={isOn ? 'contained' : 'outlined'}
+      onClick={() => setEquipped(category, isOn ? undefined : itemId)}
+      sx={{
+        ml: 'auto', textTransform: 'none', borderRadius: 999, fontSize: 11, minHeight: 26, px: 1.2,
+        ...(isOn
+          ? { bgcolor: theme.accent, color: '#001018', '&:hover': { bgcolor: theme.accent + 'CC' } }
+          : { borderColor: theme.accent, color: theme.accent }),
+      }}
+    >
+      {isOn ? 'Снять' : 'Надеть'}
+    </Button>
+  );
 }

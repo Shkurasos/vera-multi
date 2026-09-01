@@ -6,9 +6,9 @@ import {
   ToggleButton, ToggleButtonGroup,
 } from '@mui/material';
 import {
-  Link as LinkIcon, DevicesOther, ChevronRight, ExpandMore,
+  Link as LinkIcon, DevicesOther, ChevronRight, ExpandMore, AutoAwesome,
   Brightness6, TextFields, Language, DataUsage, Notifications, Security, Lock, Public,
-  ViewSidebar, RestartAlt, Storefront,
+  ViewSidebar, RestartAlt, Storefront, Palette,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useThemeStore } from '../store/themeStore';
@@ -20,6 +20,9 @@ import {
 import InviteLinkDialog from './InviteLinkDialog';
 import LayoutDesignerDialog from './LayoutDesignerDialog';
 import { useShopStore } from '../store/shopStore';
+import { useUiPrefsStore, ICON_PACKS, UI_STYLES, IconPack, UiStyle } from '../store/uiPrefsStore';
+import { useAnimStore, ANIM_GROUPS } from '../store/animStore';
+
 
 const SCOPE_LABELS: Record<PrivacyScope, string> = {
   everyone: 'Все', contacts: 'Мои контакты', nobody: 'Никто',
@@ -32,6 +35,10 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
   const [designerOpen, setDesignerOpen] = useState(false);
   const shopSetOpen = useShopStore((x) => x.setOpen);
   const s = useUserSettingsStore();
+  const { iconPack, uiStyle, setIconPack, setUiStyle } = useUiPrefsStore();
+  const { enabled: animEnabled, set: setAnim, setAll: setAllAnims } = useAnimStore();
+  const allAnimsOn = ANIM_GROUPS.every((g) => animEnabled[g.key]);
+
 
   const [pwd1, setPwd1] = useState('');
   const [pwd2, setPwd2] = useState('');
@@ -80,6 +87,108 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
           </List>
 
           <Box sx={{ p: 2 }}>
+            <Accordion sx={sectionSx} disableGutters>
+              <AccordionSummary expandIcon={<ExpandMore sx={{ color: theme.textSec }} />}>
+                <Palette sx={{ mr: 1, color: theme.accent }} />
+                <Typography sx={{ fontWeight: 600 }}>Иконки и стиль интерфейса</Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 1 }}>
+                  Пак иконок
+                </Typography>
+                <ToggleButtonGroup
+                  exclusive
+                  fullWidth
+                  size="small"
+                  value={iconPack}
+                  onChange={(_, v) => v && setIconPack(v as IconPack)}
+                  sx={{ mb: 0.5, flexWrap: 'wrap', gap: 0.5 }}
+                >
+                  {ICON_PACKS.map((p) => (
+                    <ToggleButton
+                      key={p.id}
+                      value={p.id}
+                      sx={{
+                        flex: '1 1 45%', textTransform: 'none', color: theme.text,
+                        borderColor: theme.border,
+                        '&.Mui-selected': { bgcolor: theme.accent + '25', color: theme.text, borderColor: theme.accent },
+                      }}
+                    >
+                      {p.label}
+                    </ToggleButton>
+                  ))}
+                </ToggleButtonGroup>
+                <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 2 }}>
+                  {ICON_PACKS.find((p) => p.id === iconPack)?.desc}
+                </Typography>
+
+                <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 1 }}>
+                  Стиль интерфейса
+                </Typography>
+                <ToggleButtonGroup
+                  exclusive
+                  fullWidth
+                  size="small"
+                  value={uiStyle}
+                  onChange={(_, v) => v && setUiStyle(v as UiStyle)}
+                  sx={{ flexWrap: 'wrap', gap: 0.5 }}
+                >
+                  {UI_STYLES.map((u) => (
+                    <ToggleButton
+                      key={u.id}
+                      value={u.id}
+                      sx={{
+                        flex: '1 1 30%', textTransform: 'none', color: theme.text,
+                        borderColor: theme.border,
+                        '&.Mui-selected': { bgcolor: theme.accent + '25', color: theme.text, borderColor: theme.accent },
+                      }}
+                    >
+                      {u.label}
+                    </ToggleButton>
+                  ))}
+                </ToggleButtonGroup>
+                <Typography sx={{ fontSize: 12, color: theme.textSec, mt: 1 }}>
+                  {UI_STYLES.find((u) => u.id === uiStyle)?.desc}
+                </Typography>
+                <Alert severity="info" sx={{ mt: 1.5, fontSize: 12 }}>
+                  Изменения применяются сразу и работают поверх любой темы.
+                </Alert>
+              </AccordionDetails>
+            </Accordion>
+
+            <Accordion sx={sectionSx} disableGutters>
+              <AccordionSummary expandIcon={<ExpandMore sx={{ color: theme.textSec }} />}>
+                <AutoAwesome sx={{ mr: 1, color: theme.accent }} />
+                <Typography sx={{ fontWeight: 600 }}>Анимации</Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                  <Box minWidth={0}>
+                    <Typography sx={{ fontSize: 14 }}>Анимации интерфейса</Typography>
+                    <Typography sx={{ fontSize: 12, color: theme.textSec }}>
+                      Плавные микровзаимодействия в стиле Apple
+                    </Typography>
+                  </Box>
+                  <Switch checked={allAnimsOn} onChange={(e) => setAllAnims(e.target.checked)} />
+                </Box>
+                <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 1 }}>
+                  Выключите только те, которые не нравятся, — остальные продолжат работать.
+                </Typography>
+                {ANIM_GROUPS.map((g) => (
+                  <RowToggle
+                    key={g.key}
+                    label={`${g.emoji} ${g.label}`}
+                    hint={g.desc}
+                    checked={animEnabled[g.key]}
+                    onChange={(v) => setAnim(g.key, v)}
+                  />
+                ))}
+                <Alert severity="info" sx={{ mt: 1, fontSize: 12 }}>
+                  Если в системе включен режим Reduce Motion, все анимации автоматически отключаются.
+                </Alert>
+              </AccordionDetails>
+            </Accordion>
+
             <Accordion sx={sectionSx} disableGutters>
               <AccordionSummary expandIcon={<ExpandMore sx={{ color: theme.textSec }} />}>
                 <Brightness6 sx={{ mr: 1, color: theme.accent }} />
@@ -362,10 +471,13 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
   );
 }
 
-function RowToggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+function RowToggle({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 0.5 }}>
-      <Typography sx={{ fontSize: 14 }}>{label}</Typography>
+      <Box minWidth={0}>
+        <Typography sx={{ fontSize: 14 }}>{label}</Typography>
+        {hint && <Typography sx={{ fontSize: 12, color: 'text.secondary' }}>{hint}</Typography>}
+      </Box>
       <Switch checked={checked} onChange={(e) => onChange(e.target.checked)} />
     </Box>
   );

@@ -16,11 +16,14 @@ import QRCode from 'qrcode';
 import { peer, isPeerAvailable } from '../services/peer';
 import { peerInfoToUser } from '../store/authStore';
 import SettingsDialog from '../components/SettingsDialog';
+import ProfilePinnedPlaylistBar from '../components/ProfilePinnedPlaylistBar';
 import ProfileCustomizeDialog from '../components/ProfileCustomizeDialog';
 import ProfileCommentsWall from '../components/ProfileCommentsWall';
 import ActivityLine from '../components/ActivityLine';
 import { useProfileCustomizationStore } from '../store/profileCustomizationStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
+import { useCustomEquipStore } from '../store/customEquipStore';
+import { specToStyle } from '../utils/customStyle';
 
 export default function ProfilePage() {
   const navigate = useNavigate();
@@ -83,6 +86,7 @@ export default function ProfilePage() {
   const shopActiveRing = useShopStore((s) => s.activeRing);
   const ringItem = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === shopActiveRing);
   const ringVal = ringItem?.value as any;
+  const customProfileSpec = useCustomEquipStore((s) => s.equipped.profile ? s.items[s.equipped.profile]?.spec : undefined);
 
   async function openLinkQr() {
     setQrError(null);
@@ -150,8 +154,8 @@ export default function ProfilePage() {
 
   const handleSave = async () => {
     // Валидация username
-    if (form.username && !/^[a-zA-Z0-9_]{3,32}$/.test(form.username)) {
-      setUsernameError('3–32 символа: латиница, цифры, подчёркивание');
+    if (form.username && !/^[a-zA-Z0-9_.]{3,32}$/.test(form.username)) {
+      setUsernameError('3–32 символа: латиница, цифры, _ и .');
       return;
     }
     setUsernameError('');
@@ -345,6 +349,14 @@ export default function ProfilePage() {
                   border: `4px solid ${ringVal.color || theme.accent}`,
                   boxShadow: `0 0 30px ${ringVal.color || theme.accent}`,
                 } : {}),
+                ...(customProfileSpec ? (() => {
+                  const st = specToStyle(customProfileSpec);
+                  return {
+                    border: st.border || `4px solid ${theme.accent}`,
+                    background: st.background,
+                    boxShadow: st.boxShadow || `0 0 24px ${theme.accent}50`,
+                  };
+                })() : {}),
               }}
             >
               {getInitials(displayName)}
@@ -377,6 +389,7 @@ export default function ProfilePage() {
           {user?.isOnline ? '● в сети' : '○ не в сети'}
         </Typography>
         {user?.id && <Box sx={{ mt: 1 }}><ActivityLine userId={user.id} /></Box>}
+        {user?.id && <ProfilePinnedPlaylistBar ownerId={user.id} pinnedPlaylistId={user.pinnedPlaylistId} />}
         {customization.showcase && (
           <Box sx={{
             mt: 2, px: 2, py: 1.5, borderRadius: 2,
