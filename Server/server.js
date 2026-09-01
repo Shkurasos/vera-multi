@@ -154,7 +154,11 @@ function isDevIp(req) {
   return DEV_IPS.includes(ip);
 }
 function withDevFlag(req, user) {
-  return { ...user, isDev: isDevIp(req), isAdmin: isAdminUser(req, user) };
+  // Админы (ADMIN_USERNAMES / db.admins) получают полный dev-режим на клиенте:
+  // весь магазин открыт и бесплатен, оверлей-инспектор включён.
+  const admin = isAdminUsername(user?.username);
+  const dev = isDevIp(req) || admin;
+  return { ...user, isDev: dev, isAdmin: dev };
 }
 
 // ─── Админы по username ──────────────────────────────────────────────────────
@@ -1509,7 +1513,8 @@ app.post('/api/shop/buy', authMiddleware, (req, res) => {
   const user = ensureWallet(db.users.find(u => u.id === req.userId));
   if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
   if (user.ownedItems.includes(itemId)) return res.json({ ok: true, already: true, balance: user.walletBalance, ownedItems: user.ownedItems });
-  const devFree = isDevIp(req);
+  // Бесплатно: dev-IP и админы (admin3 и др.) — режим проверки продукта.
+  const devFree = isAdminReq(req);
 
   // Кастомные предметы от авторов: id вида "custom:<uuid>"
   if (itemId.startsWith('custom:')) {
@@ -2810,21 +2815,41 @@ const AI_THEME_COST_VP = 10;
 // внешних сервисов и гарантирует валидный Theme на выходе.
 function generateThemeLocal(desc) {
   const s = String(desc || '').toLowerCase();
-  // Базовые палитры по ключевым словам
+  // Базовые палитры по ключевым словам (порядок = приоритет; s в lowercase)
   const palettes = [
-    { keys: ['неон', 'киберпанк', 'cyber', 'neon'],       bg:'#0a0016', accent:'#ff2ec4', accent2:'#00e5ff', dark:true },
-    { keys: ['океан', 'море', 'вода', 'ocean', 'water'],  bg:'#001a2c', accent:'#00c2ff', accent2:'#7dffb2', dark:true },
-    { keys: ['лес', 'природа', 'forest', 'green'],        bg:'#0d1a0f', accent:'#7dff8a', accent2:'#c8ff7d', dark:true },
-    { keys: ['закат', 'огонь', 'sunset', 'fire'],         bg:'#1a0810', accent:'#ff6b3d', accent2:'#ffd23d', dark:true },
-    { keys: ['космос', 'галактика', 'space', 'galaxy'],   bg:'#05061a', accent:'#8a5cff', accent2:'#ff5cf0', dark:true },
-    { keys: ['минимал', 'светл', 'бел', 'light', 'clean'],bg:'#f7f8fb', accent:'#5b7cff', accent2:'#a97dff', dark:false },
-    { keys: ['ретро', 'винтаж', 'retro', 'vintage'],      bg:'#1c1410', accent:'#e8a94b', accent2:'#c96f4a', dark:true },
-    { keys: ['пастел', 'нежн', 'pastel', 'soft'],         bg:'#fdf6f9', accent:'#ff8fb7', accent2:'#a0c8ff', dark:false },
-    { keys: ['готик', 'мрачн', 'gothic', 'dark'],         bg:'#050208', accent:'#a020f0', accent2:'#ff2050', dark:true },
-    { keys: ['золот', 'роскош', 'gold', 'royal'],         bg:'#12100a', accent:'#f5c94b', accent2:'#c9a44a', dark:true },
+    { keys: ['неон', 'киберпанк', 'cyberpunk', 'neon'], bg:'#0a0016', accent:'#ff2ec4', accent2:'#00e5ff', dark:true },
+    { keys: ['красн', 'алый', 'багр', 'вишн', 'гранат', 'red', 'crimson', 'scarlet'], bg:'#1c0a0a', accent:'#ff4d5e', accent2:'#ff9a5c', dark:true },
+    { keys: ['оранж', 'мандарин', 'янтар', 'апельсин', 'orange', 'amber'], bg:'#1a0f05', accent:'#ff8a3d', accent2:'#ffd23d', dark:true },
+    { keys: ['жёлт', 'желт', 'лимон', 'солнц', 'yellow', 'lemon'], bg:'#171204', accent:'#ffd83d', accent2:'#a3e635', dark:true },
+    { keys: ['зелён', 'зелен', 'трав', 'мят', 'лайм', 'изумруд', 'green', 'emerald', 'mint', 'lime'], bg:'#0a1610', accent:'#4ade80', accent2:'#a3e635', dark:true },
+    { keys: ['бирюз', 'аква', 'teal', 'turquoise', 'aqua'], bg:'#04161a', accent:'#2dd4bf', accent2:'#7dffb2', dark:true },
+    { keys: ['голуб', 'небес', 'неба', 'azure', 'sky', 'cyan'], bg:'#061624', accent:'#38bdf8', accent2:'#7dffe3', dark:true },
+    { keys: ['син', 'blue', 'indigo', 'индиго'], bg:'#081226', accent:'#4d7cff', accent2:'#38bdf8', dark:true },
+    { keys: ['океан', 'море', 'вода', 'ocean', 'water', 'морск'], bg:'#001a2c', accent:'#00c2ff', accent2:'#7dffb2', dark:true },
+    { keys: ['фиолет', 'лаванд', 'сирен', 'аметист', 'purple', 'violet', 'lavender', 'lilac'], bg:'#12081f', accent:'#9b6bff', accent2:'#e879f9', dark:true },
+    { keys: ['космос', 'галактика', 'space', 'galaxy', 'вселенн'], bg:'#05061a', accent:'#8a5cff', accent2:'#ff5cf0', dark:true },
+    { keys: ['розов', 'малин', 'pink', 'rose'], bg:'#1c0a14', accent:'#ff6fae', accent2:'#c084fc', dark:true },
+    { keys: ['закат', 'рассвет', 'sunset', 'dawn'], bg:'#1a0810', accent:'#ff6b3d', accent2:'#ffd23d', dark:true },
+    { keys: ['огонь', 'пламя', 'fire', 'flame', 'лава'], bg:'#160505', accent:'#ff5a2e', accent2:'#ffcf3d', dark:true },
+    { keys: ['лес', 'природ', 'forest', 'nature'], bg:'#0d1a0f', accent:'#7dff8a', accent2:'#c8ff7d', dark:true },
+    { keys: ['весн', 'spring'], bg:'#0f1a12', accent:'#86efac', accent2:'#fda4af', dark:true },
+    { keys: ['осен', 'autumn', 'fall'], bg:'#171008', accent:'#e8a94b', accent2:'#d97706', dark:true },
+    { keys: ['зимн', 'winter', 'лёд', 'лед'], bg:'#0a1220', accent:'#93c5fd', accent2:'#e0f2fe', dark:true },
+    { keys: ['корич', 'кофе', 'шоколад', 'корица', 'brown', 'coffee', 'chocolate'], bg:'#161009', accent:'#c08552', accent2:'#e8c39e', dark:true },
+    { keys: ['ретро', 'винтаж', 'retro', 'vintage'], bg:'#1c1410', accent:'#e8a94b', accent2:'#c96f4a', dark:true },
+    { keys: ['готик', 'мрачн', 'gothic', 'noir'], bg:'#050208', accent:'#a020f0', accent2:'#ff2050', dark:true },
+    { keys: ['чёрн', 'черн', 'black', 'уголь'], bg:'#0c0c12', accent:'#8a9bff', accent2:'#5cf0d0', dark:true },
+    { keys: ['серый', 'серая', 'серые', 'сталь', 'silver', 'steel', 'grey', 'gray'], bg:'#10141a', accent:'#9aa8bd', accent2:'#c3cddb', dark:true },
+    { keys: ['пастел', 'нежн', 'pastel', 'soft'], bg:'#fdf6f9', accent:'#ff8fb7', accent2:'#a0c8ff', dark:false },
+    { keys: ['минимал', 'чист', 'minimal', 'clean'], bg:'#f7f8fb', accent:'#5b7cff', accent2:'#a97dff', dark:false },
+    { keys: ['светл', 'бел', 'light', 'white', 'снеж'], bg:'#f5f7fb', accent:'#3b82f6', accent2:'#8b5cf6', dark:false },
+    { keys: ['золот', 'роскош', 'gold', 'royal', 'люкс', 'премиум'], bg:'#12100a', accent:'#f5c94b', accent2:'#c9a44a', dark:true },
+    { keys: ['радуг', 'rainbow', 'разноцв'], bg:'#0d0d18', accent:'#f43f5e', accent2:'#38bdf8', dark:true },
   ];
-  const hit = palettes.find(p => p.keys.some(k => s.includes(k))) || palettes[0];
-  const isDark = hit.dark;
+  const hit = palettes.find(p => p.keys.some(k => s.includes(k)));
+  // Настроение: слова «светлый/тёмный» переопределяют режим
+  const wantsLight = /светл|бел|дневн|light|white/.test(s);
+  const wantsDark = /тёмн|темн|ноч|мрачн|dark|black/.test(s);
   const withAlpha = (hex, a) => {
     const n = parseInt(hex.replace('#',''), 16);
     const r = (n>>16)&255, g = (n>>8)&255, b = n&255;
@@ -2837,30 +2862,81 @@ function generateThemeLocal(desc) {
     const b = Math.max(0, Math.min(255, (n&255) + amt));
     return '#' + ((1<<24) + (r<<16) + (g<<8) + b).toString(16).slice(1);
   };
-  const bg = hit.bg;
+  const hueOf = (hex) => {
+    const n = parseInt(hex.replace('#',''), 16);
+    const r = ((n>>16)&255)/255, g = ((n>>8)&255)/255, b = (n&255)/255;
+    const max = Math.max(r,g,b), min = Math.min(r,g,b), d = max-min;
+    if (!d) return 0;
+    let h;
+    if (max === r) h = ((g-b)/d + 6) % 6;
+    else if (max === g) h = (b-r)/d + 2;
+    else h = (r-g)/d + 4;
+    return (h*60) % 360;
+  };
+  const hslToHex = (h, sat, light) => {
+    const a = sat * Math.min(light, 1 - light);
+    const f = (k) => {
+      const kk = (k + h/30) % 12;
+      const c = light - a * Math.max(-1, Math.min(kk-3, 9-kk, 1));
+      return Math.round(255*c).toString(16).padStart(2, '0');
+    };
+    return '#' + f(0) + f(8) + f(4);
+  };
+  // Прямой hex-код в описании («сделай тему #34bf5e»)
+  const hexMatch = s.match(/#(?:[0-9a-f]{3}|[0-9a-f]{6})\b/i);
+
+  let bg, accent, accent2, isDark;
+  if (hexMatch) {
+    accent = hexMatch[0].toLowerCase();
+    if (accent.length === 4) accent = '#' + accent.slice(1).split('').map(c => c + c).join('');
+    const h = hueOf(accent);
+    isDark = !wantsLight;
+    bg = isDark ? hslToHex(h, 0.32, 0.07) : hslToHex(h, 0.35, 0.96);
+    accent2 = hslToHex((h + 40) % 360, 0.80, 0.60);
+  } else if (hit) {
+    bg = hit.bg; accent = hit.accent; accent2 = hit.accent2;
+    isDark = hit.dark;
+    if (wantsLight && isDark) {
+      isDark = false;
+      bg = hslToHex(hueOf(accent), 0.30, 0.96);
+    } else if (wantsDark && !isDark) {
+      isDark = true;
+      bg = hslToHex(hueOf(accent), 0.32, 0.08);
+    }
+  } else {
+    // Фолбэк: детерминированный хеш описания → уникальный оттенок.
+    // Разные описания дают разные темы — дефолтного «розового» больше нет.
+    let hash = 2166136261;
+    for (let i = 0; i < s.length; i++) { hash ^= s.charCodeAt(i); hash = Math.imul(hash, 16777619); }
+    const h = Math.abs(hash) % 360;
+    isDark = !wantsLight;
+    bg = isDark ? hslToHex(h, 0.30, 0.075) : hslToHex(h, 0.32, 0.96);
+    accent = hslToHex(h, 0.82, 0.62);
+    accent2 = hslToHex((h + 42) % 360, 0.78, 0.60);
+  }
   const text = isDark ? '#f4f6ff' : '#181a20';
   const textSec = isDark ? '#a0a7bd' : '#5a6172';
-  const border = withAlpha(hit.accent, 0.15);
+  const border = withAlpha(accent, 0.15);
   const bgSidebar = isDark ? shift(bg, 8) : shift(bg, -6);
   const bgChat = bg;
   const bgHeader = isDark ? shift(bg, -6) : shift(bg, -10);
   const bgInput = isDark ? shift(bg, 18) : shift(bg, -14);
-  const bgHover = withAlpha(hit.accent, 0.10);
-  const bgActive = withAlpha(hit.accent, 0.22);
-  const bubbleOwnGradient = `linear-gradient(135deg, ${hit.accent} 0%, ${hit.accent2} 100%)`;
-  const bubbleOwnShadow = `0 8px 28px ${withAlpha(hit.accent, 0.30)}, 0 0 0 1px rgba(255,255,255,0.10) inset`;
+  const bgHover = withAlpha(accent, 0.10);
+  const bgActive = withAlpha(accent, 0.22);
+  const bubbleOwnGradient = `linear-gradient(135deg, ${accent} 0%, ${accent2} 100%)`;
+  const bubbleOwnShadow = `0 8px 28px ${withAlpha(accent, 0.30)}, 0 0 0 1px rgba(255,255,255,0.10) inset`;
   const sidebarGradient = `linear-gradient(180deg, ${shift(bg, isDark?14:-4)} 0%, ${bg} 100%)`;
-  const headerGradient = `linear-gradient(90deg, ${shift(bg,-8)} 0%, ${withAlpha(hit.accent,0.10)} 50%, ${shift(bg,-8)} 100%)`;
+  const headerGradient = `linear-gradient(90deg, ${shift(bg,-8)} 0%, ${withAlpha(accent,0.10)} 50%, ${shift(bg,-8)} 100%)`;
   const name = String(desc || 'AI Theme').slice(0, 40) || 'AI Theme';
   return {
     id: 0, // клиент подставит свой
     name: 'AI: ' + name,
-    bg, text, accent: hit.accent,
+    bg, text, accent,
     bgSidebar, bgChat, bgHeader, bgInput,
-    bgBubbleOwn: hit.accent,
+    bgBubbleOwn: accent,
     bgBubbleOther: isDark ? shift(bg, 22) : shift(bg, -12),
     bgHover, bgActive, textSec, border,
-    online: hit.accent2,
+    online: accent2,
     bubbleOwnGradient, bubbleOwnShadow,
     bubbleOtherShadow: isDark ? '0 6px 18px rgba(0,0,0,0.35)' : '0 6px 18px rgba(0,0,0,0.08)',
     sidebarGradient, headerGradient,
