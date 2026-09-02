@@ -111,6 +111,15 @@ const darkTheme = createTheme({
         '@keyframes veraRarityPulse': { '0%,100%': { filter: 'brightness(1)' }, '50%': { filter: 'brightness(1.35)' } },
         '@keyframes veraRaritySpin': { from: { transform: 'rotate(0deg)' }, to: { transform: 'rotate(360deg)' } },
 
+        // ─── Кейфреймы анимированных обводок (магазин) ─────────────────────
+        '@keyframes veraRingHue': { from: { backgroundPosition: '0% 50%' }, to: { backgroundPosition: '300% 50%' } },
+        '@keyframes veraRingAurora': {
+          '0%': { backgroundPosition: '0% 50%' },
+          '50%': { backgroundPosition: '100% 50%' },
+          '100%': { backgroundPosition: '0% 50%' },
+        },
+        '@keyframes veraRingGlowPulse': { '0%,100%': { filter: 'brightness(1)' }, '50%': { filter: 'brightness(1.5)' } },
+
         // ─── Кейфреймы обоев (ChatWallpaper) ─────────────────────────────────
         '@keyframes veraWallpaperDrift': {
           from: { transform: 'translate3d(-4%, -3%, 0) scale(1)' },

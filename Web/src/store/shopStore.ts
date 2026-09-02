@@ -53,6 +53,13 @@ export const SHOP_CATALOG: ShopItem[] = [
   { id: 'ring-glow', category: 'profile', name: 'Неоновое свечение',
     description: 'Светящаяся обводка с мягким glow', applyKey: 'avatarRing',
     value: { type: 'glow', glow: true, color: '#00e5ff' }, previewColor: '#00e5ff' },
+  { id: 'ring-pulse', category: 'profile', name: 'Пульс',
+    description: 'Живое пульсирующее свечение вокруг аватара', applyKey: 'avatarRing',
+    value: { type: 'pulse', color: '#7dffc4' }, previewColor: '#7dffc4', price: 180 },
+  { id: 'ring-aurora', category: 'profile', name: 'Аврора',
+    description: 'Плавно переливающийся градиент северного сияния', applyKey: 'avatarRing',
+    value: { type: 'aurora' },
+    previewColor: 'linear-gradient(90deg,#43e97b,#38f9d7,#4facfe,#a18cd1,#ff4870)', price: 230 },
 
   // ── Кастомная плашка своих сообщений (видна у других) ──────────────────
   { id: 'selfcard-default', category: 'selfcard', name: 'Стандартная плашка',

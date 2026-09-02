@@ -455,6 +455,10 @@ import _vViewSidebar from '@mui/icons-material/ViewSidebar';
 import _vViewSidebarOutlined from '@mui/icons-material/ViewSidebarOutlined';
 import _vViewSidebarRounded from '@mui/icons-material/ViewSidebarRounded';
 import _vViewSidebarSharp from '@mui/icons-material/ViewSidebarSharp';
+import _vVisibility from '@mui/icons-material/Visibility';
+import _vVisibilityOutlined from '@mui/icons-material/VisibilityOutlined';
+import _vVisibilityRounded from '@mui/icons-material/VisibilityRounded';
+import _vVisibilitySharp from '@mui/icons-material/VisibilitySharp';
 import _vVolumeOff from '@mui/icons-material/VolumeOff';
 import _vVolumeOffOutlined from '@mui/icons-material/VolumeOffOutlined';
 import _vVolumeOffRounded from '@mui/icons-material/VolumeOffRounded';
@@ -582,6 +586,7 @@ const MAP: Record<string, Record<string, React.ComponentType<SvgIconProps>>> = {
   Videocam: { filled: _vVideocam, outlined: _vVideocamOutlined, rounded: _vVideocamRounded, sharp: _vVideocamSharp },
   VideocamOff: { filled: _vVideocamOff, outlined: _vVideocamOffOutlined, rounded: _vVideocamOffRounded, sharp: _vVideocamOffSharp },
   ViewSidebar: { filled: _vViewSidebar, outlined: _vViewSidebarOutlined, rounded: _vViewSidebarRounded, sharp: _vViewSidebarSharp },
+  Visibility: { filled: _vVisibility, outlined: _vVisibilityOutlined, rounded: _vVisibilityRounded, sharp: _vVisibilitySharp },
   VolumeOff: { filled: _vVolumeOff, outlined: _vVolumeOffOutlined, rounded: _vVolumeOffRounded, sharp: _vVolumeOffSharp },
   VolumeUp: { filled: _vVolumeUp, outlined: _vVolumeUpOutlined, rounded: _vVolumeUpRounded, sharp: _vVolumeUpSharp },
   Wallpaper: { filled: _vWallpaper, outlined: _vWallpaperOutlined, rounded: _vWallpaperRounded, sharp: _vWallpaperSharp },
@@ -714,6 +719,7 @@ export const UploadFile = make('UploadFile');
 export const Videocam = make('Videocam');
 export const VideocamOff = make('VideocamOff');
 export const ViewSidebar = make('ViewSidebar');
+export const Visibility = make('Visibility');
 export const VolumeOff = make('VolumeOff');
 export const VolumeUp = make('VolumeUp');
 export const Wallpaper = make('Wallpaper');

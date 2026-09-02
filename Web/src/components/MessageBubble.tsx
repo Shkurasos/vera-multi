@@ -15,7 +15,7 @@ import { useChatSettingsStore } from '../store/chatSettingsStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { useCustomEquipStore } from '../store/customEquipStore';
 import { specToStyle, specAnimationClass } from '../utils/customStyle';
-import { buildRingSx, buildPlaqueSx } from '../utils/rarityStyles';
+import { buildPlaqueSx, buildShopRingSx } from '../utils/rarityStyles';
 import { voiceApi } from '../services/api';
 import PlaylistMessageCard, { VeraPlaylistPayload } from './PlaylistMessageCard';
 import ContextMenu from './ContextMenu';
@@ -448,18 +448,8 @@ function MessageBubble({
     transition: 'box-shadow 0.3s ease, border-color 0.3s ease',
   };
   if (ringVal) {
-    if (ringVal.type === 'rarity') {
-      Object.assign(avatarSx, buildRingSx(ringVal.rarity, accent, false));
-    } else if (ringVal.type === 'gradient') {
-      avatarSx.border = '2px solid transparent';
-      avatarSx.backgroundImage = `linear-gradient(${accent + '33'}, ${accent + '33'}), ${ringVal.gradient}`;
-      avatarSx.backgroundOrigin = 'border-box';
-      avatarSx.backgroundClip = 'padding-box, border-box';
-      avatarSx.boxShadow = `0 0 12px ${accent}55`;
-    } else if (ringVal.type === 'glow') {
-      avatarSx.border = `2px solid ${ringVal.color || accent}`;
-      avatarSx.boxShadow = `0 0 14px ${ringVal.color || accent}`;
-    }
+    // Единый стиль обводки из магазина (с анимациями для gradient/glow/pulse/aurora).
+    Object.assign(avatarSx, buildShopRingSx(ringVal, accent, false));
   }
   // Кастомная обводка (spec от авторов) — только для собственной аватарки.
   if (isOwn && customProfileSpec) {

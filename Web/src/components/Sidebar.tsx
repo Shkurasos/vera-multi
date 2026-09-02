@@ -22,7 +22,7 @@ import { useUserSettingsStore } from '../store/userSettingsStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { useCustomEquipStore } from '../store/customEquipStore';
 import { specToStyle } from '../utils/customStyle';
-import { buildRingSx as buildRarityRingSx } from '../utils/rarityStyles';
+import { buildShopRingSx } from '../utils/rarityStyles';
 import { chatsApi, usersApi } from '../services/api';
 import { peer, isPeerAvailable } from '../services/peer';
 import { Chat, User } from '../types';
@@ -78,17 +78,9 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
     const base: Record<string, any> = {
       boxShadow: `0 0 0 2px ${active ? theme.accent + '55' : 'rgba(255,255,255,0.08)'}`,
     };
-    if (ringVal?.type === 'rarity') {
-      Object.assign(base, buildRarityRingSx(ringVal.rarity, theme.accent, active));
-    } else if (ringVal?.type === 'gradient') {
-      base.border = '2px solid transparent';
-      base.backgroundImage = `linear-gradient(${theme.accent + '33'}, ${theme.accent + '33'}), ${ringVal.gradient}`;
-      base.backgroundOrigin = 'border-box';
-      base.backgroundClip = 'padding-box, border-box';
-      base.boxShadow = `0 0 12px ${theme.accent}55`;
-    } else if (ringVal?.type === 'glow') {
-      base.border = `2px solid ${ringVal.color || theme.accent}`;
-      base.boxShadow = `0 0 14px ${ringVal.color || theme.accent}`;
+    if (ringVal) {
+      // Единый стиль обводки из магазина (с анимациями для gradient/glow/pulse/aurora).
+      Object.assign(base, buildShopRingSx(ringVal, theme.accent, active));
     }
     // Кастомный «профиль» от авторов — только для собственной аватарки.
     if (active && customProfileSpec) {

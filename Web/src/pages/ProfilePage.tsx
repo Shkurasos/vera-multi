@@ -24,6 +24,7 @@ import { useProfileCustomizationStore } from '../store/profileCustomizationStore
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { useCustomEquipStore } from '../store/customEquipStore';
 import { specToStyle } from '../utils/customStyle';
+import { buildShopRingSx } from '../utils/rarityStyles';
 
 export default function ProfilePage() {
   const navigate = useNavigate();
@@ -338,16 +339,9 @@ export default function ProfilePage() {
                 bgcolor: theme.accent + '80',
                 border: `4px solid ${theme.accent}`,
                 boxShadow: `0 0 24px ${theme.accent}50`,
-                ...(ringVal?.type === 'gradient' ? {
-                  border: '4px solid transparent',
-                  backgroundImage: `linear-gradient(${theme.accent + '44'}, ${theme.accent + '44'}), ${ringVal.gradient}`,
-                  backgroundOrigin: 'border-box',
-                  backgroundClip: 'padding-box, border-box',
-                  boxShadow: `0 0 26px ${theme.accent}55`,
-                } : {}),
-                ...(ringVal?.type === 'glow' ? {
-                  border: `4px solid ${ringVal.color || theme.accent}`,
-                  boxShadow: `0 0 30px ${ringVal.color || theme.accent}`,
+                ...(ringVal ? {
+                  // Единый стиль обводки из магазина (с анимациями для gradient/glow/pulse/aurora).
+                  ...buildShopRingSx(ringVal, theme.accent, false, 4),
                 } : {}),
                 ...(customProfileSpec ? (() => {
                   const st = specToStyle(customProfileSpec);

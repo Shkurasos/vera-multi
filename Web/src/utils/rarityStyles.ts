@@ -85,6 +85,74 @@ export function buildRingSx(rarity: RarityTier, accent: string, active = false):
   }
 }
 
+/**
+ * Стили обводки аватара из магазина (avatarRing).
+ * Единая точка правды: используется в MessageBubble, Sidebar, ProfilePage,
+ * превью-карточках и «меню обзора» магазина.
+ * Поддерживает: solid (дефолт), gradient (переливающийся), glow (пульс свечения),
+ * pulse (живой пульс), aurora (северное сияние), rarity (линейка редкостей).
+ */
+export function buildShopRingSx(
+  val: any,
+  accent: string,
+  active = false,
+  width = 2,
+): Record<string, any> {
+  const base: Record<string, any> = {
+    transition: 'box-shadow 0.3s ease, border-color 0.3s ease',
+  };
+  if (!val) return base;
+
+  if (val.type === 'rarity') {
+    return buildRingSx(val.rarity, accent, active);
+  }
+  if (val.type === 'gradient') {
+    // Радужный градиент — вращающийся перелив.
+    return {
+      ...base,
+      border: `${width}px solid transparent`,
+      backgroundImage: `linear-gradient(${accent + '33'}, ${accent + '33'}), ${val.gradient || `linear-gradient(90deg,${accent},#ff4870,${accent})`}`,
+      backgroundOrigin: 'border-box',
+      backgroundClip: 'padding-box, border-box',
+      backgroundSize: '300% 100%',
+      boxShadow: active ? `0 0 0 2px ${accent}66` : `0 0 12px ${accent}55`,
+      animation: 'veraRingHue 6s linear infinite',
+    };
+  }
+  if (val.type === 'glow') {
+    const col = val.color || accent;
+    return {
+      ...base,
+      border: `${width}px solid ${col}`,
+      boxShadow: `0 0 16px ${col}`,
+      animation: 'veraRingGlowPulse 2.4s ease-in-out infinite',
+    };
+  }
+  if (val.type === 'pulse') {
+    const col = val.color || accent;
+    return {
+      ...base,
+      border: `${width}px solid ${col}`,
+      boxShadow: `0 0 0 3px ${col}44, 0 0 16px ${col}88`,
+      animation: 'veraRingGlowPulse 1.6s ease-in-out infinite',
+    };
+  }
+  if (val.type === 'aurora') {
+    return {
+      ...base,
+      border: `${width}px solid transparent`,
+      backgroundImage: `linear-gradient(${accent + '33'}, ${accent + '33'}), linear-gradient(90deg, #43e97b, #38f9d7, #4facfe, #a18cd1, #ff4870, #43e97b)`,
+      backgroundOrigin: 'border-box',
+      backgroundClip: 'padding-box, border-box',
+      backgroundSize: '300% 100%',
+      boxShadow: active ? `0 0 0 2px ${accent}66` : `0 0 14px ${accent}66`,
+      animation: 'veraRingAurora 7s linear infinite',
+    };
+  }
+  // solid (классическая обводка по умолчанию)
+  return { ...base, border: `${width}px solid ${accent}`, boxShadow: active ? `0 0 0 2px ${accent}55` : undefined };
+}
+
 
 export function buildPlaqueSx(rarity: RarityTier, accent?: string): Record<string, any> {
   // Цвет плашки всегда следует акценту активной темы; форма — от редкости.

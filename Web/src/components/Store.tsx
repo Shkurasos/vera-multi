@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Box, Typography, IconButton, Button, Chip, CircularProgress, MenuItem, TextField, Dialog, DialogContent, Tooltip } from '@mui/material';
-import { Close, Storefront, Lock, Check, Palette, Wallpaper, Face, AccountCircle, AccountBalanceWallet, Sort, Build } from '@mui/icons-material';
+import { Box, Typography, IconButton, Button, Chip, CircularProgress, MenuItem, TextField, Dialog, DialogContent, Tooltip, Avatar } from '@mui/material';
+import { Close, Storefront, Lock, Check, Palette, Wallpaper, Face, AccountCircle, AccountBalanceWallet, Sort, Build, Visibility } from '@mui/icons-material';
 import QRCode from 'qrcode';
 import { useThemeStore } from '../store/themeStore';
 import { SHOP_CATALOG, ShopCategory, ShopTab, useShopStore, selectShopItem, SHOP_CURRENCY } from '../store/shopStore';
 import { walletApi, creatorApi, CustomItem } from '../services/api';
-import { RARITY_META } from '../utils/rarityStyles';
+import { RARITY_META, buildShopRingSx, buildPlaqueSx } from '../utils/rarityStyles';
 import CustomItemPreview from './CustomItemPreview';
 import Workshop from './Workshop';
 import ChatWallpaper, { WallpaperSpec } from './ChatWallpaper';
@@ -36,6 +36,53 @@ const SORT_LABELS: { id: SortMode; label: string }[] = [
 // Курс и пресеты пополнения (1 USD = 100 ВП — совпадает с сервером).
 const VP_RATE = 100;
 const TOPUP_PRESETS = [50, 100, 300, 700, 1500];
+
+// ── Мини-превью товаров (используются в карточках и в «меню обзора») ─────────
+function selfcardThumbSx(val: any, accent: string): Record<string, any> {
+  const base: Record<string, any> = {
+    fontSize: 11, fontWeight: 700, px: 1, py: 0.5, borderRadius: 1,
+    color: accent, bgcolor: accent + '14', border: `1px solid ${accent}2E`,
+    letterSpacing: 0.4,
+  };
+  if (!val) return base;
+  if (val.type === 'rarity') return buildPlaqueSx(val.rarity, accent);
+  if (val.type === 'gradient') {
+    return { ...base, background: `linear-gradient(90deg, ${accent}, ${accent}80)`, color: '#fff', border: 'none', boxShadow: `0 2px 8px ${accent}44`, fontWeight: 700 };
+  }
+  if (val.type === 'badge') {
+    return { ...base, bgcolor: accent, color: '#fff', border: 'none', borderRadius: 999, px: 1.5 };
+  }
+  return base;
+}
+
+function bubbleThumbSx(val: any, accent: string): Record<string, any> {
+  const base: Record<string, any> = { color: '#fff', fontSize: 12, fontWeight: 600 };
+  if (!val) return base;
+  switch (val.type) {
+    case 'neon':
+      return { ...base, border: `1px solid ${accent}`, boxShadow: `0 0 14px ${accent}aa` };
+    case 'glass':
+      return { ...base, background: 'rgba(255,255,255,0.10)', border: '1px solid rgba(255,255,255,0.22)', backdropFilter: 'blur(8px)' };
+    case 'shadow':
+      return { ...base, boxShadow: '0 10px 24px rgba(0,0,0,0.45)' };
+    case 'gradient':
+      return { ...base, background: val.gradient };
+    case 'minimal':
+      return { ...base, background: 'transparent', border: `1px solid ${accent}66` };
+    case 'retro':
+      return { ...base, background: '#fffde7', color: '#3e3a2a', border: '1px solid #e0d98c' };
+    case 'candy':
+      return { ...base, background: 'linear-gradient(120deg,#f9a8d4,#a5f3fc,#bbf7d0)', color: '#3b1f33' };
+    case 'mono':
+      return { ...base, background: '#161616', border: '1px solid #3d3d3d' };
+    case 'aurora':
+      return { ...base, background: 'linear-gradient(120deg,#43e97b,#38f9d7,#4facfe,#a18cd1)' };
+    case 'cyber':
+      return { ...base, background: '#0d0d1a', border: `1px solid ${accent}`, boxShadow: `0 0 14px ${accent}88` };
+    default:
+      return { ...base, background: `linear-gradient(135deg, ${accent}, ${accent}99)` };
+  }
+}
 
 /**
  * МАГАЗИН (закрытые возможности).
@@ -386,7 +433,7 @@ export default function Store({ onClose }: Props) {
                 )}
                 {/* Превью: обои — живые (движок ChatWallpaper), остальное — статичное */}
                   <Box onClick={(e) => {
-                    if (item.category === 'wallpaper' && owned) {
+                    if (owned) {
                       e.stopPropagation();
                       setPreviewFullscreen(item.id);
                     }
@@ -396,11 +443,43 @@ export default function Store({ onClose }: Props) {
                     border: `1px solid ${theme.border}`,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     filter: owned ? 'none' : 'grayscale(1) blur(0.4px)',
-                    cursor: (item.category === 'wallpaper' && owned) ? 'zoom-in' : 'default',
+                    cursor: owned ? 'zoom-in' : 'default',
                     transition: 'transform 0.15s',
-                    '&:hover': (item.category === 'wallpaper' && owned) ? { transform: 'scale(1.03)', boxShadow: `0 0 0 2px ${theme.accent}44` } : {},
+                    '&:hover': owned ? { transform: 'scale(1.03)', boxShadow: `0 0 0 2px ${theme.accent}44` } : {},
                   }}>
-                    {item.category === 'wallpaper' && item.value && (item.value as { type?: string }).type ? (
+                    {/* Кнопка «Обзор» — открывает меню обзора для любого товара */}
+                    <Tooltip title="Обзор">
+                      <IconButton size="small" onClick={(e) => { e.stopPropagation(); setPreviewFullscreen(item.id); }}
+                        sx={{ position: 'absolute', top: 4, left: 4, zIndex: 3, bgcolor: '#00000066', color: '#fff', width: 26, height: 26, '&:hover': { bgcolor: '#000000aa' } }}>
+                        <Visibility sx={{ fontSize: 15 }} />
+                      </IconButton>
+                    </Tooltip>
+                    {item.category === 'profile' ? (
+                      <Box sx={{
+                        position: 'relative', zIndex: 1,
+                        width: 48, height: 48, borderRadius: '50%', bgcolor: theme.bgHeader,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        ...buildShopRingSx(item.value, theme.accent, false, 3),
+                      }}>
+                        <Typography sx={{ fontSize: 16, fontWeight: 800, color: theme.text }}>V</Typography>
+                      </Box>
+                    ) : item.category === 'selfcard' ? (
+                      <Box sx={{
+                        position: 'relative', zIndex: 1,
+                        ...selfcardThumbSx(item.value, theme.accent),
+                        px: 1.2, py: 0.6, fontSize: 12,
+                      }}>
+                        Вы
+                      </Box>
+                    ) : item.category === 'bubble' ? (
+                      <Box sx={{
+                        position: 'relative', zIndex: 1, maxWidth: '92%',
+                        px: 1.5, py: 0.9, borderRadius: '16px 16px 4px 16px',
+                        ...bubbleThumbSx(item.value, theme.accent),
+                      }}>
+                        Привет! 👋
+                      </Box>
+                    ) : item.category === 'wallpaper' && item.value && (item.value as { type?: string }).type ? (
                       <>
                         <ChatWallpaper spec={item.value as WallpaperSpec} isLight={(() => {
                           const m = String(theme.bg).match(/#([0-9a-f]{6})/i);
@@ -639,30 +718,119 @@ export default function Store({ onClose }: Props) {
           </Typography>
         )}
 
-        {/* Полноэкранный просмотр обоев */}
+        {/* Меню обзора — полноэкранный предпросмотр любого товара */}
         <Dialog open={!!previewFullscreen} onClose={() => setPreviewFullscreen(null)}
           maxWidth={false} PaperProps={{ sx: { bgcolor: '#000', borderRadius: 0, maxWidth: '100vw', maxHeight: '100vh', m: 0 } }}>
           {previewFullscreen && (() => {
             const pItem = SHOP_CATALOG.find(i => i.id === previewFullscreen);
             if (!pItem) return null;
-            const pSpec = pItem.value as WallpaperSpec;
+            const pSpec = pItem.value as any;
             const pOwned = isOwned(pItem.id);
-            const pActive = pItem.id === activeWallpaper;
+            const pActive =
+              (pItem.category === 'profile' && pItem.id === activeRing) ||
+              (pItem.category === 'selfcard' && pItem.id === activeSelfCard) ||
+              (pItem.category === 'wallpaper' && pItem.id === activeWallpaper) ||
+              (pItem.category === 'bubble' && pItem.id === activeBubble);
+            const isWP = pItem.category === 'wallpaper';
+            const catLabel = CATEGORY_META.find(c => c.id === pItem.category)?.label || pItem.category;
             return (
-              <DialogContent sx={{ p: 0, position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden' }}>
-                <ChatWallpaper spec={pSpec} isLight={false} />
+              <DialogContent sx={{ p: 0, position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', bgcolor: isWP ? '#000' : theme.bgChat }}>
+                {isWP ? (
+                  <ChatWallpaper spec={pItem.value as WallpaperSpec} isLight={false} />
+                ) : (
+                  /* Мини-чат — пример применения товара */
+                  <Box sx={{
+                    height: '100%', display: 'flex', flexDirection: 'column',
+                    alignItems: 'center', justifyContent: 'center', gap: 3, p: 4,
+                    backgroundImage: theme.chatPattern || undefined,
+                    backgroundRepeat: 'repeat',
+                  }}>
+                    {pItem.category === 'profile' && (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, textAlign: 'center' }}>
+                        <Avatar sx={{
+                          width: 150, height: 150, fontSize: 52, bgcolor: theme.bgHeader,
+                          ...buildShopRingSx(pSpec, theme.accent, false, 6),
+                        }}>
+                          V
+                        </Avatar>
+                        <Typography sx={{ color: theme.textSec, fontSize: 13 }}>
+                          Так аватар будет выглядеть в чатах и в профиле
+                        </Typography>
+                      </Box>
+                    )}
+                    {pItem.category === 'selfcard' && (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1, maxWidth: 380, width: '100%' }}>
+                        <Typography component="span" sx={{ ...selfcardThumbSx(pSpec, theme.accent), px: 1.4, py: 0.7, fontSize: 13 }}>
+                          Вы
+                        </Typography>
+                        <Box sx={{
+                          maxWidth: '86%',
+                          background: `linear-gradient(135deg, ${theme.accent}, ${theme.accent}bb)`,
+                          color: '#fff', borderRadius: '16px 16px 4px 16px',
+                          px: 2, py: 1.25, fontSize: 14, boxShadow: `0 8px 28px ${theme.accent}44`,
+                        }}>
+                          Привет! Вот так подписаны твои сообщения 🔥
+                        </Box>
+                      </Box>
+                    )}
+                    {pItem.category === 'bubble' && (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, maxWidth: 380, width: '100%' }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                          <Box sx={{
+                            maxWidth: '85%', px: 2.25, py: 1.5, borderRadius: '18px 18px 4px 18px',
+                            ...bubbleThumbSx(pSpec, theme.accent), fontSize: 15, lineHeight: 1.45,
+                            boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
+                          }}>
+                            Привет! Красивый пузырь, правда? 🌈
+                          </Box>
+                        </Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'flex-start' }}>
+                          <Box sx={{
+                            maxWidth: '70%', px: 2, py: 1.25, borderRadius: '18px 18px 18px 4px',
+                            bgcolor: theme.bgBubbleOther, color: theme.text, fontSize: 14,
+                          }}>
+                            Выглядит супер ✨
+                          </Box>
+                        </Box>
+                      </Box>
+                    )}
+                    {pItem.category === 'theme' && (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1.5 }}>
+                        <Box sx={{
+                          width: 96, height: 96, borderRadius: 3,
+                          background: (typeof pItem.previewColor === 'string' && pItem.previewColor.startsWith('linear'))
+                            ? pItem.previewColor
+                            : `radial-gradient(circle at 30% 35%, ${pItem.previewColor || theme.accent}, ${theme.bgChat})`,
+                          boxShadow: `0 0 30px ${theme.accent}55`,
+                        }} />
+                        <Typography sx={{ color: theme.textSec, fontSize: 13 }}>
+                          Режим / вариант темы — включается в настройках
+                        </Typography>
+                      </Box>
+                    )}
+                  </Box>
+                )}
                 <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', background: 'linear-gradient(180deg, #000000aa, transparent)' }}>
                   <Box>
-                    <Typography sx={{ color: '#fff', fontSize: 20, fontWeight: 800 }}>{pItem.name}</Typography>
-                    <Typography sx={{ color: '#fff8', fontSize: 13 }}>{pItem.description}</Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                      <Typography sx={{ color: '#fff', fontSize: 20, fontWeight: 800 }}>{pItem.name}</Typography>
+                      <Chip size="small" label={catLabel} sx={{ bgcolor: '#00000066', color: '#fff', fontSize: 10, height: 20 }} />
+                      {pItem.rarity && (
+                        <Chip size="small" label={RARITY_META[pItem.rarity].label}
+                          sx={{ bgcolor: RARITY_META[pItem.rarity].color + '44', color: '#fff', fontSize: 10, height: 20, border: `1px solid ${RARITY_META[pItem.rarity].color}` }} />
+                      )}
+                    </Box>
+                    <Typography sx={{ color: '#fff8', fontSize: 13, maxWidth: 560 }}>{pItem.description}</Typography>
                   </Box>
                   <IconButton onClick={() => setPreviewFullscreen(null)} sx={{ color: '#fff', bgcolor: '#00000066' }}>
                     <Close />
                   </IconButton>
                 </Box>
                 <Box sx={{ position: 'absolute', bottom: 0, left: 0, right: 0, p: 2, display: 'flex', justifyContent: 'center', gap: 1, background: 'linear-gradient(0deg, #000000aa, transparent)' }}>
-                  {pOwned ? (
-                    <Button variant="contained" onClick={() => { setActiveWallpaper(pActive ? '' : pItem.id); }}
+                  {pItem.category === 'theme' ? (
+                    <Chip size="small" label="Режим темы" sx={{ bgcolor: '#00000088', color: '#fff', fontSize: 11, height: 28 }} />
+                  ) : pOwned ? (
+                    <Button variant="contained" onClick={() => { selectShopItem(pItem.id); }}
                       sx={{ bgcolor: pActive ? '#f44336' : '#fff', color: pActive ? '#fff' : '#000', textTransform: 'none', fontWeight: 700, borderRadius: 999 }}>
                       {pActive ? 'Снять' : 'Надеть'}
                     </Button>
