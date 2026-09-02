@@ -36,7 +36,7 @@ export function useActiveWallpaperSpec(): WallpaperSpec | null {
     // Фото-фон темы имеет приоритет — обои не показываем.
     if (theme.chatBgImage) return null;
     // Кастомные обои от авторов: background → градиентный тип.
-    if (customWallpaper?.background) return { type: 'gradient', gradient: customWallpaper.background };
+    if (customWallpaper?.bg) return { type: 'gradient', gradient: customWallpaper.bg };
     if (!activeWallpaper) return null;
     const item = SHOP_CATALOG.find((i) => i.id === activeWallpaper && i.category === 'wallpaper');
     if (!item || !item.value?.type) return null;

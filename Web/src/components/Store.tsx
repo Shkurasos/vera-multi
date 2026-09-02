@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Box, Typography, IconButton, Button, Chip, CircularProgress, MenuItem, TextField } from '@mui/material';
+import { Box, Typography, IconButton, Button, Chip, CircularProgress, MenuItem, TextField, Dialog, DialogContent, Tooltip } from '@mui/material';
 import { Close, Storefront, Lock, Check, Palette, Wallpaper, Face, AccountCircle, AccountBalanceWallet, Sort, Build } from '@mui/icons-material';
 import QRCode from 'qrcode';
 import { useThemeStore } from '../store/themeStore';
@@ -48,6 +48,7 @@ export default function Store({ onClose }: Props) {
   const [activeCat, setActiveCat] = useState<ShopCategory | 'all'>('all');
   const [sort, setSort] = useState<SortMode>('default');
   const [buyError, setBuyError] = useState('');
+  const [previewFullscreen, setPreviewFullscreen] = useState<string | null>(null);
 
   // ── Топ-ап ВП ──
   const [topupOpen, setTopupOpen] = useState(false);
@@ -292,12 +293,21 @@ export default function Store({ onClose }: Props) {
           ))}
         </Box>
 
-        {/* Пояснение активной категории */}
-        <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 2 }}>
-          {activeCat === 'all'
-            ? 'Выберите категорию, чтобы посмотреть, что предлагает издатель.'
-            : CATEGORY_META.find(c => c.id === activeCat)?.hint}
-        </Typography>
+        {/* Пояснение активной категории + сброс обоев */}
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2, gap: 2 }}>
+          <Typography sx={{ fontSize: 12, color: theme.textSec }}>
+            {activeCat === 'all'
+              ? 'Выберите категорию, чтобы посмотреть, что предлагает издатель.'
+              : CATEGORY_META.find(c => c.id === activeCat)?.hint}
+          </Typography>
+          {activeWallpaper && (
+            <Button size="small" onClick={() => setActiveWallpaper('')}
+              sx={{ color: theme.textSec, borderColor: theme.border, textTransform: 'none', borderRadius: 999, px: 1.5, fontSize: 11, minWidth: 'auto' }}
+              variant="outlined">
+              Сбросить обои
+            </Button>
+          )}
+        </Box>
 
         {/* Сетка товаров */}
         {items.length === 0 ? (
@@ -339,12 +349,20 @@ export default function Store({ onClose }: Props) {
                   </Box>
                 )}
                 {/* Превью: обои — живые (движок ChatWallpaper), остальное — статичное */}
-                  <Box sx={{
+                  <Box onClick={(e) => {
+                    if (item.category === 'wallpaper' && owned) {
+                      e.stopPropagation();
+                      setPreviewFullscreen(item.id);
+                    }
+                  }} sx={{
                     height: 70, borderRadius: 2,
                     position: 'relative', overflow: 'hidden',
                     border: `1px solid ${theme.border}`,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     filter: owned ? 'none' : 'grayscale(1) blur(0.4px)',
+                    cursor: (item.category === 'wallpaper' && owned) ? 'zoom-in' : 'default',
+                    transition: 'transform 0.15s',
+                    '&:hover': (item.category === 'wallpaper' && owned) ? { transform: 'scale(1.03)', boxShadow: `0 0 0 2px ${theme.accent}44` } : {},
                   }}>
                     {item.category === 'wallpaper' && item.value && (item.value as { type?: string }).type ? (
                       <>
@@ -584,6 +602,45 @@ export default function Store({ onClose }: Props) {
             {buyError}
           </Typography>
         )}
+
+        {/* Полноэкранный просмотр обоев */}
+        <Dialog open={!!previewFullscreen} onClose={() => setPreviewFullscreen(null)}
+          maxWidth={false} PaperProps={{ sx: { bgcolor: '#000', borderRadius: 0, maxWidth: '100vw', maxHeight: '100vh', m: 0 } }}>
+          {previewFullscreen && (() => {
+            const pItem = SHOP_CATALOG.find(i => i.id === previewFullscreen);
+            if (!pItem) return null;
+            const pSpec = pItem.value as WallpaperSpec;
+            const pOwned = isOwned(pItem.id);
+            const pActive = pItem.id === activeWallpaper;
+            return (
+              <DialogContent sx={{ p: 0, position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden' }}>
+                <ChatWallpaper spec={pSpec} isLight={false} />
+                <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', background: 'linear-gradient(180deg, #000000aa, transparent)' }}>
+                  <Box>
+                    <Typography sx={{ color: '#fff', fontSize: 20, fontWeight: 800 }}>{pItem.name}</Typography>
+                    <Typography sx={{ color: '#fff8', fontSize: 13 }}>{pItem.description}</Typography>
+                  </Box>
+                  <IconButton onClick={() => setPreviewFullscreen(null)} sx={{ color: '#fff', bgcolor: '#00000066' }}>
+                    <Close />
+                  </IconButton>
+                </Box>
+                <Box sx={{ position: 'absolute', bottom: 0, left: 0, right: 0, p: 2, display: 'flex', justifyContent: 'center', gap: 1, background: 'linear-gradient(0deg, #000000aa, transparent)' }}>
+                  {pOwned ? (
+                    <Button variant="contained" onClick={() => { setActiveWallpaper(pActive ? '' : pItem.id); }}
+                      sx={{ bgcolor: pActive ? '#f44336' : '#fff', color: pActive ? '#fff' : '#000', textTransform: 'none', fontWeight: 700, borderRadius: 999 }}>
+                      {pActive ? 'Снять' : 'Надеть'}
+                    </Button>
+                  ) : (
+                    <Button variant="contained" onClick={() => { handleBuy(pItem.id); setPreviewFullscreen(pItem.id); }}
+                      sx={{ bgcolor: '#fff', color: '#000', textTransform: 'none', fontWeight: 700, borderRadius: 999 }}>
+                      Купить · {pItem.price} {SHOP_CURRENCY}
+                    </Button>
+                  )}
+                </Box>
+              </DialogContent>
+            );
+          })()}
+        </Dialog>
       </Box>
     </Box>
   );
