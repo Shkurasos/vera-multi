@@ -1333,6 +1333,11 @@ function ChatWindowInner() {
                   onScrollToMessage={handleScrollToMessage}
                   accent={theme.accent}
                   themeVersion={themeVersion}
+                  bubbleOwnGradient={theme.bubbleOwnGradient}
+                  bgBubbleOwn={theme.bgBubbleOwn}
+                  bgBubbleOther={theme.bgBubbleOther}
+                  bubbleOwnShadow={theme.bubbleOwnShadow}
+                  bubbleOtherShadow={theme.bubbleOtherShadow}
                 />
               ))}
             </Box>

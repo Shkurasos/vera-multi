@@ -35,6 +35,12 @@ interface Props {
   accent: string;
   /** Версия темы (инкремент при каждом применении) — принудительно перерисовывает пузыри при смене темы. */
   themeVersion: number;
+  /** Фоны пузырей — вынесены в пропсы для реактивности при смене темы. */
+  bubbleOwnGradient?: string;
+  bgBubbleOwn: string;
+  bgBubbleOther: string;
+  bubbleOwnShadow?: string;
+  bubbleOtherShadow?: string;
 }
 
 const REACTION_EMOJIS = ['👍', '❤️', '🔥', '😂', '😮', '😢', '😡', '🎉', '👎', '⭐'];
@@ -284,6 +290,11 @@ function MessageBubble({
   onScrollToMessage,
   accent,
   themeVersion,
+  bubbleOwnGradient,
+  bgBubbleOwn,
+  bgBubbleOther,
+  bubbleOwnShadow,
+  bubbleOtherShadow,
 }: Props) {
   const { user } = useAuthStore();
   const { theme } = useThemeStore();
@@ -529,22 +540,22 @@ function MessageBubble({
           sx={{
             position: 'relative',
             background: isOwn
-              ? theme.bubbleOwnGradient || theme.bgBubbleOwn
-              : theme.bgBubbleOther,
+              ? bubbleOwnGradient || bgBubbleOwn
+              : bgBubbleOther,
             color: shopBubbleText || bubbleTextColor,
             boxShadow: isOwn
-              ? theme.bubbleOwnShadow
-              : theme.bubbleOtherShadow,
+              ? bubbleOwnShadow
+              : bubbleOtherShadow,
             borderRadius: isOwn
               ? `var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) 4px var(--vera-bubble-radius, 16px)`
               : `var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) 4px`,
             px: 1.75, py: 1.25,
-            border: `1px solid ${isOwn ? theme.accent + '28' : theme.border}`,
+            border: `1px solid ${isOwn ? accent + '28' : theme.border}`,
             backdropFilter: 'blur(18px)',
             transition: `background 220ms ${motion.easeOut}, transform 220ms ${motion.spring}, box-shadow 220ms ${motion.easeOut}`,
             transform: isHovered ? 'translateY(-2px)' : 'translateY(0)',
             ...(isOwn
-              ? { boxShadow: `${theme.bubbleOwnShadow || ''}, 0 0 0 1px ${theme.accent}18 inset` }
+              ? { boxShadow: `${bubbleOwnShadow || ''}, 0 0 0 1px ${accent}18 inset` }
               : {}),
             // Кастомный «пузырь» от авторов — перекрывает базовый стиль (только для своих).
             // Стиль пузырей из магазина — между темой и кастомом авторов.
