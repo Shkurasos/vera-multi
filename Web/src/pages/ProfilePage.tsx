@@ -6,7 +6,7 @@ import {
 } from '@mui/material';
 import {
   ArrowBack, Edit, PhotoCamera, Check, Close,
-  Phone, Cake, Info, LocationOn, Palette, QrCode2, ContentCopy, Settings, Storefront,
+  Phone, Cake, Info, LocationOn, Palette, QrCode2, ContentCopy, Settings, Storefront, Inventory2,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
@@ -405,41 +405,37 @@ export default function ProfilePage() {
           </Box>
         )}
 
-        {/* ── Косметика из магазина VERA ── */}
+        {/* ── Косметика из магазина VERA: минималистичные Инвентарь / Магазин ── */}
         <Box sx={{
           mt: 2, maxWidth: 480, width: '100%',
-          display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 1,
+          display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1,
         }}>
-          {[
-            { label: 'Обводка', item: SHOP_CATALOG.find(i => i.id === useShopStore.getState().activeRing), tab: 'inventory' as const },
-            { label: 'Плашка', item: SHOP_CATALOG.find(i => i.id === useShopStore.getState().activeSelfCard), tab: 'inventory' as const },
-            { label: 'Магазин', item: null as any, action: true, tab: 'shop' as const },
-          ].map((c, i) => (
-            <Box key={i}
+          {([
+            { label: 'Инвентарь', hint: 'Моя косметика', icon: <Inventory2 sx={{ fontSize: 19 }} />, tab: 'inventory' as const },
+            { label: 'Магазин', hint: 'Новинки VERA', icon: <Storefront sx={{ fontSize: 19 }} />, tab: 'shop' as const },
+          ]).map((c) => (
+            <Box key={c.label}
               onClick={() => { useShopStore.getState().setTab(c.tab); useShopStore.getState().setOpen(true); }}
               sx={{
-                p: 1.2, borderRadius: 2, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 1.2,
+                px: 1.5, py: 1.2, borderRadius: 2.5, cursor: 'pointer',
                 bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
-                textAlign: 'center',
-                '&:hover': { borderColor: theme.accent + '88' },
+                transition: 'border-color .25s cubic-bezier(.16,1,.3,1), background .25s cubic-bezier(.16,1,.3,1), transform .25s cubic-bezier(.34,1.56,.64,1)',
+                '&:hover': { borderColor: theme.accent + '66', transform: 'translateY(-1px)' },
+                '&:active': { transform: 'scale(.98)' },
               }}>
               <Box sx={{
-                mx: 'auto', mb: 0.5, width: 36, height: 36, borderRadius: '50%',
-                background: c.action
-                  ? `linear-gradient(135deg, ${theme.accent}, #ff4fd8)`
-                  : (c.item?.previewColor && String(c.item.previewColor).startsWith('linear'))
-                    ? String(c.item?.previewColor)
-                    : theme.bgInput,
-                border: `2px solid ${theme.accent}66`,
+                width: 34, height: 34, borderRadius: 2, flexShrink: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: '#fff', fontWeight: 700, fontSize: 14,
+                bgcolor: theme.bgInput, border: `1px solid ${theme.border}`,
+                color: theme.accent,
               }}>
-                {c.action ? <Storefront sx={{ fontSize: 18 }} /> : 'V'}
+                {c.icon}
               </Box>
-              <Typography sx={{ fontSize: 11, color: theme.textSec }}>{c.label}</Typography>
-              <Typography sx={{ fontSize: 11, color: theme.text, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {c.action ? 'Открыть' : (c.item?.name || '—')}
-              </Typography>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography sx={{ fontSize: 13, color: theme.text, fontWeight: 600, lineHeight: 1.2 }}>{c.label}</Typography>
+                <Typography sx={{ fontSize: 11, color: theme.textSec, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.hint}</Typography>
+              </Box>
             </Box>
           ))}
         </Box>

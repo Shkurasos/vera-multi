@@ -388,22 +388,27 @@ function MessageBubble({
   }
 
   // ─── «Плашка» своих сообщений (вид у других) ────────────────────────
+  // Базовый стиль всегда следует теме (акцент + фоны темы), никаких фиксированных цветов.
   const selfPlaqueSx: Record<string, any> = {
     fontSize: 11, lineHeight: 1, px: 0.6, py: 0.4, borderRadius: 1,
-    color: theme.textSec, bgcolor: theme.bgHover, fontWeight: 600,
-    ...((theme as any).bgBubbleOther ? {} : {}),
+    color: theme.accent, bgcolor: theme.accent + '14',
+    border: `1px solid ${theme.accent}2E`,
+    fontWeight: 600,
   };
   const selfVal = selfCardItem?.value;
   if (selfVal) {
     if (selfVal.type === 'rarity') {
       Object.assign(selfPlaqueSx, buildPlaqueSx(selfVal.rarity, theme.accent));
     } else if (selfVal.type === 'gradient') {
-      selfPlaqueSx.background = selfVal.gradient;
+      // Градиентная плашка строится из текущего акцента темы — под тему, а не фиксированный цвет.
+      selfPlaqueSx.background = `linear-gradient(90deg, ${theme.accent}, ${theme.accent}80)`;
       selfPlaqueSx.color = '#fff';
-      selfPlaqueSx.boxShadow = `0 2px 8px rgba(0,0,0,0.25)`;
+      selfPlaqueSx.border = 'none';
+      selfPlaqueSx.boxShadow = `0 2px 8px ${theme.accent}44`;
     } else if (selfVal.type === 'badge') {
       selfPlaqueSx.bgcolor = theme.accent;
       selfPlaqueSx.color = '#fff';
+      selfPlaqueSx.border = 'none';
       selfPlaqueSx.borderRadius = 999;
       selfPlaqueSx.px = 0.8;
     }

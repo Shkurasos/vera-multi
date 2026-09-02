@@ -259,6 +259,30 @@ const darkTheme = createTheme({
           transition: 'transform .32s cubic-bezier(.34,1.56,.64,1)',
         },
 
+        // ─── Контролы MUI следуют акценту активной темы (CSS-переменные из App.tsx) ───
+        '.MuiSlider-root': {
+          '& .MuiSlider-thumb': {
+            backgroundColor: 'var(--vera-accent, #00E5FF)',
+            transition: 'box-shadow .25s cubic-bezier(.16,1,.3,1), background-color .25s ease',
+          },
+          '& .MuiSlider-thumb:hover, & .MuiSlider-thumb.Mui-focusVisible': {
+            boxShadow: '0 0 0 8px var(--vera-accent-soft, rgba(0,229,255,.2))',
+          },
+          '& .MuiSlider-track': { backgroundColor: 'var(--vera-accent, #00E5FF)', border: 'none' },
+          '& .MuiSlider-rail': { opacity: 0.22 },
+          '& .MuiSlider-mark.MuiSlider-markActive': { backgroundColor: 'var(--vera-accent, #00E5FF)' },
+          '& .MuiSlider-valueLabel': { backgroundColor: 'var(--vera-accent, #00E5FF)' },
+        },
+        '.MuiSwitch-switchBase.Mui-checked': { color: 'var(--vera-accent, #00E5FF)' },
+        '.MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: 'var(--vera-accent, #00E5FF)' },
+        '.MuiCheckbox-root.Mui-checked': { color: 'var(--vera-accent, #00E5FF)' },
+        '.MuiRadio-root.Mui-checked': { color: 'var(--vera-accent, #00E5FF)' },
+        '.MuiLinearProgress-root .MuiLinearProgress-bar': { backgroundColor: 'var(--vera-accent, #00E5FF)' },
+        '.MuiTabs-indicator': { backgroundColor: 'var(--vera-accent, #00E5FF)' },
+        '.MuiTab-root.Mui-selected': { color: 'var(--vera-accent, #00E5FF)' },
+        '.MuiFormLabel-root.Mui-focused': { color: 'var(--vera-accent, #00E5FF)' },
+        '.MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: 'var(--vera-accent, #00E5FF)' },
+
         // ─── Системный reduced-motion: глушим всё ─────────────────────────
         '@media (prefers-reduced-motion: reduce)': {
           '*, *::before, *::after': {
@@ -276,7 +300,7 @@ const darkTheme = createTheme({
         '#root': { width: '100%', maxWidth: '100%', minHeight: '100vh', overflowX: 'hidden' },
         '*': { boxSizing: 'border-box' },
         '*::-webkit-scrollbar': { width: 8, height: 8 },
-        '*::-webkit-scrollbar-thumb': { background: 'rgba(0,229,255,.32)', borderRadius: 999 },
+        '*::-webkit-scrollbar-thumb': { background: 'var(--vera-accent-soft, rgba(0,229,255,.32))', borderRadius: 999 },
         '*::-webkit-scrollbar-track': { background: 'transparent' },
 
         // ─── UI-стили из настроек ────────────────────────────────────────

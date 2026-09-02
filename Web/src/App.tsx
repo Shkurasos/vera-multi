@@ -25,6 +25,7 @@ import CallAudioSink from './components/CallAudioSink';
 import { bindSocketHandlers as bindCallHandlers } from './services/callPeers';
 import { peer, isPeerAvailable } from './services/peer';
 import { useUserSettingsStore } from './store/userSettingsStore';
+import { useThemeStore } from './store/themeStore';
 import { useShopStore } from './store/shopStore';
 import { useCustomEquipStore } from './store/customEquipStore';
 import Store, { StoreOpen } from './components/Store';
@@ -348,11 +349,22 @@ export default function App() {
   // Применяем глобальные настройки внешнего вида: яркость и масштаб текста.
   const brightness = useUserSettingsStore((s) => s.brightness);
   const textScale = useUserSettingsStore((s) => s.textScale);
+  const appTheme = useThemeStore((s) => s.theme);
   useEffect(() => {
     document.body.style.filter = brightness === 1 ? '' : `brightness(${brightness})`;
     document.documentElement.style.setProperty('--vera-text-scale', String(textScale));
     document.documentElement.style.fontSize = `${16 * textScale}px`;
   }, [brightness, textScale]);
+
+  // Текущая тема как CSS-переменные: слайдеры, свитчи, прогресс-бары и фокус
+  // полей ввода следуют акценту темы (см. глобальные стили в main.tsx).
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--vera-accent', appTheme.accent);
+    root.style.setProperty('--vera-accent-soft', appTheme.accent + '33');
+    root.style.setProperty('--vera-text', appTheme.text);
+    root.style.setProperty('--vera-text-sec', appTheme.textSec);
+  }, [appTheme.accent, appTheme.text, appTheme.textSec]);
 
   // Подгружаем каталог кастомных предметов (от авторов) один раз после авторизации.
   useEffect(() => {
