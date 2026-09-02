@@ -44,7 +44,8 @@ const TOPUP_PRESETS = [50, 100, 300, 700, 1500];
  */
 export default function Store({ onClose }: Props) {
   const { theme } = useThemeStore();
-  const { enabled, activeRing, activeSelfCard, isOwned, purchase, balanceVp, loadWallet, tab, setTab } = useShopStore();
+  const { enabled, activeRing, activeSelfCard, activeBubble, isOwned, purchase, balanceVp, loadWallet, tab, setTab } = useShopStore();
+  const { setActiveRing, setActiveSelfCard, setActiveWallpaper, setActiveBubble } = useShopStore();
   const [activeCat, setActiveCat] = useState<ShopCategory | 'all'>('all');
   const [sort, setSort] = useState<SortMode>('default');
   const [buyError, setBuyError] = useState('');
@@ -308,6 +309,41 @@ export default function Store({ onClose }: Props) {
             </Button>
           )}
         </Box>
+
+        {/* Секция «Экипировано» — сброс активных скинов */}
+        {tab === 'inventory' && (activeRing || activeSelfCard || activeWallpaper || activeBubble) && (
+          <Box sx={{ mb: 2, p: 1.5, bgcolor: theme.bgHover, borderRadius: 2, border: `1px solid ${theme.border}` }}>
+            <Typography sx={{ fontSize: 11, fontWeight: 700, color: theme.textSec, mb: 1, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              Экипировано
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+              {activeRing && (
+                <Button size="small" variant="outlined" onClick={() => setActiveRing('')}
+                  sx={{ borderColor: theme.accent, color: theme.text, textTransform: 'none', borderRadius: 999, px: 1.5, fontSize: 11, minHeight: 28 }}>
+                  Обводка ✕
+                </Button>
+              )}
+              {activeSelfCard && (
+                <Button size="small" variant="outlined" onClick={() => setActiveSelfCard('')}
+                  sx={{ borderColor: theme.accent, color: theme.text, textTransform: 'none', borderRadius: 999, px: 1.5, fontSize: 11, minHeight: 28 }}>
+                  Плашка ✕
+                </Button>
+              )}
+              {activeWallpaper && (
+                <Button size="small" variant="outlined" onClick={() => setActiveWallpaper('')}
+                  sx={{ borderColor: theme.accent, color: theme.text, textTransform: 'none', borderRadius: 999, px: 1.5, fontSize: 11, minHeight: 28 }}>
+                  Обои ✕
+                </Button>
+              )}
+              {activeBubble && (
+                <Button size="small" variant="outlined" onClick={() => setActiveBubble('')}
+                  sx={{ borderColor: theme.accent, color: theme.text, textTransform: 'none', borderRadius: 999, px: 1.5, fontSize: 11, minHeight: 28 }}>
+                  Пузыри ✕
+                </Button>
+              )}
+            </Box>
+          </Box>
+        )}
 
         {/* Сетка товаров */}
         {items.length === 0 ? (

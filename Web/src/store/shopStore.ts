@@ -271,14 +271,20 @@ export interface ShopState {
   mergeOwned: (ids: string[]) => void;
 }
 
-/** Кладёт активный выбор по категории: если это profile/selfcard — фиксирует его. */
+/** Кладёт активный выбор по категории. Повторный клик по активному — снимает (сброс на дефолт). */
 export function selectShopItem(id: string): void {
   const item = SHOP_CATALOG.find(i => i.id === id);
   if (!item) return;
-  if (item.category === 'profile') useShopStore.getState().setActiveRing(id);
-  else if (item.category === 'selfcard') useShopStore.getState().setActiveSelfCard(id);
-  else if (item.category === 'wallpaper') useShopStore.getState().setActiveWallpaper(id);
-  else if (item.category === 'bubble') useShopStore.getState().setActiveBubble(id);
+  const s = useShopStore.getState();
+  if (item.category === 'profile') {
+    s.setActiveRing(s.activeRing === id ? '' : id);
+  } else if (item.category === 'selfcard') {
+    s.setActiveSelfCard(s.activeSelfCard === id ? '' : id);
+  } else if (item.category === 'wallpaper') {
+    s.setActiveWallpaper(s.activeWallpaper === id ? '' : id);
+  } else if (item.category === 'bubble') {
+    s.setActiveBubble(s.activeBubble === id ? '' : id);
+  }
 }
 
 export const useShopStore = create<ShopState>()(
