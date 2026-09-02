@@ -8,6 +8,7 @@ import { walletApi, creatorApi, CustomItem } from '../services/api';
 import { RARITY_META } from '../utils/rarityStyles';
 import CustomItemPreview from './CustomItemPreview';
 import Workshop from './Workshop';
+import ChatWallpaper, { WallpaperSpec } from './ChatWallpaper';
 import { useCustomEquipStore } from '../store/customEquipStore';
 
 interface Props {
@@ -337,27 +338,47 @@ export default function Store({ onClose }: Props) {
                     <Lock sx={{ fontSize: 12 }} />
                   </Box>
                 )}
-                {/* Превью */}
-                <Box sx={{
-                  height: 70, borderRadius: 2,
-                  background: item.previewColor
-                    ? (item.previewColor.startsWith('linear') ? item.previewColor
-                      : `radial-gradient(circle at 30% 40%, ${item.previewColor}, ${theme.bgSidebar || theme.bg})`)
-                    : `linear-gradient(135deg, ${theme.bgInput}, ${theme.bgChat})`,
-                  border: `1px solid ${theme.border}`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  filter: owned ? 'none' : 'grayscale(1) blur(0.4px)',
-                }}>
-                  <Typography sx={{
-                    width: 44, height: 44, borderRadius: '50%',
+                {/* Превью: обои — живые (движок ChatWallpaper), остальное — статичное */}
+                  <Box sx={{
+                    height: 70, borderRadius: 2,
+                    position: 'relative', overflow: 'hidden',
+                    border: `1px solid ${theme.border}`,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 18, fontWeight: 700, color: theme.text,
-                    background: item.previewColor && item.previewColor.startsWith('linear')
-                      ? item.previewColor : theme.bgHeader,
-                    border: item.previewColor && !item.previewColor.startsWith('linear')
-                      ? `4px solid ${item.previewColor}` : `2px solid ${theme.border}`,
-                  }}>V</Typography>
-                </Box>
+                    filter: owned ? 'none' : 'grayscale(1) blur(0.4px)',
+                  }}>
+                    {item.category === 'wallpaper' && item.value && (item.value as { type?: string }).type ? (
+                      <>
+                        <ChatWallpaper spec={item.value as WallpaperSpec} isLight={(() => {
+                          const m = String(theme.bg).match(/#([0-9a-f]{6})/i);
+                          if (!m) return false;
+                          const v = parseInt(m[1], 16);
+                          return ((v >> 16 & 255) * 299 + (v >> 8 & 255) * 587 + (v & 255) * 114) / 1000 > 140;
+                        })()} />
+                        <Box sx={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 40%, #00000055)' }} />
+                      </>
+                    ) : (
+                      <>
+                        <Box sx={{
+                          position: 'absolute', inset: 0,
+                          background: item.previewColor
+                            ? (item.previewColor.startsWith('linear') ? item.previewColor
+                              : `radial-gradient(circle at 30% 40%, ${item.previewColor}, ${theme.bgSidebar || theme.bg})`)
+                            : `linear-gradient(135deg, ${theme.bgInput}, ${theme.bgChat})`,
+                        }} />
+                        <Typography sx={{
+                          position: 'relative', zIndex: 1,
+                          width: 44, height: 44, borderRadius: '50%',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: 18, fontWeight: 700, color: theme.text,
+                          background: item.previewColor && item.previewColor.startsWith('linear')
+                            ? item.previewColor : theme.bgHeader,
+                          border: item.previewColor && !item.previewColor.startsWith('linear')
+                            ? `4px solid ${item.previewColor}` : `2px solid ${theme.border}`,
+                          boxShadow: '0 4px 16px #00000055',
+                        }}>V</Typography>
+                      </>
+                    )}
+                  </Box>
                 <Box>
                   <Typography sx={{ fontSize: 15, fontWeight: 700 }}>{item.name}</Typography>
                   {item.rarity && (

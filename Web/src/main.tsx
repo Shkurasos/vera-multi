@@ -133,6 +133,11 @@ const darkTheme = createTheme({
           from: { opacity: 0, transform: 'translateY(6px) scale(.985)' },
           to: { opacity: 1, transform: 'translateY(0) scale(1)' },
         },
+        '@keyframes veraAuroraShift': {
+          '0%': { backgroundPosition: '0% 50%' },
+          '50%': { backgroundPosition: '100% 50%' },
+          '100%': { backgroundPosition: '0% 50%' },
+        },
         '@keyframes veraFadeOnly': {
           from: { opacity: 0 },
           to: { opacity: 1 },

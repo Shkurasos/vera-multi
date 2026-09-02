@@ -255,6 +255,9 @@ export interface ShopState {
   /** id выбранных умных обоев ('' = выключено, т.е. без смарт-обоев). */
   activeWallpaper: string;
   setActiveWallpaper: (id: string) => void;
+  /** id выбранного стиля пузырей ('' = стандартные пузыри темы). */
+  activeBubble: string;
+  setActiveBubble: (id: string) => void;
 
   purchase: (id: string) => Promise<void>;
   isOwned: (id: string) => boolean;
@@ -275,6 +278,7 @@ export function selectShopItem(id: string): void {
   if (item.category === 'profile') useShopStore.getState().setActiveRing(id);
   else if (item.category === 'selfcard') useShopStore.getState().setActiveSelfCard(id);
   else if (item.category === 'wallpaper') useShopStore.getState().setActiveWallpaper(id);
+  else if (item.category === 'bubble') useShopStore.getState().setActiveBubble(id);
 }
 
 export const useShopStore = create<ShopState>()(
@@ -305,6 +309,8 @@ export const useShopStore = create<ShopState>()(
         setActiveSelfCard: (id) => set({ activeSelfCard: id }),
         activeWallpaper: '',
         setActiveWallpaper: (id) => set({ activeWallpaper: id }),
+        activeBubble: '',
+        setActiveBubble: (id) => set({ activeBubble: id }),
         purchase: async (id) => {
           const item = SHOP_CATALOG.find(i => i.id === id);
           if (!item) return;
@@ -346,6 +352,7 @@ export const useShopStore = create<ShopState>()(
         activeRing: s.activeRing,
         activeSelfCard: s.activeSelfCard,
         activeWallpaper: s.activeWallpaper,
+        activeBubble: s.activeBubble,
         owned: s.owned,
         balanceVp: s.balanceVp,
       }) }

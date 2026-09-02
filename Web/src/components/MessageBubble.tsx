@@ -289,6 +289,8 @@ function MessageBubble({
   const shopActiveSelfCard = useShopStore((s) => s.activeSelfCard);
   const ringItem = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === shopActiveRing);
   const selfCardItem = SHOP_CATALOG.find(i => i.applyKey === 'selfCard' && i.id === shopActiveSelfCard);
+  const shopActiveBubble = useShopStore((s) => s.activeBubble);
+  const bubbleItem = SHOP_CATALOG.find(i => i.applyKey === 'bubbleStyle' && i.id === shopActiveBubble);
 
   // Кастомные предметы от авторов (перебивают выбор из фиксированного каталога).
   const customProfileSpec = useCustomEquipStore((s) => s.equipped.profile ? s.items[s.equipped.profile]?.spec : undefined);
@@ -356,6 +358,67 @@ function MessageBubble({
   };
 
   const bubbleTextColor = isOwn ? (theme.bubbleOwnText || '#fff') : theme.text;
+
+  // ── Стиль пузырей из магазина (перебивает тему; кастом авторов перебивает магазин) ──
+  const shopBubbleVal = isOwn ? (bubbleItem?.value as any) : undefined;
+  const shopBubbleSx: Record<string, any> = {};
+  let shopBubbleText: string | undefined;
+  if (shopBubbleVal) {
+    const t = shopBubbleVal.type;
+    if (t === 'neon') {
+      shopBubbleSx.boxShadow = `0 0 14px ${theme.accent}aa, 0 0 34px ${theme.accent}55`;
+      shopBubbleSx.border = `1px solid ${theme.accent}`;
+    } else if (t === 'glass') {
+      shopBubbleSx.background = 'rgba(255,255,255,0.10)';
+      shopBubbleSx.backdropFilter = 'blur(24px) saturate(160%)';
+      shopBubbleSx.border = '1px solid rgba(255,255,255,0.22)';
+      shopBubbleSx.boxShadow = '0 8px 32px rgba(0,0,0,0.18)';
+    } else if (t === 'shadow') {
+      shopBubbleSx.boxShadow = '0 14px 34px rgba(0,0,0,0.38), 0 4px 10px rgba(0,0,0,0.22)';
+      shopBubbleSx.transform = isHovered ? 'translateY(-3px)' : 'translateY(0)';
+    } else if (t === 'gradient') {
+      shopBubbleSx.background = shopBubbleVal.gradient;
+      shopBubbleSx.border = 'none';
+      shopBubbleSx.boxShadow = '0 6px 18px rgba(0,0,0,0.25)';
+      shopBubbleText = '#fff';
+    } else if (t === 'minimal') {
+      shopBubbleSx.background = 'transparent';
+      shopBubbleSx.border = `1px solid ${theme.border}`;
+      shopBubbleSx.boxShadow = 'none';
+      shopBubbleSx.backdropFilter = 'none';
+    } else if (t === 'rounded') {
+      shopBubbleSx.borderRadius = 24;
+    } else if (t === 'sharp') {
+      shopBubbleSx.borderRadius = 2;
+    } else if (t === 'retro') {
+      shopBubbleSx.background = '#fffde7';
+      shopBubbleSx.border = '1px solid #e0d98c';
+      shopBubbleText = '#3e3a2a';
+    } else if (t === 'candy') {
+      let h = 0; for (let i = 0; i < message.id.length; i++) h = (h * 31 + message.id.charCodeAt(i)) >>> 0;
+      const pastels = ['#fbcfe8', '#a5f3fc', '#bbf7d0', '#fde68a', '#ddd6fe', '#fecaca', '#c7d2fe'];
+      const c = pastels[h % pastels.length];
+      shopBubbleSx.background = c;
+      shopBubbleSx.border = `1px solid ${c}`;
+      shopBubbleText = '#1f2937';
+    } else if (t === 'mono') {
+      shopBubbleSx.background = '#161616';
+      shopBubbleSx.border = '1px solid #3d3d3d';
+      shopBubbleSx.boxShadow = '0 6px 16px rgba(0,0,0,0.35)';
+      shopBubbleText = '#f5f5f5';
+    } else if (t === 'aurora') {
+      shopBubbleSx.background = 'linear-gradient(120deg,#43e97b,#38f9d7,#4facfe,#a18cd1,#43e97b)';
+      shopBubbleSx.backgroundSize = '300% 300%';
+      shopBubbleSx.animation = 'veraAuroraShift 8s ease infinite';
+      shopBubbleSx.border = 'none';
+      shopBubbleText = '#06283d';
+    } else if (t === 'cyber') {
+      shopBubbleSx.background = 'rgba(13,13,26,0.92)';
+      shopBubbleSx.border = '1px solid #00f0ff';
+      shopBubbleSx.boxShadow = '0 0 10px rgba(0,240,255,0.35), inset 0 0 14px rgba(0,240,255,0.12)';
+      shopBubbleText = '#e8fdff';
+    }
+  }
 
   // ── Обводка аватара из магазина ──────────────────────────────────────
   const ringVal = ringItem?.value as any;
@@ -462,7 +525,7 @@ function MessageBubble({
             background: isOwn
               ? theme.bubbleOwnGradient || theme.bgBubbleOwn
               : theme.bgBubbleOther,
-            color: bubbleTextColor,
+            color: shopBubbleText || bubbleTextColor,
             boxShadow: isOwn
               ? theme.bubbleOwnShadow
               : theme.bubbleOtherShadow,
@@ -478,6 +541,8 @@ function MessageBubble({
               ? { boxShadow: `${theme.bubbleOwnShadow || ''}, 0 0 0 1px ${theme.accent}18 inset` }
               : {}),
             // Кастомный «пузырь» от авторов — перекрывает базовый стиль (только для своих).
+            // Стиль пузырей из магазина — между темой и кастомом авторов.
+            ...(isOwn ? shopBubbleSx : {}),
             ...(isOwn && customBubbleSpec ? specToStyle(customBubbleSpec) : {}),
           }}
         >

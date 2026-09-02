@@ -35,6 +35,7 @@ import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { useCustomEquipStore } from '../store/customEquipStore';
 import { specToStyle, specAnimationClass } from '../utils/customStyle';
 import { saveLiveBg, loadLiveBgUrl, clearLiveBg, hasLiveBg } from '../services/chatLiveBgStorage';
+import ChatWallpaper, { type WallpaperSpec } from './ChatWallpaper';
 
 // ── ErrorBoundary ─────────────────────────────────────────────────────────────
 class ChatErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
@@ -598,18 +599,13 @@ function ChatWindowInner() {
     if (!smartWpActiveId) return undefined;
     const it = SHOP_CATALOG.find((i) => i.id === smartWpActiveId && i.applyKey === 'smartWallpaper');
     if (!it) return undefined;
-    // Проверяем, что товар действительно в инвентаре (куплен или бесплатный)
-    if (it.price && it.price > 0 && !smartWpOwned[it.id]) return undefined;
+    // Проверяем владение через единый isOwned (учитывает dev-режим и серверные покупки).
+    if (!useShopStore.getState().isOwned(it.id)) return undefined;
     return it;
   }, [smartWpActiveId, smartWpOwned]);
-  const smartWpGradient = React.useMemo(() => {
-    if (!smartWpItem || smartWpItem.value?.type !== 'time') return null;
-    const h = new Date().getHours();
-    if (h < 6) return 'linear-gradient(135deg,#0b1026 0%,#161a3f 60%,#3a1f5c 100%)';
-    if (h < 11) return 'linear-gradient(135deg,#ffd6a5 0%,#ffb480 50%,#ff8caa 100%)';
-    if (h < 17) return 'linear-gradient(135deg,#7ec8ff 0%,#a5e3ff 50%,#e0f4ff 100%)';
-    if (h < 21) return 'linear-gradient(135deg,#ff9068 0%,#ff5f6d 50%,#4b1248 100%)';
-    return 'linear-gradient(135deg,#0b1026 0%,#20124d 60%,#1a1a2e 100%)';
+  const smartWpSpec = React.useMemo<WallpaperSpec | null>(() => {
+    if (!smartWpItem || !smartWpItem.value?.type) return null;
+    return { type: smartWpItem.value.type as WallpaperSpec['type'], gradient: smartWpItem.value.gradient };
   }, [smartWpItem]);
 
   // Кастомные обои от авторов (перебивают smart-обои).
@@ -670,6 +666,13 @@ function ChatWindowInner() {
   const chatName = getChatName();
   const chatAvatar = getChatAvatar();
   const partnerOnline = getPartnerOnline();
+  const isLightTheme = (() => {
+    const m = String(theme.bg).match(/#([0-9a-f]{6})/i);
+    if (!m) return false;
+    const v = parseInt(m[1], 16);
+    const r = (v >> 16) & 255, g = (v >> 8) & 255, b = v & 255;
+    return (r * 299 + g * 587 + b * 114) / 1000 > 140;
+  })();
 
   return (
     <Box sx={{ display: 'flex', height: '100%', overflow: 'hidden', background: theme.bgChat, position: 'relative', perspective: 1200 }}>
@@ -721,17 +724,24 @@ function ChatWindowInner() {
           </Alert>
         </Snackbar>
 
-        {/* ── Умные обои / персональная тема чата (базовый цветной слой) ── */}
-        {(smartWpGradient || chatThemeOverride?.bg || customWallpaperSpec) && !liveBgUrl && !theme.chatBgImage && (
+        {/* ── Обои чата: smart-обои (движок) → кастом авторов → персональная тема → живые → фото ── */}
+        {smartWpSpec && !customWallpaperSpec && !liveBgUrl && !theme.chatBgImage && (
+          <Box sx={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none', overflow: 'hidden' }}>
+            <ChatWallpaper spec={smartWpSpec} isLight={isLightTheme} />
+          </Box>
+        )}
+        {customWallpaperSpec && !liveBgUrl && !theme.chatBgImage && (
           <Box sx={{
             position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
-            background: customWallpaperSpec
-              ? (specToStyle(customWallpaperSpec).background as string | undefined)
-              : chatThemeOverride?.bg
-                ? `linear-gradient(135deg, ${chatThemeOverride.bg}, ${chatThemeOverride.accent || chatThemeOverride.bg})`
-                : smartWpGradient || undefined,
+            background: (specToStyle(customWallpaperSpec).background as string | undefined) || undefined,
+          }} className={specAnimationClass(customWallpaperSpec)} />
+        )}
+        {chatThemeOverride?.bg && !customWallpaperSpec && !smartWpSpec && !liveBgUrl && !theme.chatBgImage && (
+          <Box sx={{
+            position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
+            background: `linear-gradient(135deg, ${chatThemeOverride.bg}, ${chatThemeOverride.accent || chatThemeOverride.bg})`,
             transition: 'background 800ms ease',
-          }} className={customWallpaperSpec ? specAnimationClass(customWallpaperSpec) : ''} />
+          }} />
         )}
 
         {/* ── Живые обои (видео-слой, приоритет выше фото) ── */}
