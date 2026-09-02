@@ -332,7 +332,8 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
             <ColorField label="Активный элемент"  value={draft.bgActive}  onChange={v => upd('bgActive', v)} />
 
             <div style={sectionLabel}>Пузыри сообщений</div>
-            <ColorField label="Свой пузырь"          value={draft.bgBubbleOwn}   onChange={v => upd('bgBubbleOwn', v)} />
+            <ColorField label="Свой пузырь"          value={draft.bgBubbleOwn}
+              onChange={v => setDraft(d => ({ ...d, bgBubbleOwn: v, bubbleOwnGradient: '' }))} />
             <ColorField label="Чужой пузырь"         value={draft.bgBubbleOther} onChange={v => upd('bgBubbleOther', v)} />
             <ColorField label="Текст своего пузыря"  value={draft.bubbleOwnText || '#ffffff'} onChange={v => upd('bubbleOwnText', v)} />
 

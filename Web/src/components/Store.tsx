@@ -45,7 +45,7 @@ const TOPUP_PRESETS = [50, 100, 300, 700, 1500];
 export default function Store({ onClose }: Props) {
   const { theme } = useThemeStore();
   const { enabled, activeRing, activeSelfCard, activeBubble, isOwned, purchase, balanceVp, loadWallet, tab, setTab } = useShopStore();
-  const { setActiveRing, setActiveSelfCard, setActiveWallpaper, setActiveBubble } = useShopStore();
+  const { setActiveRing, setActiveSelfCard, setActiveBubble } = useShopStore();
   const [activeCat, setActiveCat] = useState<ShopCategory | 'all'>('all');
   const [sort, setSort] = useState<SortMode>('default');
   const [buyError, setBuyError] = useState('');
@@ -187,7 +187,7 @@ export default function Store({ onClose }: Props) {
   }, [activeCat, tab, isOwned, sort]);
   const activeWallpaper = useShopStore((s) => s.activeWallpaper);
   const setActiveWallpaper = useShopStore((s) => s.setActiveWallpaper);
-  const isActive = (id: string) => id === activeRing || id === activeSelfCard || id === activeWallpaper;
+  const isActive = (id: string) => id === activeRing || id === activeSelfCard || id === activeWallpaper || id === activeBubble;
 
   return (
     <Box sx={{
