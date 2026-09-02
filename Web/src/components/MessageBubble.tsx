@@ -282,6 +282,8 @@ function MessageBubble({
   onForward,
   onAvatarClick,
   onScrollToMessage,
+  accent,
+  themeVersion,
 }: Props) {
   const { user } = useAuthStore();
   const { theme } = useThemeStore();
@@ -428,22 +430,22 @@ function MessageBubble({
   const ringVal = ringItem?.value as any;
   const avatarSx: Record<string, any> = {
     width: 38, height: 38, cursor: 'pointer', flexShrink: 0,
-    bgcolor: theme.accent + '70',
-    border: `2px solid ${isOwn ? theme.accent : 'transparent'}`,
+    bgcolor: accent + '70',
+    border: `2px solid ${isOwn ? accent : 'transparent'}`,
     transition: 'box-shadow 0.3s ease, border-color 0.3s ease',
   };
   if (ringVal) {
     if (ringVal.type === 'rarity') {
-      Object.assign(avatarSx, buildRingSx(ringVal.rarity, theme.accent, false));
+      Object.assign(avatarSx, buildRingSx(ringVal.rarity, accent, false));
     } else if (ringVal.type === 'gradient') {
       avatarSx.border = '2px solid transparent';
-      avatarSx.backgroundImage = `linear-gradient(${theme.accent + '33'}, ${theme.accent + '33'}), ${ringVal.gradient}`;
+      avatarSx.backgroundImage = `linear-gradient(${accent + '33'}, ${accent + '33'}), ${ringVal.gradient}`;
       avatarSx.backgroundOrigin = 'border-box';
       avatarSx.backgroundClip = 'padding-box, border-box';
-      avatarSx.boxShadow = `0 0 12px ${theme.accent}55`;
+      avatarSx.boxShadow = `0 0 12px ${accent}55`;
     } else if (ringVal.type === 'glow') {
-      avatarSx.border = `2px solid ${ringVal.color || theme.accent}`;
-      avatarSx.boxShadow = `0 0 14px ${ringVal.color || theme.accent}`;
+      avatarSx.border = `2px solid ${ringVal.color || accent}`;
+      avatarSx.boxShadow = `0 0 14px ${ringVal.color || accent}`;
     }
   }
   // Кастомная обводка (spec от авторов) — только для собственной аватарки.
@@ -455,25 +457,25 @@ function MessageBubble({
   }
 
   // ─── «Плашка» своих сообщений (вид у других) ────────────────────────
-  // Базовый стиль всегда следует теме (акцент + фоны темы), никаких фиксированных цветов.
+  // Использует accent из пропсов (React.memo корректно реагирует) — а не напрямую из стора.
   const selfPlaqueSx: Record<string, any> = {
     fontSize: 11, lineHeight: 1, px: 0.6, py: 0.4, borderRadius: 1,
-    color: theme.accent, bgcolor: theme.accent + '14',
-    border: `1px solid ${theme.accent}2E`,
+    color: accent, bgcolor: accent + '14',
+    border: `1px solid ${accent}2E`,
     fontWeight: 600,
   };
   const selfVal = selfCardItem?.value;
   if (selfVal) {
     if (selfVal.type === 'rarity') {
-      Object.assign(selfPlaqueSx, buildPlaqueSx(selfVal.rarity, theme.accent));
+      Object.assign(selfPlaqueSx, buildPlaqueSx(selfVal.rarity, accent));
     } else if (selfVal.type === 'gradient') {
       // Градиентная плашка строится из текущего акцента темы — под тему, а не фиксированный цвет.
-      selfPlaqueSx.background = `linear-gradient(90deg, ${theme.accent}, ${theme.accent}80)`;
+      selfPlaqueSx.background = `linear-gradient(90deg, ${accent}, ${accent}80)`;
       selfPlaqueSx.color = '#fff';
       selfPlaqueSx.border = 'none';
-      selfPlaqueSx.boxShadow = `0 2px 8px ${theme.accent}44`;
+      selfPlaqueSx.boxShadow = `0 2px 8px ${accent}44`;
     } else if (selfVal.type === 'badge') {
-      selfPlaqueSx.bgcolor = theme.accent;
+      selfPlaqueSx.bgcolor = accent;
       selfPlaqueSx.color = '#fff';
       selfPlaqueSx.border = 'none';
       selfPlaqueSx.borderRadius = 999;
