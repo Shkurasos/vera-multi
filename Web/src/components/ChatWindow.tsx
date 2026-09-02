@@ -175,7 +175,7 @@ function ChatWindowInner() {
   } = useChatPrefsStore();
   const mutedChats = { has: (id: string) => isMuted(id) };
   const { user } = useAuthStore();
-  const { theme, setChatPhoto, setChatBgImage, chatPhoto: chatPhotoGlobal } = useThemeStore();
+    const { theme, setChatPhoto, setChatBgImage, chatPhoto: chatPhotoGlobal, themeVersion } = useThemeStore();
 
   const [text, setText] = useState('');
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -1320,7 +1320,7 @@ function ChatWindowInner() {
                 </Typography>
               </Box>
               {msgs.map((msg) => (
-                <MessageBubble
+                                <MessageBubble
                   key={msg.id}
                   message={msg}
                   isOwn={msg.senderId === user?.id}
@@ -1331,6 +1331,8 @@ function ChatWindowInner() {
                   onForward={handleForward}
                   onAvatarClick={handleSetProfileUser}
                   onScrollToMessage={handleScrollToMessage}
+                  accent={theme.accent}
+                  themeVersion={themeVersion}
                 />
               ))}
             </Box>

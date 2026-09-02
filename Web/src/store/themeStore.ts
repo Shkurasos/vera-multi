@@ -733,6 +733,7 @@ export const THEMES: Theme[] = [
 interface ThemeState {
   themeId: number;
   theme: Theme;
+  themeVersion: number;
   customThemes: Theme[];
   chatPhoto?: string;
   // Фото-фон чата (обои), отдельно от аватарки чата
@@ -758,15 +759,16 @@ try {
 export const useThemeStore = create<ThemeState>()(
   persist(
     (set, get) => ({
-      themeId: 0,
+            themeId: 0,
       theme: THEMES[0],
+      themeVersion: 0,
       customThemes: [],
       setTheme: (id) => {
         // Сначала ищем в кастомных, потом во встроенных
         const custom = get().customThemes.find(t => t.id === id);
         const builtin = THEMES.find(t => t.id === id);
         const t = custom || builtin || THEMES[0];
-        set({ themeId: id, theme: t });
+        set({ themeId: id, theme: t, themeVersion: get().themeVersion + 1 });
         // Сохраняем тему в БД пользователя (если есть токен)
         try {
           if (localStorage.getItem('vera_token')) {
@@ -783,16 +785,16 @@ export const useThemeStore = create<ThemeState>()(
           : [...customs, t];
         set({ customThemes: updated });
         // Если эта тема сейчас активна — применяем изменения
-        if (get().themeId === t.id) set({ theme: t });
+                if (get().themeId === t.id) set({ theme: t, themeVersion: get().themeVersion + 1 });
       },
       deleteCustomTheme: (id) => {
         const updated = get().customThemes.filter(c => c.id !== id);
         set({ customThemes: updated });
         // Если удалили активную — вернуть на Vera Dark
-        if (get().themeId === id) set({ themeId: 0, theme: THEMES[0] });
+        if (get().themeId === id) set({ themeId: 0, theme: THEMES[0], themeVersion: get().themeVersion + 1 });
       },
       applyCustomTheme: (t) => {
-        set({ theme: t, themeId: t.id });
+        set({ theme: t, themeId: t.id, themeVersion: get().themeVersion + 1 });
       },
       setChatPhoto: (photo) => set({ chatPhoto: photo }),
       setChatBgImage: (photo, opacity = 0.35) => {
@@ -856,11 +858,12 @@ export const useThemeStore = create<ThemeState>()(
             ? { chatBgImageOpacity: p.chatBgImageOpacity }
             : { chatBgImageOpacity: baseTheme.chatBgImageOpacity }),
         };
-        return {
+                return {
           ...current,
           themeId,
           customThemes,
           theme,
+          themeVersion: current.themeVersion || 0,
           chatPhoto: p.chatPhoto,
           chatBgImage: p.chatBgImage,
           chatBgImageOpacity: p.chatBgImageOpacity,

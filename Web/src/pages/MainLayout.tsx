@@ -141,10 +141,27 @@ export default function MainLayout() {
 
   return (
     <Box sx={bg}>
-      {layout.sidebarSide === 'left' && (<>{sidebar}{mainArea}</>)}
-      {layout.sidebarSide === 'right' && (<>{mainArea}{sidebar}</>)}
-      {layout.sidebarSide === 'top' && (<>{sidebar}{mainArea}</>)}
-      {layout.sidebarSide === 'bottom' && (<>{mainArea}{sidebar}</>)}
+      {/* Полноэкранный слой обоев (категория wallpaper + кастомные от авторов). */}
+      {wallpaperSpec && (
+        <Box
+          sx={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 0,
+            overflow: 'hidden',
+            pointerEvents: 'none',
+            transition: 'opacity 800ms cubic-bezier(0.22,1,0.36,1)',
+          }}
+        >
+          <ChatWallpaper spec={wallpaperSpec} isLight={!theme.bg.startsWith('#0') && theme.bg !== '#000000'} />
+        </Box>
+      )}
+      <Box sx={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: (layout.sidebarSide === 'top' || layout.sidebarSide === 'bottom') ? 'column' : 'row', flex: 1, height: '100%' }}>
+        {layout.sidebarSide === 'left' && (<>{sidebar}{mainArea}</>)}
+        {layout.sidebarSide === 'right' && (<>{mainArea}{sidebar}</>)}
+        {layout.sidebarSide === 'top' && (<>{sidebar}{mainArea}</>)}
+        {layout.sidebarSide === 'bottom' && (<>{mainArea}{sidebar}</>)}
+      </Box>
     </Box>
   );
 }

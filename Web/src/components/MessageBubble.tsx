@@ -31,6 +31,10 @@ interface Props {
   onForward: (message: Message) => void;
   onAvatarClick?: (user: User) => void;
   onScrollToMessage?: (messageId: string) => void;
+  /** theme.accent — вынесен в пропсы чтобы React.memo учитывал смену темы. */
+  accent: string;
+  /** Версия темы (инкремент при каждом применении) — принудительно перерисовывает пузыри при смене темы. */
+  themeVersion: number;
 }
 
 const REACTION_EMOJIS = ['👍', '❤️', '🔥', '😂', '😮', '😢', '😡', '🎉', '👎', '⭐'];
@@ -748,6 +752,14 @@ function MessageBubble({
   );
 }
 
-// Мемоизируем пузырь сообщения, чтобы не перерисовывать всю переписку
-// при каждом изменении состояния (hover, typing, новые сообщения).
-export default memo(MessageBubble);
+// Мемоизируем пузырь: перерисовка только когда message/isOwn/isHovered НЕ изменились,
+// но принудительно при смене темы (accent / themeVersion).
+export default memo(
+  MessageBubble,
+  (prev, next) =>
+    prev.message === next.message &&
+    prev.isOwn === next.isOwn &&
+    prev.isHovered === next.isHovered &&
+    prev.accent === next.accent &&
+    prev.themeVersion === next.themeVersion
+);
