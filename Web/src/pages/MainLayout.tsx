@@ -10,6 +10,8 @@ import ChatWindow from '../components/ChatWindow';
 import WelcomeScreen from '../components/WelcomeScreen';
 import BotFatherPage from './BotFatherPage';
 import AdminToolsPage from './AdminToolsPage';
+import ChatWallpaper from '../components/ChatWallpaper';
+import { useActiveWallpaperSpec, isLightColor } from '../hooks/useActiveWallpaper';
 
 // Реальные высоты плеера — синхронизированы с MusicPlayer.tsx
 const PLAYER_EXPANDED = 60;
@@ -37,6 +39,9 @@ export default function MainLayout() {
   }, [layout.density, layout.radius, layout.bubbleRadius, layout.mobileNavPos]);
 
   const onChatList = location.pathname === '/';
+
+  // Полноэкранные обои (категория «wallpaper» магазина / кастомные авторов).
+  const wallpaperSpec = useActiveWallpaperSpec();
 
   // Позиция плеера: снизу → padding-bottom, сверху → padding-top
   let bottomPad = '0px';
@@ -72,6 +77,13 @@ export default function MainLayout() {
       transition: 'background 800ms cubic-bezier(0.22, 1, 0.36, 1), opacity 800ms cubic-bezier(0.22, 1, 0.36, 1)',
     },
   };
+
+  // Когда обои активны — панели (чат, сайдбар) становятся стеклом: обои просвечивают размытыми.
+  const glassPanel = wallpaperSpec ? {
+    bgcolor: 'rgba(0,0,0,0.22)',
+    backdropFilter: 'blur(26px) saturate(150%)',
+    WebkitBackdropFilter: 'blur(26px) saturate(150%)',
+  } : {};
 
   // ── Мобильный вид: полноэкранный список чатов вместо сайдбара ──
   if (isMobile) {

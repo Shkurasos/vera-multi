@@ -86,8 +86,10 @@ export function buildRingSx(rarity: RarityTier, accent: string, active = false):
 }
 
 
-export function buildPlaqueSx(rarity: RarityTier, _accent: string): Record<string, any> {
-  const c = RARITY_META[rarity].color;
+export function buildPlaqueSx(rarity: RarityTier, accent?: string): Record<string, any> {
+  // Цвет плашки всегда следует акценту активной темы; форма — от редкости.
+  // Фиксированный цвет редкости используется только как fallback.
+  const c = accent || RARITY_META[rarity].color;
   const base: Record<string, any> = {
     fontSize: 11, lineHeight: 1, px: 0.8, py: 0.4, borderRadius: 1,
     color: '#fff', fontWeight: 700, letterSpacing: 0.4,

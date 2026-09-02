@@ -129,9 +129,26 @@ export default function ChatWallpaper({ spec, isLight = false }: ChatWallpaperPr
     );
   }
 
-  // ── gradient: статичный градиент из каталога ─────────────────────────────
+  // ── gradient: живой градиент из каталога (плавное движение + сияние) ──────
   if (s.type === 'gradient') {
-    return <Box sx={{ ...base, background: s.gradient || 'linear-gradient(160deg,#667eea,#764ba2)' }} />;
+    const g = s.gradient || 'linear-gradient(160deg,#667eea,#764ba2)';
+    return (
+      <Box sx={{ ...base, background: '#0c1020' }}>
+        <Box sx={{
+          position: 'absolute', inset: '-15%',
+          background: g,
+          backgroundSize: '220% 220%',
+          filter: 'blur(2px)',
+          animation: 'veraWallpaperPan 24s ease-in-out infinite alternate, veraWallpaperDrift 34s ease-in-out infinite alternate',
+        }} />
+        <Box sx={{
+          position: 'absolute', inset: '-20%',
+          background: 'radial-gradient(ellipse at 70% 20%, rgba(255,255,255,.14) 0%, transparent 55%)',
+          mixBlendMode: 'screen',
+          animation: 'veraWallpaperAurora 20s ease-in-out infinite alternate',
+        }} />
+      </Box>
+    );
   }
 
   // ── parallax: два цветных слоя, смещаются за курсором/наклоном ───────────
@@ -226,16 +243,23 @@ export default function ChatWallpaper({ spec, isLight = false }: ChatWallpaperPr
     );
   }
 
-  // ── grid: техническая сетка ──────────────────────────────────────────────
+  // ── grid: техническая сетка с бегущей подсветкой ─────────────────────────
   if (s.type === 'grid') {
     const dark = !isLight;
     return (
-      <Box sx={{
-        ...base,
-        background: dark ? '#0d1118' : '#f0f3f7',
-        backgroundImage: `linear-gradient(${dark ? '#ffffff10' : '#00000010'} 1px, transparent 1px), linear-gradient(90deg, ${dark ? '#ffffff10' : '#00000010'} 1px, transparent 1px)`,
-        backgroundSize: '36px 36px',
-      }} />
+      <Box sx={{ ...base, background: dark ? '#0d1118' : '#f0f3f7' }}>
+        <Box sx={{
+          position: 'absolute', inset: 0,
+          backgroundImage: `linear-gradient(${dark ? '#ffffff10' : '#00000010'} 1px, transparent 1px), linear-gradient(90deg, ${dark ? '#ffffff10' : '#00000010'} 1px, transparent 1px)`,
+          backgroundSize: '36px 36px',
+          animation: 'veraWallpaperGridPan 14s linear infinite',
+        }} />
+        <Box sx={{
+          position: 'absolute', inset: '-20%',
+          background: `radial-gradient(ellipse at 50% 0%, ${dark ? '#4d88ff1c' : '#4d88ff10'} 0%, transparent 60%)`,
+          animation: 'veraWallpaperDrift 22s ease-in-out infinite alternate',
+        }} />
+      </Box>
     );
   }
 

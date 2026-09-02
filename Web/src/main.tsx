@@ -111,6 +111,59 @@ const darkTheme = createTheme({
         '@keyframes veraRarityPulse': { '0%,100%': { filter: 'brightness(1)' }, '50%': { filter: 'brightness(1.35)' } },
         '@keyframes veraRaritySpin': { from: { transform: 'rotate(0deg)' }, to: { transform: 'rotate(360deg)' } },
 
+        // ─── Кейфреймы обоев (ChatWallpaper) ─────────────────────────────────
+        '@keyframes veraWallpaperDrift': {
+          from: { transform: 'translate3d(-4%, -3%, 0) scale(1)' },
+          to:   { transform: 'translate3d(4%, 3%, 0) scale(1.12)' },
+        },
+        '@keyframes veraWallpaperRipple': {
+          from: { transform: 'translate(-50%,-50%) scale(0)', opacity: 0.9 },
+          to:   { transform: 'translate(-50%,-50%) scale(5)', opacity: 0 },
+        },
+        '@keyframes veraWallpaperFall': {
+          from: { transform: 'translateY(-8%)' },
+          to:   { transform: 'translateY(108%)' },
+        },
+        '@keyframes veraWallpaperRain': {
+          from: { transform: 'translateY(-10vh)' },
+          to:   { transform: 'translateY(110vh)' },
+        },
+        '@keyframes veraWallpaperTwinkle': {
+          '0%,100%': { opacity: 0.25 },
+          '50%':     { opacity: 1 },
+        },
+        '@keyframes veraWallpaperFloat': {
+          from: { transform: 'translate3d(0,0,0)' },
+          to:   { transform: 'translate3d(40px,-30px,0)' },
+        },
+        '@keyframes veraWallpaperWave': {
+          from: { transform: 'translateY(6%) rotate(-3deg) scale(1.1)', borderRadius: '45% 55% 40% 60% / 60% 40% 60% 40%' },
+          to:   { transform: 'translateY(-4%) rotate(4deg) scale(1.25)', borderRadius: '58% 42% 55% 45% / 45% 58% 42% 55%' },
+        },
+        '@keyframes veraWallpaperAurora': {
+          from: { transform: 'translateX(-8%) skewX(-6deg) scaleY(1)', opacity: 0.7 },
+          to:   { transform: 'translateX(8%) skewX(6deg) scaleY(1.25)', opacity: 1 },
+        },
+        '@keyframes veraWallpaperNoise': {
+          '0%':   { transform: 'translate(0,0)' },
+          '25%':  { transform: 'translate(-6%, 4%)' },
+          '50%':  { transform: 'translate(4%, -6%)' },
+          '75%':  { transform: 'translate(-3%, -3%)' },
+          '100%': { transform: 'translate(0,0)' },
+        },
+        '@keyframes veraWallpaperBlob': {
+          from: { transform: 'translate(0,0) scale(1)' },
+          to:   { transform: 'translate(6%, -8%) scale(1.3)' },
+        },
+        '@keyframes veraWallpaperPan': {
+          from: { backgroundPosition: '0% 50%' },
+          to:   { backgroundPosition: '100% 50%' },
+        },
+        '@keyframes veraWallpaperGridPan': {
+          from: { backgroundPosition: '0 0' },
+          to:   { backgroundPosition: '56px 56px' },
+        },
+
         // ─── Кейфреймы микроанимаций (Apple-like easing) ───────────────────
         '@keyframes veraFadeIn': {
           from: { opacity: 0 },
