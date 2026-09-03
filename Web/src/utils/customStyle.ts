@@ -8,7 +8,7 @@ import type { CustomSpec } from '../services/api';
 
 export const DEFAULT_CUSTOM_SPEC: CustomSpec = {
   bg: { type: 'linear', color1: '#7c6af7', color2: '#4ea0ff', angle: 135 },
-  border: { width: 2, color: '#ffffff', style: 'solid', radius: 16 },
+  border: { width: 0, color: '#ffffff', style: 'solid', radius: 16 },
   glow: { enabled: false, color: '#7c6af7', intensity: 12 },
   shadow: { enabled: true, x: 0, y: 6, blur: 18, color: '#00000066' },
   text: { color: '#ffffff', weight: '600' },

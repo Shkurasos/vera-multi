@@ -396,7 +396,7 @@ function MessageBubble({
     } else if (t === 'gradient') {
       // Градиентные пузыри из магазина: если есть свой градиент (закат/океан/лес),
       // используем его; иначе — градиент текущей темы.
-      const customGradient = bubbleVal.gradient;
+      const customGradient = shopBubbleVal.gradient;
       shopBubbleSx.background = customGradient || bubbleOwnGradient || bgBubbleOwn;
       shopBubbleSx.border = 'none';
       shopBubbleSx.boxShadow = '0 6px 18px rgba(0,0,0,0.25)';
