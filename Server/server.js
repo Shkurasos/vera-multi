@@ -2512,9 +2512,13 @@ app.post('/api/music/import-url', authMiddleware, express.json(), async (req, re
 
   const meta = await run('yt-dlp', ['-J', '--no-warnings', '--no-playlist', url]);
   if (meta.code !== 0) {
+    const isNotFound = meta.stderr.includes('not found') || meta.stderr.includes('не является') || meta.code === -1;
     return res.status(500).json({
-      message: 'yt-dlp недоступен или ссылка не поддерживается. Установите yt-dlp и ffmpeg на сервере.',
+      message: isNotFound 
+        ? '❌ yt-dlp не установлен. Установите: npm install -g yt-dlp или скачайте с github.com/yt-dlp/yt-dlp'
+        : 'Ссылка не поддерживается или недоступна',
       detail: (meta.stderr || '').slice(0, 500),
+      help: isNotFound ? 'Windows: scoop install yt-dlp ffmpeg | Linux: sudo apt install yt-dlp ffmpeg' : undefined,
     });
   }
   let info;
@@ -2538,8 +2542,11 @@ app.post('/api/music/import-url', authMiddleware, express.json(), async (req, re
     '-o', outTemplate, url,
   ]);
   if (dl.code !== 0) {
+    const isNotFound = dl.stderr.includes('not found') || dl.stderr.includes('не является') || dl.code === -1;
     return res.status(500).json({
-      message: 'Не удалось скачать аудио (нужен ffmpeg).',
+      message: isNotFound
+        ? '❌ ffmpeg не установлен. Установите: scoop install ffmpeg (Windows) или sudo apt install ffmpeg (Linux)'
+        : 'Не удалось скачать аудио. Проверьте ссылку или попробуйте другую.',
       detail: (dl.stderr || '').slice(0, 500),
     });
   }

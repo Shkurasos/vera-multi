@@ -41,11 +41,13 @@ export default function MusicLibrary() {
     setUrlBusy(true);
     try {
       const t = await importUrl(u);
-      setSnack(`Импортирован: ${t.title}`);
+      setSnack(`✅ Импортирован: ${t.title}`);
       setUrlOpen(false);
       setUrlValue('');
     } catch (err: any) {
-      setSnack(err?.response?.data?.message || 'Не удалось импортировать ссылку');
+      const msg = err?.response?.data?.message || 'Не удалось импортировать ссылку';
+      const help = err?.response?.data?.help;
+      setSnack(help ? `${msg}\n${help}` : msg);
     } finally { setUrlBusy(false); }
   };
 
@@ -217,7 +219,11 @@ export default function MusicLibrary() {
       <DialogContent>
         <Stack spacing={1.5} sx={{ pt: 1 }}>
           <TextField autoFocus label="URL (YouTube, SoundCloud и т.п.)" value={urlValue} onChange={(e) => setUrlValue(e.target.value)} fullWidth disabled={urlBusy} />
-          <Typography variant="caption" color="text.secondary">Ограничение: длительность не более 6 минут. На сервере должны быть установлены yt-dlp и ffmpeg.</Typography>
+          <Typography variant="caption" color="text.secondary">
+            Ограничение: не более 6 минут. <br/>
+            ⚠️ Требуется установка на сервере: <strong>yt-dlp</strong> и <strong>ffmpeg</strong>.<br/>
+            Windows: <code>scoop install yt-dlp ffmpeg</code> | Linux: <code>sudo apt install yt-dlp ffmpeg</code>
+          </Typography>
         </Stack>
       </DialogContent>
       <DialogActions>
@@ -226,6 +232,12 @@ export default function MusicLibrary() {
       </DialogActions>
     </Dialog>
     <Dialog open={editOpen} onClose={() => !saving && setEditOpen(false)} fullWidth maxWidth="xs"><DialogTitle>Редактировать трек</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}><TextField label="Название" value={title} onChange={(e) => setTitle(e.target.value)} fullWidth /><TextField label="Исполнитель" value={artist} onChange={(e) => setArtist(e.target.value)} fullWidth /><TextField label="Описание" value={description} onChange={(e) => setDescription(e.target.value)} fullWidth multiline minRows={3} /><Button component="label" variant="outlined" disabled={saving}>Выбрать обложку<input hidden type="file" accept="image/*" onChange={(e) => setCover(e.target.files?.[0] || null)} /></Button>{cover && <Typography variant="caption" color="text.secondary">{cover.name}</Typography>}</Stack></DialogContent><DialogActions><Button onClick={() => setEditOpen(false)} disabled={saving}>Отмена</Button><Button variant="contained" onClick={saveEdit} disabled={saving || !title.trim()}>{saving ? 'Сохранение...' : 'Сохранить'}</Button></DialogActions></Dialog>
-    <Snackbar open={!!snack} onClose={() => setSnack('')} autoHideDuration={2200} message={snack} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }} />
+    <Snackbar 
+      open={!!snack} 
+      onClose={() => setSnack('')} 
+      autoHideDuration={snack.includes('❌') || snack.includes('Установите') ? 8000 : 2200} 
+      message={<span style={{ whiteSpace: 'pre-line' }}>{snack}</span>} 
+      anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }} 
+    />
   </Box>;
 }
