@@ -267,6 +267,88 @@ export const SHOP_CATALOG: ShopItem[] = [
   { id: 'wp-fireflies', category: 'wallpaper', name: 'Светлячки',
     description: 'Мерцающие светлячки в темноте — волшебная ночь', applyKey: 'smartWallpaper',
     value: { type: 'fireflies' }, previewColor: 'linear-gradient(135deg,#1a2a1a,#3a4a3a)', price: 190 },
+
+  // ── Размытые задние фоны (blur backgrounds) — 20 штук по 50 ВП ─────────────
+  { id: 'wp-blur-purple', category: 'wallpaper', name: 'Фиолетовое размытие',
+    description: 'Мягкие фиолетовые волны размытия — космическая атмосфера', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(142,45,226,0.3) 0%, rgba(74,0,224,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#8e2de2,#4a00e0)', price: 50 },
+  { id: 'wp-blur-blue', category: 'wallpaper', name: 'Синее размытие',
+    description: 'Спокойные синие оттенки — океаническая глубина', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(0,123,255,0.3) 0%, rgba(0,82,212,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#007bff,#0052d4)', price: 50 },
+  { id: 'wp-blur-pink', category: 'wallpaper', name: 'Розовое размытие',
+    description: 'Нежные розовые тона — мечтательная дымка', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(255,159,243,0.3) 0%, rgba(251,173,240,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#ff9ff3,#fbade0)', price: 50 },
+  { id: 'wp-blur-green', category: 'wallpaper', name: 'Зелёное размытие',
+    description: 'Свежая зелень — утренний туман в лесу', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(0,200,83,0.3) 0%, rgba(0,139,69,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#00c853,#008b45)', price: 50 },
+  { id: 'wp-blur-orange', category: 'wallpaper', name: 'Оранжевое размытие',
+    description: 'Тёплый оранжевый закат — уютное свечение', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(255,159,64,0.3) 0%, rgba(255,119,48,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#ff9f40,#ff7730)', price: 50 },
+  { id: 'wp-blur-teal', category: 'wallpaper', name: 'Бирюзовое размытие',
+    description: 'Освежающая бирюза — тропический рай', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(0,230,118,0.3) 0%, rgba(0,188,212,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#00e676,#00bcd4)', price: 50 },
+  { id: 'wp-blur-red', category: 'wallpaper', name: 'Красное размытие',
+    description: 'Страстный красный — огненная энергия', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(239,83,80,0.3) 0%, rgba(229,57,53,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#ef5350,#e53935)', price: 50 },
+  { id: 'wp-blur-indigo', category: 'wallpaper', name: 'Индиго размытие',
+    description: 'Глубокий индиго — ночная магия', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(92,107,192,0.3) 0%, rgba(63,81,181,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#5c6bc0,#3f51b5)', price: 50 },
+  { id: 'wp-blur-amber', category: 'wallpaper', name: 'Янтарное размытие',
+    description: 'Тёплый янтарный блеск — золотой час', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(255,193,7,0.3) 0%, rgba(255,160,0,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#ffc107,#ffa000)', price: 50 },
+  { id: 'wp-blur-cyan', category: 'wallpaper', name: 'Голубое размытие',
+    description: 'Чистое небесное голубое — весенний рассвет', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(0,188,212,0.3) 0%, rgba(0,151,167,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#00bcd4,#0097a7)', price: 50 },
+  { id: 'wp-blur-lime', category: 'wallpaper', name: 'Лаймовое размытие',
+    description: 'Яркий кислотный лайм — летняя свежесть', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(205,220,57,0.3) 0%, rgba(175,180,43,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#cddc39,#afb42b)', price: 50 },
+  { id: 'wp-blur-violet', category: 'wallpaper', name: 'Фиалковое размытие',
+    description: 'Нежная фиалка — романтичная дымка', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(171,71,188,0.3) 0%, rgba(142,36,170,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#ab47bc,#8e24aa)', price: 50 },
+  { id: 'wp-blur-coral', category: 'wallpaper', name: 'Коралловое размытие',
+    description: 'Мягкий коралловый — тропический закат', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(255,138,128,0.3) 0%, rgba(255,112,67,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#ff8a80,#ff7043)', price: 50 },
+  { id: 'wp-blur-mint', category: 'wallpaper', name: 'Мятное размытие',
+    description: 'Прохладная мята — освежающий бриз', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(165,214,167,0.3) 0%, rgba(129,199,132,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#a5d6a7,#81c784)', price: 50 },
+  { id: 'wp-blur-peach', category: 'wallpaper', name: 'Персиковое размытие',
+    description: 'Нежный персик — летнее тепло', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(255,171,145,0.3) 0%, rgba(255,138,101,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#ffab91,#ff8a65)', price: 50 },
+  { id: 'wp-blur-lavender', category: 'wallpaper', name: 'Лавандовое размытие',
+    description: 'Спокойная лаванда — провансальский закат', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(179,157,219,0.3) 0%, rgba(149,117,205,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#b39ddb,#9575cd)', price: 50 },
+  { id: 'wp-blur-gold', category: 'wallpaper', name: 'Золотое размытие',
+    description: 'Роскошное золото — царственное сияние', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(255,215,0,0.3) 0%, rgba(218,165,32,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#ffd700,#daa520)', price: 50 },
+  { id: 'wp-blur-sky', category: 'wallpaper', name: 'Небесное размытие',
+    description: 'Чистое небо — безоблачный день', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(135,206,250,0.3) 0%, rgba(100,149,237,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#87ceeb,#6495ed)', price: 50 },
+  { id: 'wp-blur-rose', category: 'wallpaper', name: 'Розовое золото',
+    description: 'Элегантное розовое золото — премиум стиль', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(244,143,177,0.3) 0%, rgba(233,30,99,0.4) 100%)' },
+    previewColor: 'linear-gradient(135deg,#f48fb1,#e91e63)', price: 50 },
+  { id: 'wp-blur-emerald', category: 'wallpaper', name: 'Изумрудное размытие',
+    description: 'Глубокий изумруд — драгоценная роскошь', applyKey: 'smartWallpaper',
+    value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(46,125,50,0.3) 0%, rgba(27,94,32,0.5) 100%)' },
+    previewColor: 'linear-gradient(135deg,#2e7d32,#1b5e20)', price: 50 },
 ];
 
 // ─── Линейка редкостей (21×2 = 42 платных предмета) ────────────────────────
@@ -369,6 +451,8 @@ export const useShopStore = create<ShopState>()(
         // Dev-режим: всё открыто.
         try {
           if (useAuthStore.getState().user?.isDev) return true;
+          // Админ-режим: всё открыто бесплатно.
+          if (useAuthStore.getState().user?.isAdmin) return true;
         } catch {}
         // Бесплатные (price: 0) и дефолтные открыты всегда; платные — только после purchase().
         if (item.ownedByDefault || !item.price || item.price <= 0) return true;
@@ -393,6 +477,12 @@ export const useShopStore = create<ShopState>()(
         purchase: async (id) => {
           const item = SHOP_CATALOG.find(i => i.id === id);
           if (!item) return;
+          const isAdmin = useAuthStore.getState().user?.isAdmin;
+          // Админы покупают всё бесплатно
+          if (isAdmin) {
+            set(s => ({ owned: { ...s.owned, [id]: true } }));
+            return;
+          }
           const price = item.price && item.price > 0 ? item.price : 0;
           if (price > 0) {
             // Платная покупка — списываем ВП на сервере.

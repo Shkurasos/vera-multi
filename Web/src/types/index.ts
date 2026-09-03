@@ -23,6 +23,8 @@ export interface User {
   reputationScore?: number;
   /** DEV-режим по IP (сервер выставляет). Открывает весь магазин и inspector. */
   isDev?: boolean;
+  /** Админ-режим (сервер выставляет). Всё в магазине бесплатно. */
+  isAdmin?: boolean;
   /** ID закреплённого плейлиста, отображается на профиле как мини-плеер. */
   pinnedPlaylistId?: string | null;
 }
