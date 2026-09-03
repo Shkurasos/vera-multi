@@ -685,7 +685,9 @@ function ChatWindowInner() {
           display: 'flex', flexDirection: 'column',
           flex: 1, height: '100%',
           bgcolor: 'transparent',
-          background: `radial-gradient(circle at 78% 0%, ${theme.accent}14 0, transparent 30%), radial-gradient(circle at 8% 100%, rgba(255,79,216,0.10) 0, transparent 34%), ${theme.bgChat}`,
+          background: theme.disableBackgroundBlobs 
+            ? theme.bgChat 
+            : `radial-gradient(circle at 78% 0%, ${theme.accent}14 0, transparent 30%), radial-gradient(circle at 8% 100%, rgba(255,79,216,0.10) 0, transparent 34%), ${theme.bgChat}`,
           overflow: 'hidden',
           position: 'relative',
           transformOrigin: '50% 72%',

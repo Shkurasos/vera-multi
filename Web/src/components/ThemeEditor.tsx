@@ -377,6 +377,20 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
               </div>
             )}
 
+            <div style={{ marginBottom: 12, marginTop: 10 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={draft.disableBackgroundBlobs || false}
+                  onChange={e => setDraft(d => ({ ...d, disableBackgroundBlobs: e.target.checked }))}
+                  style={{ width: 16, height: 16, cursor: 'pointer' }}
+                />
+                <span style={{ color: theme.text }}>Отключить фоновые пузыри (blobs)</span>
+              </label>
+              <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4, marginLeft: 24 }}>
+                Убирает размытые светящиеся пузыри на заднем плане чата
+              </div>
+            </div>
 
             <div style={sectionLabel}>Превью чата</div>
             <div style={{

@@ -21,6 +21,8 @@ export interface Theme {
   online: string;
   // CSS background-image для фона области сообщений (SVG-паттерн или null)
   chatPattern?: string;
+  // Отключить фоновые размытые пузыри (animated blobs)
+  disableBackgroundBlobs?: boolean;
   // base64 или data URL пользовательского фото-фона чата
   chatBgImage?: string;
   // прозрачность пользовательского фото-фона (0-1)
@@ -142,6 +144,7 @@ export function themeToLink(theme: Theme): string {
       bd: theme.border,
       on: theme.online,
       cp: theme.chatPattern,
+      db: theme.disableBackgroundBlobs,
       ci: theme.chatBgImage,
       co: theme.chatBgImageOpacity,
       og: theme.bubbleOwnGradient,
@@ -182,6 +185,7 @@ export function themeFromLink(link: string): Theme | null {
       border: p.bd || 'rgba(255,255,255,0.08)',
       online: p.on || '#0f0',
       chatPattern: p.cp,
+      disableBackgroundBlobs: p.db,
       chatBgImage: p.ci,
       chatBgImageOpacity: p.co ?? 0.35,
       bubbleOwnGradient: p.og,
@@ -727,6 +731,25 @@ export const THEMES: Theme[] = [
     sidebarBlur: 'blur(26px) saturate(1.32)',
     headerGradient: 'linear-gradient(90deg, rgba(255,240,194,0.10) 0%, rgba(0,194,255,0.11) 50%, rgba(138,92,255,0.10) 100%)',
     bubbleOwnText: '#03110A',
+  },
+
+  // ── 29 ── Apple Minimalism — чистота, пространство, светлые тона ──────────
+  {
+    id: 29, name: 'Apple Minimalism',
+    bg: '#FFFFFF', text: '#000000', accent: '#007AFF',
+    bgSidebar: '#F5F5F7', bgChat: '#FFFFFF', bgHeader: '#FAFAFA',
+    bgInput: '#F2F2F7', bgBubbleOwn: '#007AFF', bgBubbleOther: '#E9E9EB',
+    bgHover: '#F2F2F7', bgActive: '#E5E5EA', textSec: '#8E8E93',
+    border: 'rgba(0,0,0,0.08)', online: '#34C759',
+    chatPattern: undefined,
+    disableBackgroundBlobs: true,
+    bubbleOwnGradient: undefined,
+    bubbleOwnShadow: '0 1px 2px rgba(0,0,0,0.08)',
+    bubbleOtherShadow: '0 1px 2px rgba(0,0,0,0.04)',
+    sidebarGradient: undefined,
+    sidebarBlur: undefined,
+    headerGradient: undefined,
+    bubbleOwnText: '#FFFFFF',
   },
 ];
 
