@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import { walletApi } from '../services/api';
 import { RARITY_META, RARITY_ORDER } from '../utils/rarityStyles';
 import { useAuthStore } from './authStore';
+import { enableStoreSync } from '../services/storeSyncSimple';
 
 /**
  * МАГАЗИН VERA
@@ -436,6 +437,11 @@ export const useShopStore = create<ShopState>()(
       }) }
   )
 );
+
+// Подключаем синхронизацию между устройствами
+if (typeof window !== 'undefined') {
+  enableStoreSync('shop', useShopStore);
+}
 
 /** Возвращает активную обводку аватара (item + value) или null. */
 export function getActiveRing(): (ShopItem | undefined) {

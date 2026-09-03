@@ -6,6 +6,7 @@ import { peer, isPeerAvailable } from '../services/peer';
 import { useThemeStore } from './themeStore';
 import { initArchive, closeArchive } from '../services/localArchive';
 import { hydrateSettingsFromServer, startSettingsAutoSync } from './userSettingsStore';
+import { initStoreSyncOnLogin, disableAllStoreSync } from '../services/storeSyncSimple';
 
 interface AuthState {
   user: User | null;
@@ -77,6 +78,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       disconnectSocket();
     }
     closeArchive();
+    disableAllStoreSync();
     localStorage.removeItem('vera_token');
     set({ user: null, token: null, isAuthenticated: false });
   },
@@ -115,6 +117,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         set({ user: res.data, isAuthenticated: true, token: existingToken, isLoading: false });
         try { if (res.data?.id) initArchive(res.data.id); } catch {}
         try { await hydrateSettingsFromServer(); startSettingsAutoSync(); } catch {}
+        try { await initStoreSyncOnLogin(); } catch {}
         return;
       } catch {
         // Токен невалиден — попробуем переавторизоваться по устройству ниже.
@@ -139,6 +142,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       set({ token: accessToken, user, isAuthenticated: true });
       try { if (user?.id) initArchive(user.id); } catch {}
       try { await hydrateSettingsFromServer(); startSettingsAutoSync(); } catch {}
+      try { await initStoreSyncOnLogin(); } catch {}
     } catch (e) {
       console.error('[auth] device login failed', e);
     } finally {

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { enableStoreSync } from '../services/storeSyncSimple';
 
 /**
  * Персональные темы для отдельных чатов (платная функция магазина).
@@ -52,3 +53,8 @@ export const useChatThemeStore = create<ChatThemeState>()(
     { name: 'vera-chat-themes', version: 1 }
   )
 );
+
+// Подключаем синхронизацию между устройствами
+if (typeof window !== 'undefined') {
+  enableStoreSync('chat-themes', useChatThemeStore);
+}

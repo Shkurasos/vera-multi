@@ -80,6 +80,7 @@ if (!Array.isArray(db.customItems)) db.customItems = [];
 if (!db.creatorProfiles || typeof db.creatorProfiles !== 'object') db.creatorProfiles = {};
 if (typeof db.platformRevenueVp !== 'number') db.platformRevenueVp = 0;
 if (!Array.isArray(db.admins)) db.admins = [];
+if (!db.userStores || typeof db.userStores !== 'object') db.userStores = {};
 
 // При старте сервера все пользователи офлайн (сбрасываем stale-статус)
 if (db.users) {
@@ -1211,6 +1212,111 @@ app.put('/api/settings', authMiddleware, (req, res) => {
   } catch {}
 
   res.json({ ok: true, updatedAt: clean.__updatedAt });
+});
+
+// ─── UNIVERSAL STORE SYNC (синхронизация любых Zustand stores) ────────────────
+// Позволяет синхронизировать любой клиентский store между устройствами.
+// Структура: db.userStores[userId][storeName] = { data, __updatedAt, __clientId }
+// SEC: ограничиваем размер каждого store до 128 КБ, общий лимит на пользователя 1 МБ.
+
+const MAX_STORE_SIZE = 128 * 1024; // 128 КБ на один store
+const MAX_TOTAL_STORES_SIZE = 1024 * 1024; // 1 МБ на все stores пользователя
+
+// GET /api/sync/stores — получить все stores пользователя
+app.get('/api/sync/stores', authMiddleware, (req, res) => {
+  if (!db.userStores) db.userStores = {};
+  const stores = db.userStores[req.userId] || {};
+  res.json({ stores });
+});
+
+// GET /api/sync/stores/:name — получить конкретный store
+app.get('/api/sync/stores/:name', authMiddleware, (req, res) => {
+  if (!db.userStores) db.userStores = {};
+  if (!db.userStores[req.userId]) db.userStores[req.userId] = {};
+  const store = db.userStores[req.userId][req.params.name] || null;
+  res.json({ 
+    data: store?.data || null, 
+    updatedAt: store?.__updatedAt || null 
+  });
+});
+
+// PUT /api/sync/stores/:name — сохранить/обновить store
+app.put('/api/sync/stores/:name', authMiddleware, (req, res) => {
+  const storeName = req.params.name;
+  const body = req.body?.data;
+  const clientId = req.body?.clientId || null;
+
+  if (!body || typeof body !== 'object') {
+    return res.status(400).json({ message: 'data обязателен и должен быть объектом' });
+  }
+
+  // Проверка размера этого store
+  const serialized = JSON.stringify(body);
+  if (serialized.length > MAX_STORE_SIZE) {
+    return res.status(413).json({ 
+      message: `Store слишком большой (${Math.round(serialized.length/1024)} КБ, макс ${MAX_STORE_SIZE/1024} КБ)` 
+    });
+  }
+
+  if (!db.userStores) db.userStores = {};
+  if (!db.userStores[req.userId]) db.userStores[req.userId] = {};
+
+  // Проверка общего размера всех stores пользователя
+  const otherStoresSize = Object.keys(db.userStores[req.userId])
+    .filter(k => k !== storeName)
+    .reduce((sum, k) => sum + JSON.stringify(db.userStores[req.userId][k]).length, 0);
+  
+  if (otherStoresSize + serialized.length > MAX_TOTAL_STORES_SIZE) {
+    return res.status(413).json({ 
+      message: `Превышен лимит хранилища (${Math.round((otherStoresSize + serialized.length)/1024)} КБ, макс ${MAX_TOTAL_STORES_SIZE/1024} КБ)` 
+    });
+  }
+
+  const clean = JSON.parse(serialized);
+  const updatedAt = new Date().toISOString();
+  
+  db.userStores[req.userId][storeName] = {
+    data: clean,
+    __updatedAt: updatedAt,
+    __clientId: clientId,
+  };
+  saveDb();
+
+  // Push обновление на все устройства пользователя через WebSocket
+  try {
+    const sockets = userSockets.get(req.userId);
+    if (sockets) {
+      sockets.forEach(sid => io.to(sid).emit('store:updated', {
+        storeName,
+        data: clean,
+        updatedAt,
+        clientId,
+      }));
+    }
+  } catch {}
+
+  res.json({ ok: true, updatedAt });
+});
+
+// DELETE /api/sync/stores/:name — удалить store
+app.delete('/api/sync/stores/:name', authMiddleware, (req, res) => {
+  if (!db.userStores) db.userStores = {};
+  if (!db.userStores[req.userId]) db.userStores[req.userId] = {};
+  
+  delete db.userStores[req.userId][req.params.name];
+  saveDb();
+
+  // Уведомить другие устройства об удалении
+  try {
+    const sockets = userSockets.get(req.userId);
+    if (sockets) {
+      sockets.forEach(sid => io.to(sid).emit('store:deleted', {
+        storeName: req.params.name,
+      }));
+    }
+  } catch {}
+
+  res.json({ ok: true });
 });
 
 // ─── DEVICE routes (правило «устройство 1 = 1, второе — по QR») ───────────────

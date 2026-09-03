@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { enableStoreSync } from '../services/storeSyncSimple';
 
 export interface CustomFont {
   name: string;
@@ -53,3 +54,8 @@ export const useChatSettingsStore = create<ChatSettingsState>()(
     { name: 'vera-chat-settings' }
   )
 );
+
+// Подключаем синхронизацию между устройствами
+if (typeof window !== 'undefined') {
+  enableStoreSync('chat-settings', useChatSettingsStore);
+}

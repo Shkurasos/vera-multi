@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { enableStoreSync } from '../services/storeSyncSimple';
 
 /**
  * Индивидуальные звуки уведомлений для каждого чата.
@@ -54,3 +55,8 @@ export const useChatSoundStore = create<ChatSoundState>()(
     { name: 'vera-chat-sounds' }
   )
 );
+
+// Подключаем синхронизацию между устройствами
+if (typeof window !== 'undefined') {
+  enableStoreSync('chat-sounds', useChatSoundStore);
+}

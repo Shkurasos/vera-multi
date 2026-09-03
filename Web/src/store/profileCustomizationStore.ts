@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { enableStoreSync } from '../services/storeSyncSimple';
 
 /**
  * Кастомизация профиля в стиле Steam:
@@ -50,3 +51,8 @@ export const useProfileCustomizationStore = create<ProfileCustomizationState>()(
     { name: 'vera-profile-customization' }
   )
 );
+
+// Подключаем синхронизацию между устройствами
+if (typeof window !== 'undefined') {
+  enableStoreSync('profile-customization', useProfileCustomizationStore);
+}

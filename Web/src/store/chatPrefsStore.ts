@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { Message } from '../types';
+import { enableStoreSync } from '../services/storeSyncSimple';
 
 interface ChatPrefsState {
   // Arrays for JSON serialization
@@ -57,3 +58,8 @@ export const useChatPrefsStore = create<ChatPrefsState>()(
     { name: 'vera-chat-prefs' }
   )
 );
+
+// Подключаем синхронизацию между устройствами
+if (typeof window !== 'undefined') {
+  enableStoreSync('chat-prefs', useChatPrefsStore);
+}
