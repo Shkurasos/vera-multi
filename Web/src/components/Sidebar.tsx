@@ -495,7 +495,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
         <Tooltip title="Редактировать профиль"><IconButton onClick={() => navigate('/profile?edit=1')} sx={{ color: theme.textSec, ...membranePressSx }}><AccountCircle /></IconButton></Tooltip>
         <Tooltip title="Магазин тем"><IconButton onClick={() => setMarketplaceOpen(true)} sx={{ color: theme.textSec, ...membranePressSx }}><Palette /></IconButton></Tooltip>
         <Tooltip title="Скачать приложение"><IconButton onClick={() => navigate('/download')} sx={{ color: theme.textSec, ...membranePressSx }}><Download /></IconButton></Tooltip>
-        {user?.username === 'admin3' && (
+        {user?.isAdmin && (
           <Tooltip title="Bug Bounty Tools"><IconButton onClick={() => navigate('/admin')} sx={{ color: theme.textSec, ...membranePressSx }}><Security /></IconButton></Tooltip>
         )}
       </Box>

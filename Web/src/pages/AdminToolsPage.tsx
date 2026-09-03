@@ -31,7 +31,7 @@ export default function AdminToolsPage() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [trainMsg, setTrainMsg] = useState('');
 
-  if (!user || user.username !== 'admin3') {
+  if (!user || !user.isAdmin) {
     return (
       <Box sx={{ p: 4, color: '#fff' }}>
         <Typography>🔒 Доступ только для администратора.</Typography>
@@ -151,7 +151,7 @@ export default function AdminToolsPage() {
     <Box sx={{ p: 3, color: '#fff', maxWidth: 900, mx: 'auto' }}>
       <Typography variant="h5" fontWeight={700} sx={{ mb: 1 }}>🛡 Admin Tools</Typography>
       <Typography sx={{ color: 'text.secondary', mb: 3 }}>
-        LLM, багбаунти и доступ к ПК. Только для @admin3.
+        LLM, багбаунти и доступ к ПК. Только для администраторов.
       </Typography>
 
       {/* ── LLM ── */}
@@ -238,7 +238,7 @@ export default function AdminToolsPage() {
         </Box>
 
         <Typography variant="caption" sx={{ display: 'block', mt: 1.5, color: 'text.secondary' }}>
-          Чат @admin3: /llm, /search, /file, /list, /run, /trainllm · см. ai-engine/README.md
+          Чат с админом: /llm, /search, /file, /list, /run, /trainllm · см. ai-engine/README.md
         </Typography>
       </Box>
 

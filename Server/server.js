@@ -167,7 +167,7 @@ function withDevFlag(req, user) {
 // (редактируется через консоль сервера командой `admin add/del`). Регистр
 // не важен, символ '@' в начале игнорируется.
 const ADMIN_ENV = (() => {
-  const raw = String(process.env.ADMIN_USERNAMES || 'admin3');
+  const raw = String(process.env.ADMIN_USERNAMES || 'admin1,admin2,admin3');
   return raw.split(',').map(s => s.trim().replace(/^@+/, '').toLowerCase()).filter(Boolean);
 })();
 function normAdminName(v) { return String(v || '').trim().replace(/^@+/, '').toLowerCase(); }
@@ -1022,10 +1022,10 @@ app.get('/api/auth/me', authMiddleware, (req, res) => {
 // ─── ADMIN routes ─────────────────────────────────────────────────────────────
 
 // POST /api/admin/reload-db  — перечитать БД с диска без перезапуска сервера
-// SEC: требует auth + username=='admin3'.
+// SEC: требует auth + isAdminUsername.
 app.post('/api/admin/reload-db', authMiddleware, (req, res) => {
   const me = db.users.find(u => u.id === req.userId);
-  if (!me || me.username !== 'admin3') return res.status(403).json({ message: 'Forbidden' });
+  if (!me || !isAdminUsername(me.username)) return res.status(403).json({ message: 'Forbidden' });
   reloadDb();
   res.json({ success: true, users: db.users.length, tracks: db.tracks.length, chats: db.chats.length });
 });
@@ -1619,7 +1619,7 @@ app.post('/api/shop/buy', authMiddleware, (req, res) => {
   const user = ensureWallet(db.users.find(u => u.id === req.userId));
   if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
   if (user.ownedItems.includes(itemId)) return res.json({ ok: true, already: true, balance: user.walletBalance, ownedItems: user.ownedItems });
-  // Бесплатно: dev-IP и админы (admin3 и др.) — режим проверки продукта.
+  // Бесплатно: dev-IP и админы (admin1, admin2, admin3 и др.) — режим проверки продукта.
   const devFree = isAdminReq(req);
 
   // Кастомные предметы от авторов: id вида "custom:<uuid>"
