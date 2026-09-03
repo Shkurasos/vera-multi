@@ -394,10 +394,10 @@ function MessageBubble({
       shopBubbleSx.boxShadow = '0 14px 34px rgba(0,0,0,0.38), 0 4px 10px rgba(0,0,0,0.22)';
       shopBubbleSx.transform = isHovered ? 'translateY(-3px)' : 'translateY(0)';
     } else if (t === 'gradient') {
-      // Градиентные пузыри из магазина подстраиваются под текущую тему:
-      // используем градиент/цвет «Своего пузыря» темы, чтобы пузырь всегда
-      // совпадал с темой, а не был жёстко оранжевым/синим/зелёным.
-      shopBubbleSx.background = bubbleOwnGradient || bgBubbleOwn;
+      // Градиентные пузыри из магазина: если есть свой градиент (закат/океан/лес),
+      // используем его; иначе — градиент текущей темы.
+      const customGradient = bubbleVal.gradient;
+      shopBubbleSx.background = customGradient || bubbleOwnGradient || bgBubbleOwn;
       shopBubbleSx.border = 'none';
       shopBubbleSx.boxShadow = '0 6px 18px rgba(0,0,0,0.25)';
     } else if (t === 'minimal') {
