@@ -4,7 +4,7 @@ import {
   Box, Typography, Avatar, IconButton, TextField,
   Menu, MenuItem, Tooltip, LinearProgress, Popover,
   Dialog, DialogTitle, DialogContent, DialogActions, Button,
-  Slider, Select, Divider as MuiDivider, Snackbar, Alert, Checkbox, FormControlLabel,
+  Slider, Select, Divider as MuiDivider, Snackbar, Alert,
 } from '@mui/material';
 import {
   Send, Send as SendIcon, AttachFile, MoreVert, Search, Mic, Stop,
@@ -31,7 +31,7 @@ import UserProfileModal from './UserProfileModal';
 import { Message, User } from '../types';
 import ChatThemeDialog from './ChatThemeDialog';
 import { useChatThemeStore } from '../store/chatThemeStore';
-import { useChatBgPrefsStore } from '../store/chatBgPrefsStore';
+import { useChatBgPrefsStore, STOCK_WALLPAPERS } from '../store/chatBgPrefsStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { useCustomEquipStore } from '../store/customEquipStore';
 import { specToStyle, specAnimationClass } from '../utils/customStyle';
@@ -179,8 +179,9 @@ function ChatWindowInner() {
     const { theme, setChatPhoto, setChatBgImage, chatPhoto: chatPhotoGlobal, themeVersion } = useThemeStore();
   const chatBgBrightness = useChatBgPrefsStore((s) => id ? s.getBrightness(id) : s.defaultBrightness);
   const setBgBrightness = useChatBgPrefsStore((s) => s.setBrightness);
-  const applyBgToAll = useChatBgPrefsStore((s) => s.applyAll);
-  const setApplyBgToAll = useChatBgPrefsStore((s) => s.setApplyAll);
+  const getChatWallpaper = useChatBgPrefsStore((s) => s.getChatWallpaper);
+  const setChatWallpaper = useChatBgPrefsStore((s) => s.setChatWallpaper);
+  const clearChatWallpaper = useChatBgPrefsStore((s) => s.clearChatWallpaper);
 
   const [text, setText] = useState('');
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -250,6 +251,27 @@ function ChatWindowInner() {
     };
   }, [liveBgVersion]);
   const prevMsgCountRef = useRef<number>(0);
+
+  // Вычисляем текущие обои для чата (глобальные стоковые или per-chat переопределение)
+  const currentWallpaper = useMemo(() => {
+    if (!id) return null;
+    return getChatWallpaper(id);
+  }, [id, getChatWallpaper]);
+
+  // URL для рендера: stock из каталога, photo из per-chat override, или live video
+  const wallpaperPhotoUrl = useMemo(() => {
+    if (!currentWallpaper) return null;
+    if (currentWallpaper.type === 'stock') {
+      const stock = STOCK_WALLPAPERS.find(w => w.id === currentWallpaper.value);
+      return stock?.url || null;
+    }
+    if (currentWallpaper.type === 'photo') {
+      return currentWallpaper.value; // dataURL или URL
+    }
+    return null;
+  }, [currentWallpaper]);
+
+  const hasLiveWallpaper = currentWallpaper?.type === 'live';
 
   useEffect(() => {
     if (id) {
@@ -752,7 +774,7 @@ function ChatWindowInner() {
         )}
 
         {/* ── Живые обои (видео-слой, приоритет выше фото) ── */}
-        {liveBgUrl && (
+        {hasLiveWallpaper && liveBgUrl && (
           <>
             <Box component="video" src={liveBgUrl}
               autoPlay muted loop playsInline
@@ -770,13 +792,13 @@ function ChatWindowInner() {
           </>
         )}
 
-        {/* ── Фото-фон чата (абсолютный слой) ── */}
-        {!liveBgUrl && theme.chatBgImage && (
+        {/* ── Фото-фон чата (стоковые или per-chat) ── */}
+        {!hasLiveWallpaper && wallpaperPhotoUrl && (
           <>
             {/* само фото */}
             <Box sx={{
               position: 'absolute', inset: 0, zIndex: 0,
-              backgroundImage: `url(${resolveFileUrl(theme.chatBgImage)})`,
+              backgroundImage: `url(${wallpaperPhotoUrl})`,
               backgroundSize: 'cover',
               backgroundPosition: 'center',
               backgroundRepeat: 'no-repeat',
@@ -788,15 +810,6 @@ function ChatWindowInner() {
               bgcolor: `rgba(0,0,0,${1 - chatBgBrightness})`,
               pointerEvents: 'none',
             }} />
-            {/* паттерн поверх фото */}
-            {theme.chatPattern && (
-              <Box sx={{
-                position: 'absolute', inset: 0, zIndex: 2,
-                backgroundImage: theme.chatPattern,
-                backgroundRepeat: 'repeat',
-                pointerEvents: 'none',
-              }} />
-            )}
           </>
         )}
 
@@ -989,7 +1002,8 @@ function ChatWindowInner() {
               setAnchorEl(null);
               await clearLiveBg();
               setLiveBgVersion((v) => v + 1);
-              setToast({ message: 'Живые обои убраны', severity: 'info' });
+              if (id) clearChatWallpaper(id);
+              setToast({ message: 'Живые обои убраны из этого чата', severity: 'info' });
             }}>
               🗑 Убрать живые обои
             </MenuItem>
@@ -1012,30 +1026,13 @@ function ChatWindowInner() {
                 }}
               />
             </Box>
-            <MenuItem sx={{ px: 2, py: 0.5 }}>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={applyBgToAll}
-                    onChange={(e) => {
-                      setApplyBgToAll(e.target.checked);
-                      if (e.target.checked && id) {
-                        // Применить текущую яркость ко всем чатам
-                        useChatBgPrefsStore.getState().applyBrightnessToAll(chatBgBrightness);
-                        setToast({ message: 'Яркость применена ко всем чатам', severity: 'success' });
-                      }
-                    }}
-                    size="small"
-                    sx={{ color: theme.textSec, '&.Mui-checked': { color: theme.accent } }}
-                  />
-                }
-                label={<Typography sx={{ fontSize: 13, color: theme.text }}>Применить ко всем чатам</Typography>}
-                sx={{ m: 0 }}
-              />
-            </MenuItem>
             <MuiDivider sx={{ borderColor: theme.border, my: 0.5 }} />
-            <MenuItem onClick={() => { setAnchorEl(null); setChatBgImage(undefined); setToast({ message: 'Обои чата убраны', severity: 'info' }); }}>
-              🗑 Убрать фото-фон
+            <MenuItem onClick={() => { 
+              setAnchorEl(null); 
+              if (id) clearChatWallpaper(id);
+              setToast({ message: 'Обои убраны из этого чата', severity: 'info' }); 
+            }}>
+              🗑 Убрать обои из этого чата
             </MenuItem>
           </Menu>
 
@@ -1058,7 +1055,9 @@ function ChatWindowInner() {
                 setUploading(true);
                 await saveLiveBg(file);
                 setLiveBgVersion((v) => v + 1);
-                setToast({ message: 'Живые обои установлены', severity: 'success' });
+                // Сохраняем как per-chat override типа 'live'
+                if (id) setChatWallpaper(id, { type: 'live', value: 'global' });
+                setToast({ message: 'Живые обои установлены для этого чата', severity: 'success' });
               } catch (err) {
                 console.error('live bg save error:', err);
                 setToast({ message: 'Не удалось сохранить видео: ' + ((err as any)?.message || err), severity: 'error' });
@@ -1110,9 +1109,9 @@ function ChatWindowInner() {
                   img.src = rawUrl;
                 });
                 if (!url) throw new Error('no url');
-                setChatPhoto(url);
-                setChatBgImage(url);
-                setToast({ message: 'Фото чата обновлено', severity: 'success' });
+                // Сохраняем фото как per-chat override
+                if (id) setChatWallpaper(id, { type: 'photo', value: url });
+                setToast({ message: 'Фото чата установлено для этого чата', severity: 'success' });
               } catch (err) {
                 console.error('chat photo upload error:', err);
                 setToast({ message: 'Ошибка загрузки фото: ' + ((err as any)?.message || err), severity: 'error' });

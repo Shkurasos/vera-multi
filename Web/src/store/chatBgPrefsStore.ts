@@ -2,49 +2,89 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 /**
- * Пер-чатовые настройки фона: яркость обоев/живых обоев и флаг «применить
- * ко всем чатам». Хранится локально на устройстве (синк можно добавить через
- * storeSyncSimple, если потребуется).
+ * Стоковые обои (встроенные пресеты).
+ */
+export const STOCK_WALLPAPERS = [
+  { id: 'none', name: 'Без обоев', type: 'none' as const },
+  { id: 'gradient-purple', name: 'Фиолетовый градиент', type: 'photo' as const, url: 'https://images.unsplash.com/photo-1557683316-973673baf926?w=1920' },
+  { id: 'gradient-blue', name: 'Синий градиент', type: 'photo' as const, url: 'https://images.unsplash.com/photo-1557682224-5b8590cd9ec5?w=1920' },
+  { id: 'gradient-pink', name: 'Розовый градиент', type: 'photo' as const, url: 'https://images.unsplash.com/photo-1557682268-e3955ed5d83f?w=1920' },
+  { id: 'mountains', name: 'Горы', type: 'photo' as const, url: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1920' },
+  { id: 'ocean', name: 'Океан', type: 'photo' as const, url: 'https://images.unsplash.com/photo-1505142468610-359e7d316be0?w=1920' },
+  { id: 'forest', name: 'Лес', type: 'photo' as const, url: 'https://images.unsplash.com/photo-1511497584788-876760111969?w=1920' },
+  { id: 'night-sky', name: 'Ночное небо', type: 'photo' as const, url: 'https://images.unsplash.com/photo-1419242902214-272b3f66ee7a?w=1920' },
+];
+
+export type WallpaperOverride = {
+  type: 'photo' | 'live' | 'stock';
+  /** Для photo: dataURL или URL; для live: blob ID в IndexedDB; для stock: id из STOCK_WALLPAPERS */
+  value: string;
+};
+
+/**
+ * Глобальные и per-chat настройки обоев/яркости.
  */
 export interface ChatBgPrefsState {
-  /** chatId -> { brightness: 0..1 } (0 = совсем тёмный, 1 = исходная картинка) */
-  perChat: Record<string, { brightness: number }>;
-  /** Базовое затемнение фона чата (0..1). */
+  /** Глобальные стоковые обои (применяются ко всем чатам по умолчанию) */
+  globalStockWallpaper: string; // id из STOCK_WALLPAPERS
+  
+  /** Per-chat переопределения (если установлены свои обои в чате) */
+  perChatOverrides: Record<string, WallpaperOverride>;
+  
+  /** Per-chat яркость фона (0..1, где 1 = полная яркость) */
+  perChatBrightness: Record<string, number>;
+  
+  /** Базовая яркость по умолчанию */
   defaultBrightness: number;
-  /** Применить выбранный фон ко всем чатам (галочка). */
-  applyAll: boolean;
-  /** Текущий чат, к которому применяется настройка (чтобы UI знал). */
-  currentChatId: string | null;
-  setCurrentChat: (id: string | null) => void;
+  
+  // Actions
+  setGlobalStockWallpaper: (id: string) => void;
+  setChatWallpaper: (chatId: string, override: WallpaperOverride) => void;
+  clearChatWallpaper: (chatId: string) => void;
+  getChatWallpaper: (chatId: string) => { type: 'stock' | 'photo' | 'live', value: string } | null;
+  
   setBrightness: (chatId: string, v: number) => void;
   getBrightness: (chatId: string) => number;
-  setApplyAll: (v: boolean) => void;
-  applyBrightnessToAll: (v: number) => void;
 }
 
 export const useChatBgPrefsStore = create<ChatBgPrefsState>()(
   persist(
     (set, get) => ({
-      perChat: {},
+      globalStockWallpaper: 'none',
+      perChatOverrides: {},
+      perChatBrightness: {},
       defaultBrightness: 0.65,
-      applyAll: false,
-      currentChatId: null,
-      setCurrentChat: (id) => set({ currentChatId: id }),
-      setBrightness: (chatId, v) => set((s) => ({
-        perChat: { ...s.perChat, [chatId]: { ...s.perChat[chatId], brightness: v } },
+      
+      setGlobalStockWallpaper: (id) => set({ globalStockWallpaper: id }),
+      
+      setChatWallpaper: (chatId, override) => set((s) => ({
+        perChatOverrides: { ...s.perChatOverrides, [chatId]: override },
       })),
-      getBrightness: (chatId) => {
-        const p = get().perChat[chatId];
-        return typeof p?.brightness === 'number' ? p.brightness : get().defaultBrightness;
+      
+      clearChatWallpaper: (chatId) => set((s) => {
+        const { [chatId]: _, ...rest } = s.perChatOverrides;
+        return { perChatOverrides: rest };
+      }),
+      
+      getChatWallpaper: (chatId) => {
+        const override = get().perChatOverrides[chatId];
+        if (override) return override;
+        
+        // Fallback на глобальные стоковые
+        const stockId = get().globalStockWallpaper;
+        if (stockId === 'none') return null;
+        return { type: 'stock' as const, value: stockId };
       },
-      setApplyAll: (v) => set({ applyAll: v }),
-      applyBrightnessToAll: (v) => {
-        const ids = Object.keys(get().perChat);
-        const all: Record<string, { brightness: number }> = {};
-        ids.forEach(id => { all[id] = { brightness: v }; });
-        set({ perChat: all, applyAll: true });
+      
+      setBrightness: (chatId, v) => set((s) => ({
+        perChatBrightness: { ...s.perChatBrightness, [chatId]: v },
+      })),
+      
+      getBrightness: (chatId) => {
+        const b = get().perChatBrightness[chatId];
+        return typeof b === 'number' ? b : get().defaultBrightness;
       },
     }),
-    { name: 'vera-chat-bg-prefs', version: 1 }
+    { name: 'vera-chat-bg-prefs', version: 2 }
   )
 );

@@ -8,10 +8,11 @@ import {
 import {
   Link as LinkIcon, DevicesOther, ChevronRight, ExpandMore, AutoAwesome,
   Brightness6, TextFields, Language, DataUsage, Notifications, Security, Lock, Public,
-  ViewSidebar, RestartAlt, Storefront, Palette,
+  ViewSidebar, RestartAlt, Storefront, Palette, Wallpaper,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useThemeStore } from '../store/themeStore';
+import WallpaperSettingsDialog from './WallpaperSettingsDialog';
 import {
   useUserSettingsStore, hashPassword,
   PrivacyScope, PreviewMode, AutoDeleteMonths,
@@ -33,6 +34,7 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
   const navigate = useNavigate();
   const [inviteOpen, setInviteOpen] = useState(false);
   const [designerOpen, setDesignerOpen] = useState(false);
+  const [wallpaperOpen, setWallpaperOpen] = useState(false);
   const shopSetOpen = useShopStore((x) => x.setOpen);
   const s = useUserSettingsStore();
   const { iconPack, uiStyle, setIconPack, setUiStyle } = useUiPrefsStore();
@@ -80,6 +82,14 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
             <ListItemButton onClick={() => { onClose(); navigate('/devices'); }} sx={{ py: 1.5 }}>
               <ListItemIcon sx={{ color: theme.accent, minWidth: 40 }}><DevicesOther /></ListItemIcon>
               <ListItemText primary="Устройства" secondary="Привязанные устройства и QR-код"
+                primaryTypographyProps={{ sx: { color: theme.text, fontWeight: 600 } }}
+                secondaryTypographyProps={{ sx: { color: theme.textSec, fontSize: 12 } }} />
+              <ChevronRight sx={{ color: theme.textSec }} />
+            </ListItemButton>
+            <Divider sx={{ borderColor: theme.border }} />
+            <ListItemButton onClick={() => setWallpaperOpen(true)} sx={{ py: 1.5 }}>
+              <ListItemIcon sx={{ color: theme.accent, minWidth: 40 }}><Wallpaper /></ListItemIcon>
+              <ListItemText primary="Обои для всех чатов" secondary="Выбор стоковых обоев по умолчанию"
                 primaryTypographyProps={{ sx: { color: theme.text, fontWeight: 600 } }}
                 secondaryTypographyProps={{ sx: { color: theme.textSec, fontSize: 12 } }} />
               <ChevronRight sx={{ color: theme.textSec }} />
@@ -467,6 +477,7 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
       </Dialog>
       <InviteLinkDialog open={inviteOpen} onClose={() => setInviteOpen(false)} />
       <LayoutDesignerDialog open={designerOpen} onClose={() => setDesignerOpen(false)} />
+      <WallpaperSettingsDialog open={wallpaperOpen} onClose={() => setWallpaperOpen(false)} />
     </>
   );
 }
