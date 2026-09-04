@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Box, Typography, IconButton, Button, Chip, CircularProgress, MenuItem, TextField, Dialog, DialogContent, Tooltip, Avatar } from '@mui/material';
-import { Close, Storefront, Lock, Check, Palette, Wallpaper, Face, AccountCircle, AccountBalanceWallet, Sort, Build, Visibility } from '@mui/icons-material';
+import { Close, Storefront, Lock, Check, Face, AccountCircle, AccountBalanceWallet, Sort, Build, Visibility } from '@mui/icons-material';
 import QRCode from 'qrcode';
 import { useThemeStore } from '../store/themeStore';
 import { SHOP_CATALOG, ShopCategory, ShopTab, useShopStore, selectShopItem, SHOP_CURRENCY } from '../store/shopStore';
@@ -18,9 +18,7 @@ interface Props {
 const CATEGORY_META: { id: ShopCategory; label: string; icon: React.ReactNode; hint: string }[] = [
   { id: 'profile', label: 'Обводка профиля', icon: <Face />, hint: 'Кастомные обводки аватарки' },
   { id: 'selfcard', label: 'Плашка своих сообщений', icon: <AccountCircle />, hint: 'Как подписаны ваши сообщения у других' },
-  { id: 'theme', label: 'Режимы тем', icon: <Palette />, hint: 'Доп. режимы для тем и обоев' },
-  { id: 'wallpaper', label: 'Обои', icon: <Wallpaper />, hint: 'Умные и динамические обои' },
-];
+  ];
 
 // Варианты сортировки (и для магазина, и для инвентаря).
 type SortMode = 'default' | 'price-asc' | 'price-desc' | 'name' | 'category' | 'rarity';

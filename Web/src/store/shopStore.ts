@@ -380,6 +380,16 @@ for (const r of RARITY_ORDER) {
 }
 
 /** Валюта магазина — «Вера-баллы» (пока виртуальные, покупка локальная). */
+// Пункты 1–2: убрали обои и «режимы тем» из магазина.
+// Обои/фото уже ставятся напрямую в чат, отдельные платные обои не нужны.
+for (let i = SHOP_CATALOG.length - 1; i >= 0; i--) {
+  const it = SHOP_CATALOG[i];
+  if (it.category === 'wallpaper' || it.applyKey === 'themeMode') {
+    SHOP_CATALOG.splice(i, 1);
+  }
+}
+
+
 export const SHOP_CURRENCY = 'ВП';
 
 export type AvatarRingSetting = 'default' | 'rainbow' | 'glow';
