@@ -4,7 +4,7 @@ import {
   Box, Typography, Avatar, IconButton, TextField,
   Menu, MenuItem, Tooltip, LinearProgress, Popover,
   Dialog, DialogTitle, DialogContent, DialogActions, Button,
-  Slider, Select, Divider as MuiDivider, Snackbar, Alert,
+  Slider, Select, Divider as MuiDivider, Snackbar, Alert, Checkbox, FormControlLabel,
 } from '@mui/material';
 import {
   Send, Send as SendIcon, AttachFile, MoreVert, Search, Mic, Stop,
@@ -31,6 +31,7 @@ import UserProfileModal from './UserProfileModal';
 import { Message, User } from '../types';
 import ChatThemeDialog from './ChatThemeDialog';
 import { useChatThemeStore } from '../store/chatThemeStore';
+import { useChatBgPrefsStore } from '../store/chatBgPrefsStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { useCustomEquipStore } from '../store/customEquipStore';
 import { specToStyle, specAnimationClass } from '../utils/customStyle';
@@ -176,6 +177,10 @@ function ChatWindowInner() {
   const mutedChats = { has: (id: string) => isMuted(id) };
   const { user } = useAuthStore();
     const { theme, setChatPhoto, setChatBgImage, chatPhoto: chatPhotoGlobal, themeVersion } = useThemeStore();
+  const chatBgBrightness = useChatBgPrefsStore((s) => id ? s.getBrightness(id) : s.defaultBrightness);
+  const setBgBrightness = useChatBgPrefsStore((s) => s.setBrightness);
+  const applyBgToAll = useChatBgPrefsStore((s) => s.applyAll);
+  const setApplyBgToAll = useChatBgPrefsStore((s) => s.setApplyAll);
 
   const [text, setText] = useState('');
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -759,7 +764,7 @@ function ChatWindowInner() {
             />
             <Box sx={{
               position: 'absolute', inset: 0, zIndex: 1,
-              bgcolor: `rgba(0,0,0,${1 - (theme.chatBgImageOpacity ?? 0.35)})`,
+              bgcolor: `rgba(0,0,0,${1 - chatBgBrightness})`,
               pointerEvents: 'none',
             }} />
           </>
@@ -780,7 +785,7 @@ function ChatWindowInner() {
             {/* затемнение */}
             <Box sx={{
               position: 'absolute', inset: 0, zIndex: 1,
-              bgcolor: `rgba(0,0,0,${1 - (theme.chatBgImageOpacity ?? 0.35)})`,
+              bgcolor: `rgba(0,0,0,${1 - chatBgBrightness})`,
               pointerEvents: 'none',
             }} />
             {/* паттерн поверх фото */}
@@ -988,6 +993,47 @@ function ChatWindowInner() {
             }}>
               🗑 Убрать живые обои
             </MenuItem>
+            <MuiDivider sx={{ borderColor: theme.border, my: 0.5 }} />
+            {/* Яркость фона чата */}
+            <Box sx={{ px: 2, py: 1.5 }}>
+              <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 0.5 }}>
+                Яркость фона ({Math.round(chatBgBrightness * 100)}%)
+              </Typography>
+              <Slider
+                value={chatBgBrightness}
+                onChange={(_, v) => id && setBgBrightness(id, v as number)}
+                min={0}
+                max={1}
+                step={0.05}
+                size="small"
+                sx={{
+                  color: theme.accent,
+                  '& .MuiSlider-thumb': { width: 14, height: 14 },
+                }}
+              />
+            </Box>
+            <MenuItem sx={{ px: 2, py: 0.5 }}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={applyBgToAll}
+                    onChange={(e) => {
+                      setApplyBgToAll(e.target.checked);
+                      if (e.target.checked && id) {
+                        // Применить текущую яркость ко всем чатам
+                        useChatBgPrefsStore.getState().applyBrightnessToAll(chatBgBrightness);
+                        setToast({ message: 'Яркость применена ко всем чатам', severity: 'success' });
+                      }
+                    }}
+                    size="small"
+                    sx={{ color: theme.textSec, '&.Mui-checked': { color: theme.accent } }}
+                  />
+                }
+                label={<Typography sx={{ fontSize: 13, color: theme.text }}>Применить ко всем чатам</Typography>}
+                sx={{ m: 0 }}
+              />
+            </MenuItem>
+            <MuiDivider sx={{ borderColor: theme.border, my: 0.5 }} />
             <MenuItem onClick={() => { setAnchorEl(null); setChatBgImage(undefined); setToast({ message: 'Обои чата убраны', severity: 'info' }); }}>
               🗑 Убрать фото-фон
             </MenuItem>
