@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { walletApi } from '../services/api';
+import { walletApi, usersApi } from '../services/api';
 import { RARITY_META, RARITY_ORDER } from '../utils/rarityStyles';
 import { useAuthStore } from './authStore';
 import { enableStoreSync } from '../services/storeSyncSimple';
@@ -477,9 +477,15 @@ export const useShopStore = create<ShopState>()(
         tab: 'inventory',
         setTab: (t) => set({ tab: t }),
         activeRing: 'ring-default',
-        setActiveRing: (id) => set({ activeRing: id }),
+        setActiveRing: (id) => {
+          set({ activeRing: id });
+          try { usersApi.update({ activeRing: id }); } catch {}
+        },
         activeSelfCard: 'selfcard-default',
-        setActiveSelfCard: (id) => set({ activeSelfCard: id }),
+        setActiveSelfCard: (id) => {
+          set({ activeSelfCard: id });
+          try { usersApi.update({ activeSelfCard: id }); } catch {}
+        },
         activeWallpaper: '',
         setActiveWallpaper: (id) => set({ activeWallpaper: id }),
         activeBubble: '',

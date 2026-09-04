@@ -440,16 +440,21 @@ function MessageBubble({
   }
 
   // ── Обводка аватара из магазина ──────────────────────────────────────
-  const ringVal = ringItem?.value as any;
+  // Обводка аватара: для своих сообщений — своя покупка; для чужих — обводка ОТПРАВИТЕЛЯ,
+  // переданная сервером (sender.activeRing). Так обводка привязана к аккаунту покупателя.
+  const ownRingId = useShopStore((s) => s.activeRing);
+  const ringIdForAvatar = isOwn ? ownRingId : (sender?.activeRing || '');
+  const ringItemForAvatar = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === (isOwn ? ownRingId : (sender?.activeRing || '')));
+  const ringValForAvatar = ringItemForAvatar?.value as any;
   const avatarSx: Record<string, any> = {
     width: 38, height: 38, cursor: 'pointer', flexShrink: 0,
     bgcolor: accent + '70',
     border: `2px solid ${isOwn ? accent : 'transparent'}`,
     transition: 'box-shadow 0.3s ease, border-color 0.3s ease',
   };
-  if (ringVal) {
+  if (ringValForAvatar) {
     // Единый стиль обводки из магазина (с анимациями для gradient/glow/pulse/aurora).
-    Object.assign(avatarSx, buildShopRingSx(ringVal, accent, false));
+    Object.assign(avatarSx, buildShopRingSx(ringValForAvatar, accent, false));
   }
   // Кастомная обводка (spec от авторов) — только для собственной аватарки.
   if (isOwn && customProfileSpec) {

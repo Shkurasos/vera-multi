@@ -27,6 +27,10 @@ export interface User {
   isAdmin?: boolean;
   /** ID закреплённого плейлиста, отображается на профиле как мини-плеер. */
   pinnedPlaylistId?: string | null;
+  /** Активная обводка аватара (id из магазина) — видна другим пользователям. */
+  activeRing?: string;
+  /** Активная «плашка» своих сообщений (id из магазина). */
+  activeSelfCard?: string;
 }
 
 export type ReputationVoteValue = 'positive' | 'neutral' | 'negative';
