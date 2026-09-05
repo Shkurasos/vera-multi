@@ -264,12 +264,6 @@ export default function ProfilePage() {
             <Storefront />
           </IconButton>
         </Tooltip>
-        <Tooltip title="Редактор тем">
-          <IconButton onClick={() => navigate('/theme-editor')}
-            sx={{ color: theme.textSec }}>
-            <Palette />
-          </IconButton>
-        </Tooltip>
         <Tooltip title="Настройки">
           <IconButton onClick={() => setSettingsOpen(true)}
             sx={{ color: theme.textSec }}>
@@ -595,7 +589,6 @@ export default function ProfilePage() {
               {[
                 { icon: <QrCode2 sx={{ fontSize: 18 }} />, label: 'QR-привязка', onClick: openLinkQr },
                 { icon: <Palette sx={{ fontSize: 18 }} />, label: 'Оформление', onClick: () => setCustomizeOpen(true) },
-                { icon: <Palette sx={{ fontSize: 18 }} />, label: 'Редактор тем', onClick: () => navigate('/theme-editor') },
                 { icon: <Storefront sx={{ fontSize: 18 }} />, label: 'Магазин VERA', onClick: () => useShopStore.getState().setOpen(true) },
               ].map((a, i) => (
                 <Button key={i} onClick={a.onClick} startIcon={a.icon} size="small"
