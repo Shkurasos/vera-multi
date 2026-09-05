@@ -3,7 +3,7 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button, Box, Typography,
   IconButton, Alert,
 } from '@mui/material';
-import { Close, DeleteOutline, UploadFile, Movie } from '@mui/icons-material';
+import { Close, DeleteOutline, UploadFile, Videocam } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
 import {
   useChatBgPrefsStore, STOCK_WALLPAPERS,
@@ -187,7 +187,7 @@ return (
           </Button>
           <Button
             variant="outlined"
-            startIcon={<Movie />}
+            startIcon={<Videocam />}
             onClick={() => videoInputRef.current?.click()}
             disabled={busy}
             sx={{ color: theme.accent, borderColor: theme.accent, '&:hover': { borderColor: theme.accent, bgcolor: theme.accent + '14' } }}
@@ -254,7 +254,7 @@ return (
                 '&:hover': { transform: 'scale(1.03)', boxShadow: `0 4px 16px ${theme.accent}40` },
               }}
             >
-              <Movie sx={{ fontSize: 32 }} />
+              <Videocam sx={{ fontSize: 32 }} />
               <Typography sx={{ fontSize: 11, fontWeight: 600 }}>Моё видео</Typography>
               <IconButton
                 size="small"
