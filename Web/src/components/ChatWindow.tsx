@@ -182,6 +182,7 @@ function ChatWindowInner() {
   const getChatWallpaper = useChatBgPrefsStore((s) => s.getChatWallpaper);
   const setChatWallpaper = useChatBgPrefsStore((s) => s.setChatWallpaper);
   const clearChatWallpaper = useChatBgPrefsStore((s) => s.clearChatWallpaper);
+  const liveBgStamp = useChatBgPrefsStore((s) => s.liveBgStamp);
 
   const [text, setText] = useState('');
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -249,7 +250,7 @@ function ChatWindowInner() {
       cancelled = true;
       if (currentUrl) URL.revokeObjectURL(currentUrl);
     };
-  }, [liveBgVersion]);
+  }, [liveBgVersion, liveBgStamp]);
   const prevMsgCountRef = useRef<number>(0);
 
   // Вычисляем текущие обои для чата (глобальные стоковые или per-chat переопределение)
