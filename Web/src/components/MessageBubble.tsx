@@ -651,9 +651,13 @@ function MessageBubble({
                   {formatTime(message.createdAt)}
                 </Typography>
                 {isOwn && (
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    {(message as any).status === 'read' ? <DoneAll sx={{ fontSize: 16, color: theme.accent }} /> : <Done sx={{ fontSize: 16 }} />}
-                  </Box>
+                  <Tooltip title={(message.readBy?.length ?? 0) > 1 ? 'Прочитано' : 'Отправлено'}>
+                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                      {message.readBy && message.readBy.length > 1
+                        ? <DoneAll sx={{ fontSize: 14, color: theme.accent }} />
+                        : <Done sx={{ fontSize: 14, color: theme.textSec }} />}
+                    </Box>
+                  </Tooltip>
                 )}
               </Box>
             </>
