@@ -7,6 +7,7 @@ import {
 } from '@mui/icons-material';
 import { useMusicStore } from '../store/musicStore';
 import { useThemeStore } from '../store/themeStore';
+import { useUserSettingsStore } from '../store/userSettingsStore';
 import { usePlaylistStore } from '../store/playlistStore';
 import { useMusicVisualizerStore } from '../store/musicVisualizerStore';
 import MusicVisualizerOverlay from './MusicVisualizerOverlay';
@@ -34,6 +35,7 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen }: Props = {}) 
     playerCollapsed, setPlayerCollapsed, playQueueIndex, removeFromQueue, clearQueue,
   } = useMusicStore();
   const { theme } = useThemeStore();
+  const playerPos = useUserSettingsStore((s) => s.layout.playerPos);
   const { playlists, getPlaylistTracks } = usePlaylistStore();
   const { settings: visualizerMap, getSettings, setSettings } = useMusicVisualizerStore();
 
@@ -227,10 +229,11 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen }: Props = {}) 
         {audioNode}
         <Box
           sx={{
-            position: 'fixed', top: 0, left: 0, right: 0, zIndex: 1300,
+            position: 'fixed', left: 0, right: 0, zIndex: 1300,
+            ...(playerPos === 'top' ? { top: 0, borderBottom: `1px solid ${theme.border}`, boxShadow: '0 2px 6px rgba(0,0,0,0.25)' }
+                                    : { bottom: 0, borderTop: `1px solid ${theme.border}`, boxShadow: '0 -2px 6px rgba(0,0,0,0.25)' }),
             height: 32, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            px: 2, bgcolor: theme.bgHeader, borderBottom: `1px solid ${theme.border}`,
-            boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
+            px: 2, bgcolor: theme.bgHeader,
             gap: 1,
           }}
         >

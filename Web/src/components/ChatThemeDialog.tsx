@@ -1,9 +1,8 @@
 import React from 'react';
 import { Dialog, DialogTitle, DialogContent, DialogActions, Box, Button, Typography, Divider } from '@mui/material';
-import { Lock, Storefront, Check, DeleteOutline } from '@mui/icons-material';
+import { Check, DeleteOutline } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
 import { useChatThemeStore, CHAT_THEME_PRESETS } from '../store/chatThemeStore';
-import { useShopStore, SHOP_CURRENCY } from '../store/shopStore';
 
 interface Props {
   chatId: string | null;
@@ -19,8 +18,7 @@ const PERCHAT_ITEM_ID = 'chat-theme';
 
 export default function ChatThemeDialog({ chatId, open, onClose }: Props) {
   const { theme } = useThemeStore();
-  const owned = useShopStore((s) => s.isOwned(PERCHAT_ITEM_ID));
-  const setOpenStore = useShopStore((s) => s.setOpen);
+  const owned = true;
   const setChatTheme = useChatThemeStore((s) => s.setChatTheme);
   const removeChatTheme = useChatThemeStore((s) => s.removeChatTheme);
   const current = useChatThemeStore((s) => (chatId ? s.themes[chatId] : undefined));
@@ -45,24 +43,7 @@ export default function ChatThemeDialog({ chatId, open, onClose }: Props) {
         Персональная тема чата
       </DialogTitle>
       <DialogContent dividers sx={{ borderColor: theme.border }}>
-        {!owned ? (
-          <Box sx={{ textAlign: 'center', py: 2 }}>
-            <Box sx={{
-              width: 64, height: 64, borderRadius: '50%', mx: 'auto', mb: 2,
-              bgcolor: theme.bgHover, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <Lock sx={{ color: theme.textSec, fontSize: 30 }} />
-            </Box>
-            <Typography sx={{ fontSize: 15, fontWeight: 600 }}>Функция платная</Typography>
-            <Typography sx={{ fontSize: 12, color: theme.textSec, mt: 1, mb: 2 }}>
-              Персональные темы для контактов продаются в магазине издателя.
-            </Typography>
-            <Button variant="contained" startIcon={<Storefront />} onClick={() => { onClose(); setOpenStore(true); }}
-              sx={{ bgcolor: theme.accent, color: '#001018', textTransform: 'none', borderRadius: 999, px: 3 }}>
-              Открыть магазин
-            </Button>
-          </Box>
-        ) : (
+        {(
           <>
             <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 1 }}>Выберите оформление для этого чата</Typography>
             {current?.presetName && (
@@ -97,10 +78,7 @@ export default function ChatThemeDialog({ chatId, open, onClose }: Props) {
           </>
         )}
       </DialogContent>
-      <DialogActions sx={{ bgcolor: theme.bgHeader, justifyContent: 'space-between' }}>
-        <Typography sx={{ fontSize: 11, color: theme.textSec, pl: 1 }}>
-          {owned ? 'Разблокировано ✓' : `Нужно купить · ${'250'} ${SHOP_CURRENCY}`}
-        </Typography>
+      <DialogActions sx={{ bgcolor: theme.bgHeader, justifyContent: 'flex-end' }}>
         <Button onClick={onClose} sx={{ color: theme.textSec, textTransform: 'none' }}>Закрыть</Button>
       </DialogActions>
       <Divider />

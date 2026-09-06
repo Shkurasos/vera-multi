@@ -94,10 +94,11 @@ export default function MainLayout() {
         </Box>
       );
     }
+    // Открытый чат — фуллскрин, без нижней навигации (как в Telegram).
     return (
       <Box sx={bg}>
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0, position: 'relative', zIndex: 1 }}>
-          <Box sx={{ flex: 1, overflow: 'hidden', minHeight: 0, height: '100%', mb: `${NAV_HEIGHT}px` }}>
+          <Box sx={{ flex: 1, overflow: 'hidden', minHeight: 0, height: '100%' }}>
             <Routes>
               <Route path="/chat/:id" element={<ChatWindow />} />
               <Route path="/botfather" element={<BotFatherPage />} />

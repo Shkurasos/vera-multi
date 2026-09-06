@@ -1,18 +1,12 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { walletApi, usersApi } from '../services/api';
+import { usersApi } from '../services/api';
 import { RARITY_META, RARITY_ORDER } from '../utils/rarityStyles';
-import { useAuthStore } from './authStore';
 import { enableStoreSync } from '../services/storeSyncSimple';
 
 /**
- * МАГАЗИН VERA
- * Каталог закрытых возможностей, которые продаёт издатель (только мы).
- *
- * Сейчас ВСЕ товары бесплатные — это техническая основа. Позже поставим
- * цены и флаг платности, а покупку привяжем к аккаунту на сервере.
- * UI-замок уже работает: если товар не куплен, его настройка в редакторе
- * будет закрыта (заблокирована).
+ * ИНВЕНТАРЬ VERA (бывший магазин).
+ * Все предметы каталога бесплатны и сразу доступны — продажи отключены.
  */
 
 export type ShopCategory =
@@ -457,16 +451,9 @@ export const useShopStore = create<ShopState>()(
     (set, get) => {
       const isOwned = (id: string) => {
         const item = SHOP_CATALOG.find(i => i.id === id);
-        if (!item) return false;
-        // Dev-режим: всё открыто.
-        try {
-          if (useAuthStore.getState().user?.isDev) return true;
-          // Админ-режим: всё открыто бесплатно.
-          if (useAuthStore.getState().user?.isAdmin) return true;
-        } catch {}
-        // Бесплатные (price: 0) и дефолтные открыты всегда; платные — только после purchase().
-        if (item.ownedByDefault || !item.price || item.price <= 0) return true;
-        return !!get().owned[id];
+        if (!item) return !!get().owned[id];
+        // Все предметы каталога бесплатны и сразу в инвентаре.
+        return true;
       };
       return {
         owned: {},
@@ -491,38 +478,11 @@ export const useShopStore = create<ShopState>()(
         activeBubble: '',
         setActiveBubble: (id) => set({ activeBubble: id }),
         purchase: async (id) => {
-          const item = SHOP_CATALOG.find(i => i.id === id);
-          if (!item) return;
-          const isAdmin = useAuthStore.getState().user?.isAdmin;
-          // Админы покупают всё бесплатно
-          if (isAdmin) {
-            set(s => ({ owned: { ...s.owned, [id]: true } }));
-            return;
-          }
-          const price = item.price && item.price > 0 ? item.price : 0;
-          if (price > 0) {
-            // Платная покупка — списываем ВП на сервере.
-            const { data } = await walletApi.buy(id);
-            set(s => ({
-              balanceVp: data.balance,
-              owned: { ...s.owned, [id]: true },
-            }));
-            return;
-          }
-          // Бесплатные открываются сразу.
+          // Продажи отключены: всё из каталога уже в инвентаре.
           set(s => ({ owned: { ...s.owned, [id]: true } }));
         },
         loadWallet: async () => {
-          try {
-            const { data } = await walletApi.get();
-            const serverOwned: string[] = Array.isArray(data.ownedItems) ? data.ownedItems : [];
-            set(s => ({
-              balanceVp: typeof data.balance === 'number' ? data.balance : 0,
-              owned: { ...s.owned, ...Object.fromEntries(serverOwned.map((oid) => [oid, true])) },
-            }));
-          } catch (err) {
-            console.warn('[shop] loadWallet failed:', err);
-          }
+          // Магазина нет — синхронизировать нечего.
         },
         setBalance: (n) => set({ balanceVp: n }),
         mergeOwned: (ids) => set(s => ({

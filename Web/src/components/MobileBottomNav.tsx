@@ -8,7 +8,6 @@ import {
   Chat as ChatIcon,
   Group,
   LibraryMusic,
-  Storefront,
   AccountCircle,
   DevicesOther,
 } from '@mui/icons-material';
@@ -58,6 +57,9 @@ export default function MobileBottomNav() {
   );
 
   if (!isMobile) return null;
+  // На мобильном внутри открытого чата (как в Telegram) — навигацию прячем,
+  // чтобы диалог был на весь экран; возврат — стрелкой в шапке чата.
+  if (activePath.startsWith('/chat/')) return null;
 
   return (
     <>
@@ -89,7 +91,6 @@ export default function MobileBottomNav() {
           unread > 0 ? <Badge badgeContent={unread} color="error" sx={{ position: 'absolute', top: 2, right: 0, '& .MuiBadge-badge': { fontSize: 9, minWidth: 16, height: 16, p: 0 } }} /> : undefined)}
         {item(isActive('/contacts'), 'Контакты', () => navigate('/contacts'), <Group fontSize="medium" />)}
         {item(false, 'Музыка', () => setMusicOpen(true), <LibraryMusic fontSize="medium" />)}
-        {item(false, 'Темы', () => setMarketplaceOpen(true), <Storefront fontSize="medium" />)}
         {item(isActive('/profile'), 'Профиль', () => navigate('/profile'), <AccountCircle fontSize="medium" />)}
         {item(isActive('/devices'), 'Устройства', () => navigate('/devices'), <DevicesOther fontSize="medium" />)}
       </Box>

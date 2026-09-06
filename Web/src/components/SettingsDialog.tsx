@@ -238,12 +238,6 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
               </AccordionSummary>
               <AccordionDetails>
                 <Stack spacing={2}>
-                  <Button variant="outlined" startIcon={<Storefront />} onClick={() => { setDesignerOpen(false); shopSetOpen(true); }}
-                    sx={{ color: theme.accent, borderColor: theme.accent + '55', textTransform: 'none', borderRadius: 2,
-                          '&:hover': { bgcolor: theme.accent + '10', borderColor: theme.accent } }}>
-                    Магазин VERA
-                  </Button>
-
                   <Button variant="contained" onClick={() => setDesignerOpen(true)}
                     sx={{ bgcolor: theme.accent, textTransform: 'none', borderRadius: 2,
                           '&:hover': { bgcolor: theme.accent } }}>

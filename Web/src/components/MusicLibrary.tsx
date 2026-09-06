@@ -173,7 +173,7 @@ export default function MusicLibrary() {
     <Box sx={{ px: 2, pt: 2, pb: 1 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 1 }}>
         <Typography variant="h6" fontWeight={800}>Музыка</Typography>
-        {tab === 0 && (
+        {tab === 0 ? (
           <Stack direction="row" spacing={0.5}>
             <IconButton size="small" onClick={() => setUrlOpen(true)} title="Импорт по ссылке"><LinkIcon fontSize="small" /></IconButton>
             <IconButton size="small" component="label" title="Импорт ZIP" disabled={zipBusy}>
@@ -185,9 +185,11 @@ export default function MusicLibrary() {
               <input hidden type="file" accept="audio/*,.mp3,.wav,.ogg,.flac,.aac,.m4a,.opus,.webm" onChange={(e) => { handleUploadFile(e.target.files?.[0]); e.currentTarget.value = ''; }} />
             </Button>
           </Stack>
-        )}
+        ) : <Box sx={{ visibility: 'hidden', height: 32 }} />}
       </Box>
-      {tab === 0 && <TextField fullWidth size="small" placeholder="Поиск треков..." value={query} onChange={(e) => handleSearch(e.target.value)} InputProps={{ startAdornment: <Search fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} /> }} />}
+      <Box sx={{ visibility: tab === 0 ? 'visible' : 'hidden', height: 40 }}>
+        <TextField fullWidth size="small" placeholder="Поиск треков..." value={query} onChange={(e) => handleSearch(e.target.value)} InputProps={{ startAdornment: <Search fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} /> }} />
+      </Box>
     </Box>
     <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ px: 2 }}>
       <Tab label="Все треки" />

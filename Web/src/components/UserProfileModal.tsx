@@ -40,7 +40,8 @@ export default function UserProfileModal({ user, open, onClose }: Props) {
   const displayName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.username;
   const isOnline = onlineUsers?.has?.(user.id);
   const accent = (isMe && custom.cardAccent) ? custom.cardAccent : theme.accent;
-  const banner = isMe && custom.bannerUrl
+  const isBannerVideo = !!custom.bannerUrl && (/^data:video\//i.test(custom.bannerUrl) || /\.(mp4|webm|mov)$/i.test(custom.bannerUrl));
+  const banner = isMe && custom.bannerUrl && !isBannerVideo
     ? `url(${custom.bannerUrl}) center/cover`
     : `linear-gradient(135deg, ${isMe ? custom.bannerColor : accent}, ${accent})`;
   const ic = (I: any) => <I sx={{ fontSize: 20, color: theme.textSec, mt: 0.2 }} />;
@@ -56,7 +57,11 @@ export default function UserProfileModal({ user, open, onClose }: Props) {
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm" PaperProps={{
       sx: { bgcolor: theme.bgChat, color: theme.text, borderRadius: 3, overflow: 'hidden' },
     }}>
-      <Box sx={{ position: 'relative', height: 140, background: banner }}>
+      <Box sx={{ position: 'relative', height: 140, background: banner, overflow: 'hidden' }}>
+        {isMe && isBannerVideo && (
+          <video src={custom.bannerUrl} autoPlay loop muted playsInline
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+        )}
         <IconButton onClick={onClose} sx={{
           position: 'absolute', top: 8, right: 8, color: '#fff',
           bgcolor: 'rgba(0,0,0,0.35)', '&:hover': { bgcolor: 'rgba(0,0,0,0.55)' },

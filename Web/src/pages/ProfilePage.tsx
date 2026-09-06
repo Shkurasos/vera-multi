@@ -6,7 +6,7 @@ import {
 } from '@mui/material';
 import {
   ArrowBack, Edit, PhotoCamera, Check, Close,
-  Phone, Cake, Info, LocationOn, Palette, QrCode2, ContentCopy, Settings, Storefront, Inventory2,
+  Phone, Cake, Info, LocationOn, Palette, QrCode2, ContentCopy, Settings, Inventory2,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
@@ -45,8 +45,10 @@ export default function ProfilePage() {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (file.size > 4 * 1024 * 1024) {
-      setSnack({ open: true, message: 'Файл больше 4 МБ', severity: 'error' });
+    const isVideo = /^video\//i.test(file.type);
+    const maxMb = isVideo ? 16 : 4;
+    if (file.size > maxMb * 1024 * 1024) {
+      setSnack({ open: true, message: `Файл больше ${maxMb} МБ`, severity: 'error' });
       return;
     }
     try {
@@ -258,12 +260,6 @@ export default function ProfilePage() {
         <Typography sx={{ flex: 1, fontSize: 18, fontWeight: 700, color: theme.text }}>
           Мой профиль
         </Typography>
-        <Tooltip title="Магазин VERA">
-          <IconButton onClick={() => useShopStore.getState().setOpen(true)}
-            sx={{ color: theme.textSec }}>
-            <Storefront />
-          </IconButton>
-        </Tooltip>
         <Tooltip title="Настройки">
           <IconButton onClick={() => setSettingsOpen(true)}
             sx={{ color: theme.textSec }}>
@@ -293,13 +289,20 @@ export default function ProfilePage() {
       <Box
         onClick={() => bannerInputRef.current?.click()}
         sx={{
-          height: 180, position: 'relative', cursor: 'pointer',
-          background: customization.bannerUrl
+          height: 180, position: 'relative', cursor: 'pointer', overflow: 'hidden',
+          background: (customization.bannerUrl && !/^data:video\//i.test(customization.bannerUrl) && !/\.(mp4|webm|mov)$/i.test(customization.bannerUrl))
             ? `url(${customization.bannerUrl}) center/cover no-repeat`
-            : `linear-gradient(135deg, ${customization.bannerColor || theme.accent} 0%, ${theme.bgChat} 100%)`,
+            : (customization.bannerUrl ? 'transparent' : `linear-gradient(135deg, ${customization.bannerColor || theme.accent} 0%, ${theme.bgChat} 100%)`),
           flexShrink: 0,
           '&:hover .banner-edit': { opacity: 1 },
         }}>
+        {customization.bannerUrl && (/^data:video\//i.test(customization.bannerUrl) || /\.(mp4|webm|mov)$/i.test(customization.bannerUrl)) && (
+          <video
+            src={customization.bannerUrl}
+            autoPlay loop muted playsInline
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+        )}
         <Box className="banner-edit" sx={{
           position: 'absolute', inset: 0, opacity: 0, transition: 'opacity 0.2s',
           bgcolor: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -307,7 +310,7 @@ export default function ProfilePage() {
         }}>
           <PhotoCamera sx={{ fontSize: 20 }} /> Сменить шапку
         </Box>
-        <input ref={bannerInputRef} type="file" hidden accept="image/*"
+        <input ref={bannerInputRef} type="file" hidden accept="image/*,video/*"
           onChange={handleBannerChange} />
       </Box>
 
@@ -398,9 +401,8 @@ export default function ProfilePage() {
           mt: 2, maxWidth: 480, width: '100%',
           display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1,
         }}>
-          {([
+          {([ 
             { label: 'Инвентарь', hint: 'Моя косметика', icon: <Inventory2 sx={{ fontSize: 19 }} />, tab: 'inventory' as const },
-            { label: 'Магазин', hint: 'Новинки VERA', icon: <Storefront sx={{ fontSize: 19 }} />, tab: 'shop' as const },
           ]).map((c) => (
             <Box key={c.label}
               onClick={() => { useShopStore.getState().setTab(c.tab); useShopStore.getState().setOpen(true); }}
@@ -590,7 +592,6 @@ export default function ProfilePage() {
                 { icon: <QrCode2 sx={{ fontSize: 18 }} />, label: 'QR-привязка', onClick: openLinkQr },
                 { icon: <Palette sx={{ fontSize: 18 }} />, label: 'Оформление', onClick: () => setCustomizeOpen(true) },
                 { icon: <Palette sx={{ fontSize: 18 }} />, label: 'Редактор тем', onClick: () => navigate('/theme-editor') },
-                { icon: <Storefront sx={{ fontSize: 18 }} />, label: 'Магазин VERA', onClick: () => useShopStore.getState().setOpen(true) },
               ].map((a, i) => (
                 <Button key={i} onClick={a.onClick} startIcon={a.icon} size="small"
                   sx={{
