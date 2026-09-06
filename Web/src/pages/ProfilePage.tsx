@@ -370,6 +370,23 @@ export default function ProfilePage() {
           <input ref={avatarInputRef} type="file" hidden accept="image/*" onChange={handleAvatarChange} />
         </Box>
 
+        {/* Инвентарь — по центру под аватаркой */}
+        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 1.5 }}>
+          <Box
+            onClick={() => { useShopStore.getState().setTab('inventory'); useShopStore.getState().setOpen(true); }}
+            sx={{
+              display: 'inline-flex', alignItems: 'center', gap: 1,
+              px: 1.5, py: 0.7, borderRadius: 2.5, cursor: 'pointer',
+              bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
+              transition: 'border-color .25s, background .25s, transform .25s',
+              '&:hover': { borderColor: theme.accent + '66', transform: 'translateY(-1px)' },
+              '&:active': { transform: 'scale(.98)' },
+            }}>
+            <Inventory2 sx={{ fontSize: 18, color: theme.accent }} />
+            <Typography sx={{ fontSize: 13, color: theme.text, fontWeight: 600 }}>Инвентарь</Typography>
+          </Box>
+        </Box>
+
         <Typography sx={{ mt: 2, fontSize: 22, fontWeight: 700, color: theme.text }}>
           {displayName}
         </Typography>
@@ -396,39 +413,6 @@ export default function ProfilePage() {
           </Box>
         )}
 
-        {/* ── Косметика из магазина VERA: минималистичные Инвентарь / Магазин ── */}
-        <Box sx={{
-          mt: 2, maxWidth: 480, width: '100%',
-          display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1,
-        }}>
-          {([ 
-            { label: 'Инвентарь', hint: 'Моя косметика', icon: <Inventory2 sx={{ fontSize: 19 }} />, tab: 'inventory' as const },
-          ]).map((c) => (
-            <Box key={c.label}
-              onClick={() => { useShopStore.getState().setTab(c.tab); useShopStore.getState().setOpen(true); }}
-              sx={{
-                display: 'flex', alignItems: 'center', gap: 1.2,
-                px: 1.5, py: 1.2, borderRadius: 2.5, cursor: 'pointer',
-                bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
-                transition: 'border-color .25s cubic-bezier(.16,1,.3,1), background .25s cubic-bezier(.16,1,.3,1), transform .25s cubic-bezier(.34,1.56,.64,1)',
-                '&:hover': { borderColor: theme.accent + '66', transform: 'translateY(-1px)' },
-                '&:active': { transform: 'scale(.98)' },
-              }}>
-              <Box sx={{
-                width: 34, height: 34, borderRadius: 2, flexShrink: 0,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                bgcolor: theme.bgInput, border: `1px solid ${theme.border}`,
-                color: theme.accent,
-              }}>
-                {c.icon}
-              </Box>
-              <Box sx={{ minWidth: 0 }}>
-                <Typography sx={{ fontSize: 13, color: theme.text, fontWeight: 600, lineHeight: 1.2 }}>{c.label}</Typography>
-                <Typography sx={{ fontSize: 11, color: theme.textSec, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.hint}</Typography>
-              </Box>
-            </Box>
-          ))}
-        </Box>
       </Box>
 
       <Divider sx={{ borderColor: theme.border }} />
