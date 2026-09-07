@@ -183,6 +183,10 @@ import _vGroup from '@mui/icons-material/Group';
 import _vGroupOutlined from '@mui/icons-material/GroupOutlined';
 import _vGroupRounded from '@mui/icons-material/GroupRounded';
 import _vGroupSharp from '@mui/icons-material/GroupSharp';
+import _vGroups from '@mui/icons-material/Groups';
+import _vGroupsOutlined from '@mui/icons-material/GroupsOutlined';
+import _vGroupsRounded from '@mui/icons-material/GroupsRounded';
+import _vGroupsSharp from '@mui/icons-material/GroupsSharp';
 import _vHeadset from '@mui/icons-material/Headset';
 import _vHeadsetOutlined from '@mui/icons-material/HeadsetOutlined';
 import _vHeadsetRounded from '@mui/icons-material/HeadsetRounded';
@@ -518,6 +522,7 @@ const MAP: Record<string, Record<string, React.ComponentType<SvgIconProps>>> = {
   FullscreenExit: { filled: _vFullscreenExit, outlined: _vFullscreenExitOutlined, rounded: _vFullscreenExitRounded, sharp: _vFullscreenExitSharp },
   GraphicEq: { filled: _vGraphicEq, outlined: _vGraphicEqOutlined, rounded: _vGraphicEqRounded, sharp: _vGraphicEqSharp },
   Group: { filled: _vGroup, outlined: _vGroupOutlined, rounded: _vGroupRounded, sharp: _vGroupSharp },
+  Groups: { filled: _vGroups, outlined: _vGroupsOutlined, rounded: _vGroupsRounded, sharp: _vGroupsSharp },
   Headset: { filled: _vHeadset, outlined: _vHeadsetOutlined, rounded: _vHeadsetRounded, sharp: _vHeadsetSharp },
   HeadsetOff: { filled: _vHeadsetOff, outlined: _vHeadsetOffOutlined, rounded: _vHeadsetOffRounded, sharp: _vHeadsetOffSharp },
   Image: { filled: _vImage, outlined: _vImageOutlined, rounded: _vImageRounded, sharp: _vImageSharp },
@@ -649,6 +654,7 @@ export const Fullscreen = make('Fullscreen');
 export const FullscreenExit = make('FullscreenExit');
 export const GraphicEq = make('GraphicEq');
 export const Group = make('Group');
+export const Groups = make('Groups');
 export const Headset = make('Headset');
 export const HeadsetOff = make('HeadsetOff');
 export const Image = make('Image');

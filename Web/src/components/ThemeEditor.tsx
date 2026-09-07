@@ -392,6 +392,54 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
               </div>
             </div>
 
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={draft.disableBackgroundGlow || false}
+                  onChange={e => setDraft(d => ({ ...d, disableBackgroundGlow: e.target.checked }))}
+                  style={{ width: 16, height: 16, cursor: 'pointer' }}
+                />
+                <span style={{ color: theme.text }}>Отключить фоновое свечение</span>
+              </label>
+              <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4, marginLeft: 24 }}>
+                Убирает фиолетово-розовые градиенты за всеми слоями
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 13, marginBottom: 8, color: theme.text }}>Отделка поверхностей (Finish)</div>
+              <select
+                value={draft.finish || 'solid'}
+                onChange={e => setDraft(d => ({ ...d, finish: e.target.value as any }))}
+                style={{
+                  width: '100%', padding: '6px 10px', borderRadius: 6, fontSize: 13,
+                  border: `1px solid ${theme.border}`, background: theme.bgInput, color: theme.text,
+                  cursor: 'pointer', marginBottom: 10,
+                }}
+              >
+                <option value="solid">Обычная (Solid)</option>
+                <option value="glass">Стеклянная (Glass)</option>
+                <option value="matte">Матовая (Matte)</option>
+                <option value="metal">Металлик (Metal)</option>
+              </select>
+              {draft.finish && draft.finish !== 'solid' && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ fontSize: 12, marginBottom: 6, color: theme.textSec }}>
+                    Интенсивность: {Math.round((draft.finishAmount ?? 0.5) * 100)}%
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={Math.round((draft.finishAmount ?? 0.5) * 100)}
+                    onChange={e => setDraft(d => ({ ...d, finishAmount: parseInt(e.target.value) / 100 }))}
+                    style={{ width: '100%', cursor: 'pointer' }}
+                  />
+                </div>
+              )}
+            </div>
+
             <div style={sectionLabel}>Превью чата</div>
             <div style={{
               ...previewChat,

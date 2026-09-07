@@ -19,7 +19,7 @@ import { useChatPrefsStore } from '../store/chatPrefsStore';
 import { useChatSoundStore } from '../store/chatSoundStore';
 import NotificationSettingsDialog from './NotificationSettingsDialog';
 import { useAuthStore } from '../store/authStore';
-import { useThemeStore } from '../store/themeStore';
+import { useThemeStore, getFinishStyles } from '../store/themeStore';
 import { useChatSettingsStore, BUILTIN_FONTS } from '../store/chatSettingsStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
 import { sendTypingStart, sendTypingStop } from '../services/socket';
@@ -841,6 +841,7 @@ function ChatWindowInner() {
           flexShrink: 0,
           position: 'relative', zIndex: 2,
           order: layout.chatHeaderPos === 'bottom' ? 3 : 0,
+          ...getFinishStyles(theme),
         }}>
           {/* Avatar — клик открывает профиль/инфо */}
           <Tooltip title="К списку чатов">
@@ -1631,6 +1632,7 @@ placeholder="Сообщение..."
                   '& fieldset': { borderColor: theme.border },
                   '&:hover fieldset': { borderColor: theme.accent + '40' },
                   '&.Mui-focused fieldset': { borderColor: theme.accent + '80' },
+                  ...getFinishStyles(theme),
                 },
                 '& .MuiInputBase-input::placeholder': { color: theme.textSec },
               }}

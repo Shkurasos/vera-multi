@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { usersApi } from '../services/api';
 
+export type ThemeFinish = 'solid' | 'glass' | 'matte' | 'metal';
+
 export interface Theme {
   id: number;
   name: string;
@@ -23,6 +25,12 @@ export interface Theme {
   chatPattern?: string;
   // Отключить фоновые размытые пузыри (animated blobs)
   disableBackgroundBlobs?: boolean;
+  // Отключить фиолетово-розовое фоновое свечение (градиенты за всеми слоями)
+  disableBackgroundGlow?: boolean;
+  // Режим отделки поверхностей: solid / стекло (прозрачность) / матовый (шероховатость) / металлик
+  finish?: ThemeFinish;
+  // Интенсивность эффекта отделки (0..1; для стекла — прозрачность, для металла — блеск, для матовости — зерно)
+  finishAmount?: number;
   // base64 или data URL пользовательского фото-фона чата
   chatBgImage?: string;
   // прозрачность пользовательского фото-фона (0-1)
@@ -145,6 +153,7 @@ export function themeToLink(theme: Theme): string {
       on: theme.online,
       cp: theme.chatPattern,
       db: theme.disableBackgroundBlobs,
+      dg: theme.disableBackgroundGlow,
       ci: theme.chatBgImage,
       co: theme.chatBgImageOpacity,
       og: theme.bubbleOwnGradient,
@@ -154,6 +163,8 @@ export function themeToLink(theme: Theme): string {
       sl: theme.sidebarBlur,
       hg: theme.headerGradient,
       ot: theme.bubbleOwnText,
+      f: theme.finish,
+      fa: theme.finishAmount,
     };
     const json = JSON.stringify(payload);
     return btoa(unescape(encodeURIComponent(json)));
@@ -186,6 +197,7 @@ export function themeFromLink(link: string): Theme | null {
       online: p.on || '#0f0',
       chatPattern: p.cp,
       disableBackgroundBlobs: p.db,
+      disableBackgroundGlow: p.dg,
       chatBgImage: p.ci,
       chatBgImageOpacity: p.co ?? 0.35,
       bubbleOwnGradient: p.og,
@@ -195,11 +207,55 @@ export function themeFromLink(link: string): Theme | null {
       sidebarBlur: p.sl,
       headerGradient: p.hg,
       bubbleOwnText: p.ot,
+      finish: p.f,
+      finishAmount: p.fa ?? 0.5,
     };
   } catch {
     return null;
   }
 }
+
+// ── Хелпер для применения material finish эффектов ──
+export function getFinishStyles(theme: Theme) {
+  const finish = theme.finish || 'solid';
+  const amount = theme.finishAmount ?? 0.5;
+
+  switch (finish) {
+    case 'glass':
+      // Прозрачность + backdrop-blur
+      return {
+        backdropFilter: `blur(${12 + amount * 16}px) saturate(${1.2 + amount * 0.3})`,
+        background: `${theme.bgHeader}${Math.round((1 - amount * 0.4) * 255).toString(16).padStart(2, '0')}`,
+      };
+    case 'matte':
+      // Матовая шероховатость — убираем блеск, добавляем subtle noise через фильтр
+      return {
+        filter: `contrast(${0.96 - amount * 0.06}) brightness(${0.98 - amount * 0.03})`,
+        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='${0.6 + amount * 0.3}' numOctaves='3' /%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23n)' opacity='${0.03 + amount * 0.04}' /%3E%3C/svg%3E")`,
+      };
+    case 'metal':
+      // Металлический градиент-оверлей
+      return {
+        position: 'relative' as const,
+        '&::before': {
+          content: '""',
+          position: 'absolute',
+          inset: 0,
+          pointerEvents: 'none',
+          background: `linear-gradient(135deg, 
+            rgba(255,255,255,${0.08 * amount}) 0%, 
+            transparent 30%, 
+            rgba(255,255,255,${0.12 * amount}) 50%, 
+            transparent 70%, 
+            rgba(255,255,255,${0.06 * amount}) 100%)`,
+          mixBlendMode: 'overlay',
+        },
+      };
+    default:
+      return {};
+  }
+}
+
 
 export const THEMES: Theme[] = [
   // ── 0 ── Vera 0.2 Betta — AMOLED Glass / 2026 ─────────────────────────────
@@ -373,6 +429,8 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #0d1c32 0%, #0a1628 60%, #060e18 100%)',
     headerGradient: 'linear-gradient(90deg, #0c1525 0%, #060e18 100%)',
     bubbleOwnText: '#ffffff',
+    finish: 'glass',
+    finishAmount: 0.5,
   },
 
   // ── 8 ── Песчаный берег ──────────────────────────────────────────────────
@@ -458,6 +516,8 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #f8fafc 0%, #f0f4f8 60%, #e2e8f0 100%)',
     headerGradient: 'linear-gradient(90deg, #e2e8f0 0%, #d0dce8 100%)',
     bubbleOwnText: '#ffffff',
+    finish: 'glass',
+    finishAmount: 0.7,
   },
 
   // ── 13 ── Космический бархат ─────────────────────────────────────────────
@@ -475,6 +535,8 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #120e1e 0%, #0d0b15 60%, #080610 100%)',
     headerGradient: 'linear-gradient(90deg, #100c18 0%, #080610 100%)',
     bubbleOwnText: '#ffffff',
+    finish: 'metal',
+    finishAmount: 0.4,
   },
 
   // ── 14 ── Болотный мох ───────────────────────────────────────────────────
@@ -611,6 +673,8 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #0e1020 0%, #0b0d1a 60%, #07080f 100%)',
     headerGradient: 'linear-gradient(90deg, #0d0f1c 0%, #07080f 100%)',
     bubbleOwnText: '#eef2ff',
+    finish: 'glass',
+    finishAmount: 0.5,
   },
 
   // ── 22 ── Crimson Chalk ──────────────────────────────────────────────────
@@ -645,6 +709,8 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #101827 0%, #070C17 62%, #030611 100%)',
     headerGradient: 'linear-gradient(90deg, #030611 0%, #101827 50%, #030611 100%)',
     bubbleOwnText: '#F4FAFF',
+    finish: 'glass',
+    finishAmount: 0.8,
   },
 
   // ── 24 ── Vault Gold ─────────────────────────────────────────────────────
@@ -662,6 +728,8 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #151410 0%, #0A0A0A 64%, #000000 100%)',
     headerGradient: 'linear-gradient(90deg, #050505 0%, #1B1710 52%, #050505 100%)',
     bubbleOwnText: '#111111',
+    finish: 'metal',
+    finishAmount: 0.5,
   },
 
   // ── 25 ── Noir Rose ──────────────────────────────────────────────────────
@@ -733,16 +801,17 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#03110A',
   },
 
-  // ── 29 ── Apple Minimalism — чистота, пространство, светлые тона ──────────
+  // ── 29 ── Монохром — чёрно-белый минимализм ─────────────────────────────────
   {
-    id: 29, name: 'Apple Minimalism',
-    bg: '#FFFFFF', text: '#000000', accent: '#007AFF',
+    id: 29, name: 'Монохром',
+    bg: '#FFFFFF', text: '#000000', accent: '#000000',
     bgSidebar: '#F5F5F7', bgChat: '#FFFFFF', bgHeader: '#FAFAFA',
-    bgInput: '#F2F2F7', bgBubbleOwn: '#007AFF', bgBubbleOther: '#E9E9EB',
+    bgInput: '#F2F2F7', bgBubbleOwn: '#000000', bgBubbleOther: '#E9E9EB',
     bgHover: '#F2F2F7', bgActive: '#E5E5EA', textSec: '#8E8E93',
     border: 'rgba(0,0,0,0.08)', online: '#34C759',
     chatPattern: undefined,
     disableBackgroundBlobs: true,
+    disableBackgroundGlow: true,
     bubbleOwnGradient: undefined,
     bubbleOwnShadow: '0 1px 2px rgba(0,0,0,0.08)',
     bubbleOtherShadow: '0 1px 2px rgba(0,0,0,0.04)',
@@ -750,6 +819,30 @@ export const THEMES: Theme[] = [
     sidebarBlur: undefined,
     headerGradient: undefined,
     bubbleOwnText: '#FFFFFF',
+    finish: 'matte',
+    finishAmount: 0.6,
+  },
+
+  // ── 30 ── Монохром Тёмный — бело-чёрный минимализм (матовый графит) ──────────
+  {
+    id: 30, name: 'Монохром Тёмный',
+    bg: '#1C1C1E', text: '#FFFFFF', accent: '#FFFFFF',
+    bgSidebar: '#282828', bgChat: '#1C1C1E', bgHeader: '#262626',
+    bgInput: '#3A3A3C', bgBubbleOwn: '#F2F2F7', bgBubbleOther: '#3A3A3C',
+    bgHover: '#2E2E30', bgActive: '#38383A', textSec: '#98989E',
+    border: 'rgba(255,255,255,0.10)', online: '#34C759',
+    chatPattern: undefined,
+    disableBackgroundBlobs: true,
+    disableBackgroundGlow: true,
+    bubbleOwnGradient: undefined,
+    bubbleOwnShadow: '0 1px 2px rgba(0,0,0,0.5)',
+    bubbleOtherShadow: '0 1px 2px rgba(0,0,0,0.3)',
+    sidebarGradient: undefined,
+    sidebarBlur: undefined,
+    headerGradient: undefined,
+    bubbleOwnText: '#000000',
+    finish: 'matte',
+    finishAmount: 0.6,
   },
 ];
 

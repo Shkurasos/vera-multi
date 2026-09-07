@@ -17,7 +17,7 @@ import { useNavigate } from 'react-router-dom';
 import { useChatStore } from '../store/chatStore';
 import { useChatPrefsStore } from '../store/chatPrefsStore';
 import { useAuthStore } from '../store/authStore';
-import { useThemeStore } from '../store/themeStore';
+import { useThemeStore, getFinishStyles } from '../store/themeStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { useCustomEquipStore } from '../store/customEquipStore';
@@ -396,6 +396,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       transition: resizing ? 'none' : 'width .2s ease, min-width .2s ease',
       overflow: 'hidden',
       position: 'relative',
+      ...getFinishStyles(theme),
       '&::before': {
         content: '""', position: 'absolute', inset: 0, pointerEvents: 'none',
         background: `radial-gradient(circle at 20% 0%, ${theme.accent}22 0, transparent 34%), radial-gradient(circle at 80% 100%, rgba(255,79,216,0.14) 0, transparent 30%)`,

@@ -59,7 +59,7 @@ export default function MainLayout() {
     maxHeight: '100dvh',
     overflow: 'hidden',
     bgcolor: '#000',
-    background: `
+    background: theme.disableBackgroundGlow ? theme.bg : `
       radial-gradient(circle at 8% 0%, ${theme.accent}24 0, transparent 32%),
       radial-gradient(circle at 88% 16%, rgba(255,79,216,0.16) 0, transparent 34%),
       radial-gradient(circle at 50% 120%, rgba(124,92,255,0.18) 0, transparent 36%),
