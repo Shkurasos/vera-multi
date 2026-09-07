@@ -3,6 +3,7 @@ import { Box, Typography, TextField, List, ListItem, ListItemAvatar, Avatar, Lis
 import { GraphicEq, Pause, MusicNote, Search, PlaylistAdd, Edit, Delete, UploadFile, Link as LinkIcon, FolderZip } from '@mui/icons-material';
 import { useMusicStore } from '../store/musicStore';
 import { usePlaylistStore } from '../store/playlistStore';
+import { useThemeStore } from '../store/themeStore';
 import { Track } from '../types';
 import PlaylistsPanel from './PlaylistsPanel';
 
@@ -15,6 +16,7 @@ function formatDuration(s: number): string {
 export default function MusicLibrary() {
   const { tracks, currentTrack, isPlaying, loadTracks, search, play, togglePlay, uploadTrack, updateTrack, deleteTrack, importUrl, importZip } = useMusicStore();
   const { playlists, load: loadPlaylists, addTrack, create } = usePlaylistStore();
+  const { theme } = useThemeStore();
   const [tab, setTab] = useState(0);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
@@ -172,15 +174,15 @@ export default function MusicLibrary() {
   return <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
     <Box sx={{ px: 2, pt: 2, pb: 1 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 1 }}>
-        <Typography variant="h6" fontWeight={800}>Музыка</Typography>
+        <Typography variant="h6" fontWeight={800} sx={{ color: theme.text }}>Музыка</Typography>
         {tab === 0 ? (
           <Stack direction="row" spacing={0.5}>
-            <IconButton size="small" onClick={() => setUrlOpen(true)} title="Импорт по ссылке"><LinkIcon fontSize="small" /></IconButton>
-            <IconButton size="small" component="label" title="Импорт ZIP" disabled={zipBusy}>
-              {zipBusy ? <CircularProgress size={16} /> : <FolderZip fontSize="small" />}
+            <IconButton size="small" onClick={() => setUrlOpen(true)} title="Импорт по ссылке" sx={{ color: theme.textSec, '&:hover': { color: theme.accent } }}><LinkIcon fontSize="small" /></IconButton>
+            <IconButton size="small" component="label" title="Импорт ZIP" disabled={zipBusy} sx={{ color: theme.textSec, '&:hover': { color: theme.accent } }}>
+              {zipBusy ? <CircularProgress size={16} sx={{ color: theme.accent }} /> : <FolderZip fontSize="small" />}
               <input hidden type="file" accept=".zip,application/zip" onChange={(e) => { handleImportZip(e.target.files?.[0]); e.currentTarget.value = ''; }} />
             </IconButton>
-            <Button component="label" size="small" variant="contained" startIcon={uploading ? <CircularProgress size={16} color="inherit" /> : <UploadFile />} disabled={uploading}>
+            <Button component="label" size="small" variant="contained" startIcon={uploading ? <CircularProgress size={16} color="inherit" /> : <UploadFile />} disabled={uploading} sx={{ bgcolor: theme.accent, '&:hover': { bgcolor: theme.accent + 'cc' } }}>
               {uploading ? `${uploadProgress || 0}%` : 'Добавить'}
               <input hidden type="file" accept="audio/*,.mp3,.wav,.ogg,.flac,.aac,.m4a,.opus,.webm" onChange={(e) => { handleUploadFile(e.target.files?.[0]); e.currentTarget.value = ''; }} />
             </Button>
@@ -188,40 +190,40 @@ export default function MusicLibrary() {
         ) : <Box sx={{ visibility: 'hidden', height: 32 }} />}
       </Box>
       <Box sx={{ visibility: tab === 0 ? 'visible' : 'hidden', height: 40 }}>
-        <TextField fullWidth size="small" placeholder="Поиск треков..." value={query} onChange={(e) => handleSearch(e.target.value)} InputProps={{ startAdornment: <Search fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} /> }} />
+        <TextField fullWidth size="small" placeholder="Поиск треков..." value={query} onChange={(e) => handleSearch(e.target.value)} InputProps={{ startAdornment: <Search fontSize="small" sx={{ mr: 1, color: theme.textSec }} /> }} />
       </Box>
     </Box>
-    <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ px: 2 }}>
+    <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ px: 2, '& .MuiTab-root': { color: theme.textSec }, '& .Mui-selected': { color: theme.accent }, '& .MuiTabs-indicator': { bgcolor: theme.accent } }}>
       <Tab label="Все треки" />
       <Tab label={`Плейлисты${playlists.length ? ` (${playlists.length})` : ''}`} />
     </Tabs>
     <Box data-tab-panel key={tab} sx={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
-    {tab === 1 ? <Box sx={{ flex: 1, overflow: 'hidden', minWidth: 0 }}><PlaylistsPanel /></Box> : loading ? <Box display="flex" justifyContent="center" mt={4}><CircularProgress /></Box> : <List data-vera-list sx={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', px: 1 }}>
+    {tab === 1 ? <Box sx={{ flex: 1, overflow: 'hidden', minWidth: 0 }}><PlaylistsPanel /></Box> : loading ? <Box display="flex" justifyContent="center" mt={4}><CircularProgress sx={{ color: theme.accent }} /></Box> : <List data-vera-list sx={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', px: 1 }}>
       {tracks.map((track) => {
         const isCurrentPlaying = currentTrack?.id === track.id && isPlaying;
-        return <ListItem key={track.id} sx={{ '&:hover': { bgcolor: 'action.hover' }, borderRadius: 2, pr: 16, minWidth: 0 }} secondaryAction={<Box sx={{ display: 'flex', gap: 0.25 }}>
-          <IconButton size="small" onClick={(e) => openAddMenu(e, track)}><PlaylistAdd fontSize="small" /></IconButton>
-          <IconButton size="small" onClick={() => openEdit(track)}><Edit fontSize="small" /></IconButton>
-          <IconButton size="small" onClick={() => removeTrack(track)}><Delete fontSize="small" /></IconButton>
-          <IconButton size="small" onClick={() => handlePlay(track)}>{isCurrentPlaying ? <Pause fontSize="small" color="primary" /> : <GraphicEq fontSize="small" />}</IconButton>
+        return <ListItem key={track.id} sx={{ '&:hover': { bgcolor: theme.bgHover }, borderRadius: 2, pr: 16, minWidth: 0 }} secondaryAction={<Box sx={{ display: 'flex', gap: 0.25 }}>
+          <IconButton size="small" onClick={(e) => openAddMenu(e, track)} sx={{ color: theme.textSec, '&:hover': { color: theme.accent } }}><PlaylistAdd fontSize="small" /></IconButton>
+          <IconButton size="small" onClick={() => openEdit(track)} sx={{ color: theme.textSec, '&:hover': { color: theme.accent } }}><Edit fontSize="small" /></IconButton>
+          <IconButton size="small" onClick={() => removeTrack(track)} sx={{ color: theme.textSec, '&:hover': { color: theme.accent } }}><Delete fontSize="small" /></IconButton>
+          <IconButton size="small" onClick={() => handlePlay(track)} sx={{ color: isCurrentPlaying ? theme.accent : theme.textSec, '&:hover': { color: theme.accent } }}>{isCurrentPlaying ? <Pause fontSize="small" /> : <GraphicEq fontSize="small" />}</IconButton>
         </Box>}>
-          <ListItemAvatar><Avatar src={track.coverUrl || ''} variant="rounded" sx={{ bgcolor: 'primary.dark' }}><MusicNote fontSize="small" /></Avatar></ListItemAvatar>
-          <ListItemText primary={<Typography fontSize={14} fontWeight={currentTrack?.id === track.id ? 800 : 500} color={currentTrack?.id === track.id ? 'primary.light' : 'text.primary'} noWrap>{track.title}</Typography>} secondary={<Typography fontSize={12} color="text.secondary" noWrap>{track.artist || 'Неизвестный'} • {formatDuration(track.duration)}{track.description ? ` • ${track.description}` : ''}</Typography>} />
+          <ListItemAvatar><Avatar src={track.coverUrl || ''} variant="rounded" sx={{ bgcolor: theme.accent }}><MusicNote fontSize="small" /></Avatar></ListItemAvatar>
+          <ListItemText primary={<Typography fontSize={14} fontWeight={currentTrack?.id === track.id ? 800 : 500} color={currentTrack?.id === track.id ? theme.accent : theme.text} noWrap>{track.title}</Typography>} secondary={<Typography fontSize={12} color={theme.textSec} noWrap>{track.artist || 'Неизвестный'} • {formatDuration(track.duration)}{track.description ? ` • ${track.description}` : ''}</Typography>} />
         </ListItem>;
       })}
-      {tracks.length === 0 && <Box textAlign="center" mt={4}><Typography color="text.secondary" fontSize={14}>Треки не найдены</Typography></Box>}
+      {tracks.length === 0 && <Box textAlign="center" mt={4}><Typography color={theme.textSec} fontSize={14}>Треки не найдены</Typography></Box>}
       </List>}
     </Box>
-    <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={closeAddMenu} PaperProps={{ sx: { minWidth: 220, maxHeight: 360 } }}>
-      {playlists.map(p => <MenuItem key={p.id} onClick={() => handleAddToPlaylist(p.id, p.name)}><MusicNote fontSize="small" sx={{ mr: 1 }} /> {p.name}<Typography variant="caption" sx={{ ml: 'auto', color: 'text.secondary' }}>{p.tracks?.length || 0}</Typography></MenuItem>)}
-      <MenuItem onClick={handleCreateAndAdd} sx={{ borderTop: '1px solid', borderColor: 'divider' }}><PlaylistAdd fontSize="small" sx={{ mr: 1 }} /> Создать новый плейлист</MenuItem>
+    <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={closeAddMenu} PaperProps={{ sx: { minWidth: 220, maxHeight: 360, bgcolor: theme.bg, color: theme.text } }}>
+      {playlists.map(p => <MenuItem key={p.id} onClick={() => handleAddToPlaylist(p.id, p.name)} sx={{ '&:hover': { bgcolor: theme.bgHover } }}><MusicNote fontSize="small" sx={{ mr: 1, color: theme.accent }} /> {p.name}<Typography variant="caption" sx={{ ml: 'auto', color: theme.textSec }}>{p.tracks?.length || 0}</Typography></MenuItem>)}
+      <MenuItem onClick={handleCreateAndAdd} sx={{ borderTop: '1px solid', borderColor: theme.border, '&:hover': { bgcolor: theme.bgHover } }}><PlaylistAdd fontSize="small" sx={{ mr: 1, color: theme.accent }} /> Создать новый плейлист</MenuItem>
     </Menu>
-    <Dialog open={urlOpen} onClose={() => !urlBusy && setUrlOpen(false)} fullWidth maxWidth="xs">
-      <DialogTitle>Импорт по ссылке</DialogTitle>
+    <Dialog open={urlOpen} onClose={() => !urlBusy && setUrlOpen(false)} fullWidth maxWidth="xs" PaperProps={{ sx: { bgcolor: theme.bg, color: theme.text } }}>
+      <DialogTitle sx={{ color: theme.text }}>Импорт по ссылке</DialogTitle>
       <DialogContent>
         <Stack spacing={1.5} sx={{ pt: 1 }}>
           <TextField autoFocus label="URL (YouTube, SoundCloud и т.п.)" value={urlValue} onChange={(e) => setUrlValue(e.target.value)} fullWidth disabled={urlBusy} />
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant="caption" color={theme.textSec}>
             Ограничение: не более 6 минут. <br/>
             ⚠️ Требуется установка на сервере: <strong>yt-dlp</strong> и <strong>ffmpeg</strong>.<br/>
             Windows: <code>scoop install yt-dlp ffmpeg</code> | Linux: <code>sudo apt install yt-dlp ffmpeg</code>
@@ -229,11 +231,11 @@ export default function MusicLibrary() {
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={() => setUrlOpen(false)} disabled={urlBusy}>Отмена</Button>
-        <Button variant="contained" onClick={handleImportUrl} disabled={urlBusy || !urlValue.trim()}>{urlBusy ? 'Импорт...' : 'Импортировать'}</Button>
+        <Button onClick={() => setUrlOpen(false)} disabled={urlBusy} sx={{ color: theme.textSec }}>Отмена</Button>
+        <Button variant="contained" onClick={handleImportUrl} disabled={urlBusy || !urlValue.trim()} sx={{ bgcolor: theme.accent, '&:hover': { bgcolor: theme.accent + 'cc' } }}>{urlBusy ? 'Импорт...' : 'Импортировать'}</Button>
       </DialogActions>
     </Dialog>
-    <Dialog open={editOpen} onClose={() => !saving && setEditOpen(false)} fullWidth maxWidth="xs"><DialogTitle>Редактировать трек</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}><TextField label="Название" value={title} onChange={(e) => setTitle(e.target.value)} fullWidth /><TextField label="Исполнитель" value={artist} onChange={(e) => setArtist(e.target.value)} fullWidth /><TextField label="Описание" value={description} onChange={(e) => setDescription(e.target.value)} fullWidth multiline minRows={3} /><Button component="label" variant="outlined" disabled={saving}>Выбрать обложку<input hidden type="file" accept="image/*" onChange={(e) => setCover(e.target.files?.[0] || null)} /></Button>{cover && <Typography variant="caption" color="text.secondary">{cover.name}</Typography>}</Stack></DialogContent><DialogActions><Button onClick={() => setEditOpen(false)} disabled={saving}>Отмена</Button><Button variant="contained" onClick={saveEdit} disabled={saving || !title.trim()}>{saving ? 'Сохранение...' : 'Сохранить'}</Button></DialogActions></Dialog>
+    <Dialog open={editOpen} onClose={() => !saving && setEditOpen(false)} fullWidth maxWidth="xs" PaperProps={{ sx: { bgcolor: theme.bg, color: theme.text } }}><DialogTitle sx={{ color: theme.text }}>Редактировать трек</DialogTitle><DialogContent><Stack spacing={2} sx={{ pt: 1 }}><TextField label="Название" value={title} onChange={(e) => setTitle(e.target.value)} fullWidth /><TextField label="Исполнитель" value={artist} onChange={(e) => setArtist(e.target.value)} fullWidth /><TextField label="Описание" value={description} onChange={(e) => setDescription(e.target.value)} fullWidth multiline minRows={3} /><Button component="label" variant="outlined" disabled={saving} sx={{ borderColor: theme.accent, color: theme.accent }}>Выбрать обложку<input hidden type="file" accept="image/*" onChange={(e) => setCover(e.target.files?.[0] || null)} /></Button>{cover && <Typography variant="caption" color={theme.textSec}>{cover.name}</Typography>}</Stack></DialogContent><DialogActions><Button onClick={() => setEditOpen(false)} disabled={saving} sx={{ color: theme.textSec }}>Отмена</Button><Button variant="contained" onClick={saveEdit} disabled={saving || !title.trim()} sx={{ bgcolor: theme.accent, '&:hover': { bgcolor: theme.accent + 'cc' } }}>{saving ? 'Сохранение...' : 'Сохранить'}</Button></DialogActions></Dialog>
     <Snackbar 
       open={!!snack} 
       onClose={() => setSnack('')} 
