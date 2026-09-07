@@ -5,7 +5,7 @@ import {
   CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material';
 import {
-  Close, Edit, Check, CameraAlt, ExitToApp, PersonAdd, Search,
+  ChevronRight, Edit, Check, CameraAlt, ExitToApp, PersonAdd, Search,
 } from '@mui/icons-material';
 import { Chat, User } from '../types';
 import { useAuthStore } from '../store/authStore';
@@ -224,7 +224,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
         </Typography>
         <IconButton size="small" onClick={onClose}
           sx={{ color: theme.textSec, '&:hover': { color: theme.text } }}>
-          <Close sx={{ fontSize: 20 }} />
+          <ChevronRight sx={{ fontSize: 24 }} />
         </IconButton>
       </Box>
 
