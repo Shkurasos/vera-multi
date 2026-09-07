@@ -420,78 +420,94 @@ export default function ProfilePage() {
       {/* ── Info / Edit form ── */}
       <Box sx={{ px: 2.5, py: 2, flex: 1 }}>
         {editing ? (
-          <Box display="flex" flexDirection="column" gap={2}>
-            <Typography sx={{ fontSize: 14, color: theme.accent, fontWeight: 700 }}>
+          <Box sx={{ 
+            bgcolor: theme.bgHeader, 
+            borderRadius: 3, 
+            p: 2.5,
+            border: `1px solid ${theme.border}`,
+          }}>
+            <Typography sx={{ fontSize: 16, color: theme.text, fontWeight: 700, mb: 2 }}>
               Редактирование профиля
             </Typography>
-            <TextField
-              label="Имя пользователя"
-              fullWidth size="small"
-              value={form.username}
-              error={!!usernameError}
-              helperText={usernameError || 'Только латиница, цифры и _ (3–32 символа)'}
-              inputProps={{ maxLength: 32 }}
-              onChange={e => {
-                setUsernameError('');
-                setForm(f => ({ ...f, username: e.target.value }));
-              }}
-              sx={{
-                ...inputSx,
-                '& .MuiFormHelperText-root': { color: usernameError ? '#f44336' : theme.textSec, fontSize: 12 },
-              }}
-            />
-            <Box display="flex" gap={1.5}>
-              <TextField label="Имя" fullWidth size="small"
-                value={form.firstName}
-                onChange={e => setForm(f => ({ ...f, firstName: e.target.value }))}
-                sx={inputSx} />
-              <TextField label="Фамилия" fullWidth size="small"
-                value={form.lastName}
-                onChange={e => setForm(f => ({ ...f, lastName: e.target.value }))}
-                sx={inputSx} />
-            </Box>
-            <TextField label="О себе" fullWidth multiline rows={3} size="small"
-              value={form.bio} inputProps={{ maxLength: 300 }}
-              onChange={e => setForm(f => ({ ...f, bio: e.target.value }))}
-              sx={inputSx} />
-            <TextField
-              label="Дата рождения"
-              fullWidth size="small"
-              type="date"
-              value={form.birthDate}
-              onChange={e => setForm(f => ({ ...f, birthDate: e.target.value }))}
-              InputLabelProps={{ shrink: true }}
-              inputProps={{ max: new Date().toISOString().slice(0, 10) }}
-              sx={{
-                ...inputSx,
-                '& input::-webkit-calendar-picker-indicator': { filter: 'invert(0.7)' },
-              }}
-            />
-            <Box display="flex" gap={1.5}>
-              <TextField label="Страна" fullWidth size="small"
-                value={form.country}
-                onChange={e => setForm(f => ({ ...f, country: e.target.value }))}
-                sx={inputSx} />
-              <TextField label="Город" fullWidth size="small"
-                value={form.city}
-                onChange={e => setForm(f => ({ ...f, city: e.target.value }))}
-                sx={inputSx} />
-            </Box>
-            <Box display="flex" gap={1.5}>
-              <Button variant="outlined" fullWidth onClick={() => setEditing(false)}
+            
+            <Box display="flex" flexDirection="column" gap={1.5}>
+              <TextField
+                label="Имя пользователя"
+                fullWidth size="small"
+                value={form.username}
+                error={!!usernameError}
+                helperText={usernameError || 'Латиница, цифры и _ (3–32 символа)'}
+                inputProps={{ maxLength: 32 }}
+                onChange={e => {
+                  setUsernameError('');
+                  setForm(f => ({ ...f, username: e.target.value }));
+                }}
                 sx={{
-                  color: theme.textSec, borderColor: theme.border, borderRadius: 2.5, fontSize: 15,
-                  '&:hover': { borderColor: theme.textSec },
+                  ...inputSx,
+                  '& .MuiFormHelperText-root': { color: usernameError ? '#f44336' : theme.textSec, fontSize: 11 },
+                }}
+              />
+              <Box display="flex" gap={1}>
+                <TextField label="Имя" fullWidth size="small"
+                  value={form.firstName}
+                  onChange={e => setForm(f => ({ ...f, firstName: e.target.value }))}
+                  sx={inputSx} />
+                <TextField label="Фамилия" fullWidth size="small"
+                  value={form.lastName}
+                  onChange={e => setForm(f => ({ ...f, lastName: e.target.value }))}
+                  sx={inputSx} />
+              </Box>
+              <TextField label="О себе" fullWidth multiline rows={2.5} size="small"
+                value={form.bio} inputProps={{ maxLength: 300 }}
+                onChange={e => setForm(f => ({ ...f, bio: e.target.value }))}
+                sx={inputSx} />
+              <TextField
+                label="Дата рождения"
+                fullWidth size="small"
+                type="date"
+                value={form.birthDate}
+                onChange={e => setForm(f => ({ ...f, birthDate: e.target.value }))}
+                InputLabelProps={{ shrink: true }}
+                inputProps={{ max: new Date().toISOString().slice(0, 10) }}
+                sx={{
+                  ...inputSx,
+                  '& input::-webkit-calendar-picker-indicator': { filter: 'invert(0.7)' },
+                }}
+              />
+              <Box display="flex" gap={1}>
+                <TextField label="Страна" fullWidth size="small"
+                  value={form.country}
+                  onChange={e => setForm(f => ({ ...f, country: e.target.value }))}
+                  sx={inputSx} />
+                <TextField label="Город" fullWidth size="small"
+                  value={form.city}
+                  onChange={e => setForm(f => ({ ...f, city: e.target.value }))}
+                  sx={inputSx} />
+              </Box>
+            <Stack direction="row" spacing={1} mt={2}>
+              <Button fullWidth variant="contained" startIcon={<Check />} onClick={handleSave} disabled={saving}
+                sx={{ 
+                  bgcolor: theme.accent, 
+                  '&:hover': { bgcolor: theme.accent + 'CC' }, 
+                  textTransform: 'none', 
+                  borderRadius: 2,
+                  py: 1,
+                  fontWeight: 600,
+                }}>
+                {saving ? 'Сохраняем...' : 'Сохранить'}
+              </Button>
+              <Button variant="outlined" startIcon={<Close />} onClick={() => setEditing(false)}
+                sx={{ 
+                  borderColor: theme.border, 
+                  color: theme.textSec, 
+                  textTransform: 'none', 
+                  borderRadius: 2,
+                  minWidth: 110,
+                  '&:hover': { borderColor: theme.accent, bgcolor: theme.accent + '10' }
                 }}>
                 Отмена
               </Button>
-              <Button variant="contained" fullWidth onClick={handleSave} disabled={saving}
-                sx={{
-                  bgcolor: theme.accent, '&:hover': { bgcolor: theme.accent + 'CC' },
-                  borderRadius: 2.5, fontSize: 15,
-                }}>
-                {saving ? 'Сохранение...' : 'Сохранить'}
-              </Button>
+            </Stack>
             </Box>
           </Box>
         ) : (

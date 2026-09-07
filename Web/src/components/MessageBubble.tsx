@@ -18,6 +18,7 @@ import { specToStyle, specAnimationClass } from '../utils/customStyle';
 import { buildPlaqueSx, buildShopRingSx } from '../utils/rarityStyles';
 import { voiceApi } from '../services/api';
 import PlaylistMessageCard, { VeraPlaylistPayload } from './PlaylistMessageCard';
+import GroupInviteCard from './GroupInviteCard';
 import ContextMenu from './ContextMenu';
 import { membranePressSx, motion } from '../styles/motion';
 
@@ -634,6 +635,8 @@ function MessageBubble({
                 <Box sx={{ mt: 0.75 }}>
                   {attachment.mimeType === 'application/x-vera-playlist' ? (
                     <PlaylistMessageCard payload={parsePlaylistPayload(attachment)} />
+                  ) : attachment.mimeType === 'application/x-vera-group-invite' ? (
+                    <GroupInviteCard attachment={attachment} />
                   ) : (
                     <DocumentPreview url={attachmentUrl} fileName={attachment.fileName} mimeType={attachment.mimeType} accent={theme.accent} />
                   )}
@@ -650,15 +653,23 @@ function MessageBubble({
                 <Typography sx={{ fontSize: 11, color: bubbleTextColor, opacity: 0.75 }}>
                   {formatTime(message.createdAt)}
                 </Typography>
-                {isOwn && (
-                  <Tooltip title={(message.readBy?.length ?? 0) > 1 ? 'Прочитано' : 'Отправлено'}>
-                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                      {message.readBy && message.readBy.length > 1
-                        ? <DoneAll sx={{ fontSize: 14, color: theme.accent }} />
-                        : <Done sx={{ fontSize: 14, color: theme.textSec }} />}
-                    </Box>
-                  </Tooltip>
-                )}
+                {isOwn && (() => {
+                  const readBy = message.readBy || [];
+                  const readByOthers = readBy.filter(id => id !== message.senderId);
+                  const isRead = readByOthers.length > 0;
+                  const tooltipText = isRead
+                    ? `Прочитано ${readByOthers.length === 1 ? '1 чел.' : `${readByOthers.length} чел.`}`
+                    : 'Отправлено';
+                  return (
+                    <Tooltip title={tooltipText}>
+                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                        {isRead
+                          ? <DoneAll sx={{ fontSize: 14, color: theme.accent }} />
+                          : <Done sx={{ fontSize: 14, color: theme.textSec }} />}
+                      </Box>
+                    </Tooltip>
+                  );
+                })()}
               </Box>
             </>
           )}

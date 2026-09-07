@@ -28,7 +28,7 @@ interface Props {
 
 export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
   const { user } = useAuthStore();
-  const { loadChats, updateChatList, onlineUsers } = useChatStore();
+  const { loadChats, updateChatList, onlineUsers, chats } = useChatStore();
   const { theme } = useThemeStore();
   const navigate = useNavigate();
 
@@ -72,6 +72,21 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
       setSearchResults(prev => prev.filter(u => u.id !== userId));
     } catch (e: any) {
       setAddError(e?.response?.data?.message || 'Ошибка добавления');
+    }
+    finally { setAddingUserId(null); }
+  }
+
+  async function inviteMember(userId: string) {
+    setAddingUserId(userId);
+    setAddError('');
+    try {
+      await chatsApi.invite(chat.id, userId);
+      // Закрываем диалог и показываем успех
+      setAddMemberOpen(false);
+      setSearchQ('');
+      setSearchResults([]);
+    } catch (e: any) {
+      setAddError(e?.response?.data?.message || 'Ошибка приглашения');
     }
     finally { setAddingUserId(null); }
   }
@@ -520,6 +535,49 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
           Добавить участника
         </DialogTitle>
         <DialogContent sx={{ pt: 0 }}>
+          {/* Пригласить из личных чатов */}
+          {(() => {
+            const existingIds = new Set((chat.members || []).map(m => m.userId));
+            const directPartners = (chats || [])
+              .filter((c: any) => c.type === 'direct')
+              .map((c: any) => c.members?.find((m: any) => m.userId !== user?.id)?.user)
+              .filter((u: any): u is User => !!u && !existingIds.has(u.id));
+            if (directPartners.length === 0) return null;
+            return (
+              <Box sx={{ mb: 1.5 }}>
+                <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 0.5, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  Из моих чатов
+                </Typography>
+                <List disablePadding>
+                  {directPartners.map((u: User) => {
+                    const name = [u.firstName, u.lastName].filter(Boolean).join(' ').trim() || u.username;
+                    return (
+                      <ListItem key={u.id} disablePadding sx={{ mb: 0.5 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flex: 1, px: 1, py: 0.75, borderRadius: 2, bgcolor: theme.bgHover }}>
+                          <Avatar src={u.avatarUrl || undefined} sx={{ width: 32, height: 32, fontSize: 12, bgcolor: theme.accent + '70' }}>
+                            {getInitials(name)}
+                          </Avatar>
+                          <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Typography sx={{ fontSize: 14, fontWeight: 500, color: theme.text, lineHeight: 1.3 }}>{name}</Typography>
+                            <Typography sx={{ fontSize: 12, color: theme.textSec }}>@{u.username}</Typography>
+                          </Box>
+                          <Button
+                            size="small"
+                            disabled={addingUserId === u.id}
+                            onClick={() => inviteMember(u.id)}
+                            sx={{ color: theme.accent, textTransform: 'none', fontSize: 13, minWidth: 0 }}
+                          >
+                            {addingUserId === u.id ? <CircularProgress size={16} sx={{ color: theme.accent }} /> : 'Пригласить'}
+                          </Button>
+                        </Box>
+                      </ListItem>
+                    );
+                  })}
+                </List>
+                <Divider sx={{ my: 1.5, borderColor: theme.border }} />
+              </Box>
+            );
+          })()}
           <TextField
             autoFocus
             fullWidth
@@ -575,7 +633,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
                       <IconButton
                         size="small"
                         disabled={addingUserId === u.id}
-                        onClick={() => addMember(u.id)}
+                        onClick={() => inviteMember(u.id)}
                         sx={{ color: theme.accent, '&:hover': { bgcolor: theme.accent + '20' } }}
                       >
                         {addingUserId === u.id
