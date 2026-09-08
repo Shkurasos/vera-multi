@@ -100,7 +100,7 @@ export default function ProfileCommentsWall({ targetUserId, targetUserName }: Pr
 
       {me && (
         <Box sx={{
-          display: 'flex', gap: 1, alignItems: 'flex-start',
+          display: 'flex', gap: 0.75, alignItems: 'flex-end',
           bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
           borderRadius: 2, p: 1.25, mb: 2,
         }}>
@@ -128,8 +128,16 @@ export default function ProfileCommentsWall({ targetUserId, targetUserName }: Pr
             sx={{
               flex: 1,
               minWidth: 0,
-              '& .MuiInputBase-root': { color: theme.text, fontSize: 14 },
-              '& .MuiOutlinedInput-notchedOutline': { borderColor: theme.border },
+              '& .MuiOutlinedInput-root': {
+                backgroundColor: theme.bg,
+                color: theme.text,
+                fontSize: 14,
+                borderRadius: 1.5,
+                '& fieldset': { borderColor: theme.border },
+                '&:hover fieldset': { borderColor: theme.textSec + '80' },
+                '&.Mui-focused fieldset': { borderColor: theme.accent },
+                '& textarea::placeholder': { color: theme.textSec, opacity: 1 },
+              },
             }}
           />
           <IconButton 
@@ -138,9 +146,13 @@ export default function ProfileCommentsWall({ targetUserId, targetUserName }: Pr
             sx={{ 
               color: theme.accent,
               flexShrink: 0,
+              alignSelf: 'flex-end',
+              width: 34,
+              height: 34,
+              '&.Mui-disabled': { color: theme.textSec + '55' },
             }}
           >
-            <Send fontSize="small" />
+            <Send sx={{ fontSize: 20 }} />
           </IconButton>
         </Box>
       )}
