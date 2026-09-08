@@ -5,6 +5,7 @@ import {
 } from '@mui/material';
 import QRCode from 'qrcode';
 import { devicesApi, getDeviceId } from '../services/api';
+import { useThemeStore } from '../store/themeStore';
 
 interface DeviceItem {
   id: string;
@@ -106,6 +107,7 @@ export default function DevicesPage() {
   const myDevice = devices.find((d) => d.deviceId === devId);
   // Лимит 2 устройства на аккаунт — QR доступен, пока не набрали лимит.
   const atLimit = false;
+  const { theme } = useThemeStore();
 
   return (
     <Box p={4} maxWidth={900} mx="auto" pb={{ xs: 76, md: 4 }}>
@@ -115,8 +117,14 @@ export default function DevicesPage() {
         через QR-код или ссылку, созданную с уже привязанного устройства.
       </Alert>
 
-      <Paper sx={{ p: 2, mb: 3 }} style={{ background: 'rgba(8,12,24,0.86)', color: '#F5F7FF', border: '1px solid rgba(255,255,255,0.10)' }}>
-        <Typography variant="subtitle1" mb={1}>Это устройство</Typography>
+      <Paper sx={{ 
+        p: 2, mb: 3,
+        bgcolor: theme.bgHeader,
+        border: `1px solid ${theme.border}`,
+      }}>
+        <Typography variant="subtitle1" mb={1} sx={{ color: theme.text }}>
+          Это устройство
+        </Typography>
         {myDevice ? (
           <Stack direction="row" spacing={1} mt={1} flexWrap="wrap">
             <Chipish label={myDevice.name} />
@@ -124,13 +132,19 @@ export default function DevicesPage() {
             {myDevice.isPrimary ? <Chipish label="основное" accent /> : <Chipish label="привязано по QR" accent />}
           </Stack>
         ) : (
-          <Typography variant="body2" color="text.secondary">Определяется…</Typography>
+          <Typography variant="body2" sx={{ color: theme.textSec }}>Определяется…</Typography>
         )}
       </Paper>
 
-      <Paper sx={{ p: 2, mb: 3 }} style={{ background: 'rgba(8,12,24,0.86)', color: '#F5F7FF', border: '1px solid rgba(255,255,255,0.10)' }}>
-        <Typography variant="subtitle1" mb={1}>Добавить второе устройство</Typography>
-        <Typography variant="body2" color="text.secondary" mb={2}>
+      <Paper sx={{ 
+        p: 2, mb: 3,
+        bgcolor: theme.bgHeader,
+        border: `1px solid ${theme.border}`,
+      }}>
+        <Typography variant="subtitle1" mb={1} sx={{ color: theme.text }}>
+          Добавить второе устройство
+        </Typography>
+        <Typography variant="body2" sx={{ color: theme.textSec, mb: 2 }}>
           Нажмите «Показать QR» — отсканируйте код на втором устройстве или скопируйте ссылку.
           Ссылка действует 5 минут и одноразовая.
         </Typography>
@@ -149,41 +163,66 @@ export default function DevicesPage() {
               <Button size="small" variant="outlined" onClick={() => { navigator.clipboard?.writeText(invite.textUrl); }}>Копировать</Button>
               <Button size="small" onClick={() => setInvite(null)}>Скрыть</Button>
             </Stack>
-            <Typography variant="caption" color="text.secondary">
+            <Typography variant="caption" sx={{ color: theme.textSec }}>
               Действует до {new Date(invite.expiresAt).toLocaleTimeString()}.
             </Typography>
           </Box>
         )}
       </Paper>
 
-      <Paper sx={{ p: 2, mb: 3 }} style={{ background: 'rgba(8,12,24,0.86)', color: '#F5F7FF', border: '1px solid rgba(255,255,255,0.10)' }}>
-        <Typography variant="subtitle1" mb={1}>Присоединиться к аккаунту (второе устройство)</Typography>
-        <Typography variant="body2" color="text.secondary" mb={2}>
+      <Paper sx={{ 
+        p: 2, mb: 3,
+        bgcolor: theme.bgHeader,
+        border: `1px solid ${theme.border}`,
+      }}>
+        <Typography variant="subtitle1" mb={1} sx={{ color: theme.text }}>
+          Присоединиться к аккаунту (второе устройство)
+        </Typography>
+        <Typography variant="body2" sx={{ color: theme.textSec, mb: 2 }}>
           Если на другом устройстве уже есть VERA — откройте раздел «Устройства», создайте QR,
           а затем вставьте сюда ссылку или отсканируйте код.
         </Typography>
         <Button variant="outlined" onClick={() => setLinkDlg(true)}>Вставить ссылку привязки</Button>
       </Paper>
 
-      <Paper sx={{ p: 2 }} style={{ background: 'rgba(8,12,24,0.86)', color: '#F5F7FF', border: '1px solid rgba(255,255,255,0.10)' }}>
-        <Typography variant="subtitle1" mb={1}>Связанные устройства</Typography>
+      <Paper sx={{ 
+        p: 2,
+        bgcolor: theme.bgHeader,
+        border: `1px solid ${theme.border}`,
+      }}>
+        <Typography variant="subtitle1" mb={1} sx={{ color: theme.text }}>
+          Связанные устройства
+        </Typography>
         {devices.length === 0 ? (
-          <Typography variant="body2" color="text.secondary">Загрузка…</Typography>
+          <Typography variant="body2" sx={{ color: theme.textSec }}>Загрузка…</Typography>
         ) : (
-          <Stack spacing={1}>
+          <Stack spacing={1.5}>
             {devices.map((d) => (
-              <Box key={d.id} display="flex" justifyContent="space-between" alignItems="center">
-                <span>
-                  {d.name}
-                  {d.isPrimary ? ' · основное' : ''}
-                  {d.linkedViaQr ? ' · QR' : ''}
-                </span>
-                <Typography variant="caption" color="text.secondary">
-                  {d.deviceId.slice(0, 14)} • {(d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString() : new Date(d.createdAt).toLocaleString())}
+              <Box 
+                key={d.id} 
+                sx={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 0.5,
+                  p: 1.5,
+                  borderRadius: 2,
+                  bgcolor: theme.bg,
+                  border: `1px solid ${theme.border}`,
+                }}
+              >
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2 }}>
+                  <Typography sx={{ fontSize: 14, fontWeight: 600, color: theme.text, flex: 1 }}>
+                    {d.name}
+                    {d.isPrimary && <Chipish label="основное" />}
+                    {d.linkedViaQr && <Chipish label="QR" />}
+                  </Typography>
+                  {!d.isPrimary && (
+                    <Button size="small" color="error" onClick={() => removeDevice(d)}>Отвязать</Button>
+                  )}
+                </Box>
+                <Typography variant="caption" sx={{ color: theme.textSec }}>
+                  ID: {d.deviceId.slice(0, 14)}… • {(d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString() : new Date(d.createdAt).toLocaleString())}
                 </Typography>
-                {!d.isPrimary && (
-                  <Button size="small" color="error" onClick={() => removeDevice(d)}>Отвязать</Button>
-                )}
               </Box>
             ))}
           </Stack>
@@ -191,15 +230,27 @@ export default function DevicesPage() {
       </Paper>
 
       <Dialog open={linkDlg} onClose={() => setLinkDlg(false)} fullWidth maxWidth="sm">
-        <DialogTitle>Привязать устройство</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" color="text.secondary" mb={2}>
+        <DialogTitle sx={{ color: theme.text, bgcolor: theme.bgHeader }}>
+          Привязать устройство
+        </DialogTitle>
+        <DialogContent sx={{ bgcolor: theme.bg }}>
+          <Typography variant="body2" sx={{ color: theme.textSec, mb: 2, mt: 1 }}>
             Вставьте ссылку вида <b>vera://link?token=…</b> или <b>http://…/link?token=…</b>.
           </Typography>
-          <TextField fullWidth multiline size="small" placeholder="vera://link?token=…" value={linkInput}
-            onChange={(e) => setLinkInput(e.target.value)} />
+          <TextField 
+            fullWidth 
+            multiline 
+            size="small" 
+            placeholder="vera://link?token=…" 
+            value={linkInput}
+            onChange={(e) => setLinkInput(e.target.value)}
+            sx={{
+              '& .MuiInputBase-root': { color: theme.text },
+              '& .MuiOutlinedInput-notchedOutline': { borderColor: theme.border },
+            }}
+          />
         </DialogContent>
-        <DialogActions>
+        <DialogActions sx={{ bgcolor: theme.bgHeader }}>
           <Button onClick={() => setLinkDlg(false)}>Отмена</Button>
           <Button variant="contained" disabled={linking || !linkInput.trim()} onClick={acceptLink}>
             {linking ? 'Привязываем…' : 'Привязать'}
@@ -213,15 +264,19 @@ export default function DevicesPage() {
 }
 
 function Chipish({ label, accent }: { label: string; accent?: boolean }) {
+  const { theme } = useThemeStore();
   return (
     <Box
       component="span"
       sx={{
-        px: 1, py: 0.2, borderRadius: 999,
-        fontSize: 12,
-        border: accent ? '1px solid #00E5FF' : '1px solid rgba(255,255,255,0.25)',
-        color: accent ? '#00E5FF' : '#CBD5E1',
-        background: accent ? 'rgba(0,229,255,0.10)' : 'rgba(255,255,255,0.04)',
+        display: 'inline-block',
+        px: 1, py: 0.2, 
+        ml: 0.5,
+        borderRadius: 999,
+        fontSize: 11,
+        border: accent ? `1px solid ${theme.accent}` : `1px solid ${theme.border}`,
+        color: accent ? theme.accent : theme.textSec,
+        bgcolor: accent ? theme.accent + '15' : theme.bgHeader,
       }}
     >
       {label}

@@ -104,18 +104,42 @@ export default function ProfileCommentsWall({ targetUserId, targetUserName }: Pr
           bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
           borderRadius: 2, p: 1.25, mb: 2,
         }}>
-          <Avatar src={me.avatarUrl || undefined} sx={{ width: 34, height: 34, bgcolor: theme.accent + '80' }}>
+          <Avatar 
+            src={me.avatarUrl || undefined} 
+            sx={{ 
+              width: 34, 
+              height: 34, 
+              flexShrink: 0,
+              bgcolor: theme.accent + '80',
+            }}
+          >
             {(me.firstName || me.username || '?')[0]}
           </Avatar>
           <TextField
-            fullWidth multiline minRows={1} maxRows={4} size="small"
+            fullWidth 
+            multiline 
+            minRows={1} 
+            maxRows={4} 
+            size="small"
             placeholder="Оставить комментарий…"
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submit(); }}
-            InputProps={{ sx: { color: theme.text, fontSize: 14 } }}
+            sx={{
+              flex: 1,
+              minWidth: 0,
+              '& .MuiInputBase-root': { color: theme.text, fontSize: 14 },
+              '& .MuiOutlinedInput-notchedOutline': { borderColor: theme.border },
+            }}
           />
-          <IconButton onClick={submit} disabled={busy || !text.trim()} sx={{ color: theme.accent }}>
+          <IconButton 
+            onClick={submit} 
+            disabled={busy || !text.trim()} 
+            sx={{ 
+              color: theme.accent,
+              flexShrink: 0,
+            }}
+          >
             <Send fontSize="small" />
           </IconButton>
         </Box>
@@ -127,27 +151,69 @@ export default function ProfileCommentsWall({ targetUserId, targetUserName }: Pr
         </Typography>
       )}
 
-      <Stack spacing={1}>
+      <Stack spacing={1.5}>
         {items.map((c) => (
           <Box key={c.id} sx={{
-            display: 'flex', gap: 1.25, p: 1.25, borderRadius: 2,
-            bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
+            display: 'flex', 
+            gap: 1.25, 
+            p: 1.25, 
+            borderRadius: 2,
+            bgcolor: theme.bgHeader, 
+            border: `1px solid ${theme.border}`,
+            alignItems: 'flex-start',
           }}>
-            <Avatar src={c.authorAvatar || undefined} sx={{ width: 34, height: 34, bgcolor: theme.accent + '60' }}>
+            <Avatar 
+              src={c.authorAvatar || undefined} 
+              sx={{ 
+                width: 34, 
+                height: 34, 
+                flexShrink: 0,
+                bgcolor: theme.accent + '60',
+              }}
+            >
               {(c.authorName || '?')[0]}
             </Avatar>
-            <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Typography sx={{ fontSize: 13, fontWeight: 700, color: theme.text }}>{c.authorName}</Typography>
-                <Typography sx={{ fontSize: 11, color: theme.textSec }}>{timeAgo(c.ts)}</Typography>
+            <Box sx={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                <Typography sx={{ 
+                  fontSize: 13, 
+                  fontWeight: 700, 
+                  color: theme.text,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {c.authorName}
+                </Typography>
+                <Typography sx={{ 
+                  fontSize: 11, 
+                  color: theme.textSec,
+                  flexShrink: 0,
+                }}>
+                  {timeAgo(c.ts)}
+                </Typography>
               </Box>
-              <Typography sx={{ fontSize: 14, color: theme.text, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              <Typography sx={{ 
+                fontSize: 14, 
+                color: theme.text, 
+                whiteSpace: 'pre-wrap', 
+                wordBreak: 'break-word',
+                overflowWrap: 'break-word',
+              }}>
                 {c.text}
               </Typography>
             </Box>
             {canDelete(c) && (
               <Tooltip title="Удалить">
-                <IconButton size="small" onClick={() => remove(c.id)} sx={{ color: theme.textSec, alignSelf: 'flex-start' }}>
+                <IconButton 
+                  size="small" 
+                  onClick={() => remove(c.id)} 
+                  sx={{ 
+                    color: theme.textSec, 
+                    flexShrink: 0,
+                    mt: -0.5,
+                  }}
+                >
                   <Delete fontSize="small" />
                 </IconButton>
               </Tooltip>

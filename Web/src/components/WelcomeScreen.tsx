@@ -2,9 +2,11 @@ import React from 'react';
 import { Box, Typography } from '@mui/material';
 import { useChatStore } from '../store/chatStore';
 import { useNavigate } from 'react-router-dom';
+import { useThemeStore } from '../store/themeStore';
 
 export default function WelcomeScreen() {
   const { chats, setActiveChat } = useChatStore();
+  const { theme } = useThemeStore();
   const navigate = useNavigate();
 
   return (
@@ -14,23 +16,23 @@ export default function WelcomeScreen() {
       flexDirection: 'column',
       alignItems: 'center',
       justifyContent: 'center',
-      bgcolor: '#1E1E2E',
+      bgcolor: theme.bg,
       gap: 1.5,
     }}>
       {/* Иконка */}
       <Box sx={{
         width: 72, height: 72, borderRadius: '50%',
-        bgcolor: '#2E2E3E',
+        bgcolor: theme.bgHeader,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         mb: 1,
       }}>
         <Typography sx={{ fontSize: 36 }}>💬</Typography>
       </Box>
 
-      <Typography sx={{ fontSize: 20, fontWeight: 700, color: '#C0C0D8' }}>
+      <Typography sx={{ fontSize: 20, fontWeight: 700, color: theme.text }}>
         Vera
       </Typography>
-      <Typography sx={{ fontSize: 13, color: '#5A5A7A', textAlign: 'center', maxWidth: 280 }}>
+      <Typography sx={{ fontSize: 13, color: theme.textSec, textAlign: 'center', maxWidth: 280 }}>
         Выберите чат, чтобы начать общение
       </Typography>
 
@@ -44,19 +46,25 @@ export default function WelcomeScreen() {
               sx={{
                 display: 'flex', alignItems: 'center', gap: 1.5,
                 px: 2, py: 1, borderRadius: 2,
-                bgcolor: '#252535', cursor: 'pointer',
-                '&:hover': { bgcolor: '#2E2E3E' },
+                bgcolor: theme.bgHeader, 
+                border: `1px solid ${theme.border}`,
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                '&:hover': { 
+                  bgcolor: theme.bgHover,
+                  borderColor: theme.accent + '40',
+                },
               }}
             >
               <Box sx={{
                 width: 32, height: 32, borderRadius: '50%',
-                bgcolor: '#3A3A52',
+                bgcolor: theme.accent + '30',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 14, color: '#C0C0D8', fontWeight: 600, flexShrink: 0,
+                fontSize: 14, color: theme.text, fontWeight: 600, flexShrink: 0,
               }}>
                 {(chat.name || '?')[0].toUpperCase()}
               </Box>
-              <Typography sx={{ fontSize: 13, color: '#C0C0D8' }} noWrap>
+              <Typography sx={{ fontSize: 13, color: theme.text }} noWrap>
                 {chat.name || 'Чат'}
               </Typography>
             </Box>
