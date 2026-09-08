@@ -193,7 +193,12 @@ export default function MusicLibrary() {
         <TextField fullWidth size="small" placeholder="Поиск треков..." value={query} onChange={(e) => handleSearch(e.target.value)} InputProps={{ startAdornment: <Search fontSize="small" sx={{ mr: 1, color: theme.textSec }} /> }} />
       </Box>
     </Box>
-    <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ px: 2, '& .MuiTab-root': { color: theme.textSec }, '& .Mui-selected': { color: theme.accent }, '& .MuiTabs-indicator': { bgcolor: theme.accent } }}>
+    <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ 
+      px: 2, 
+      '& .MuiTab-root': { color: theme.textSec, textTransform: 'none' }, 
+      '& .MuiTab-root.Mui-selected': { color: theme.accent }, 
+      '& .MuiTabs-indicator': { bgcolor: theme.accent } 
+    }}>
       <Tab label="Все треки" />
       <Tab label={`Плейлисты${playlists.length ? ` (${playlists.length})` : ''}`} />
     </Tabs>
