@@ -60,7 +60,7 @@ const TABS: { id: SidebarTab; label: string }[] = [
 ];
 
 const SIDEBAR_MIN = 200;
-const SIDEBAR_MAX = 520;
+const SIDEBAR_MAX = typeof window !== 'undefined' ? Math.floor(window.innerWidth * 0.5) : 960;
 
 export default function Sidebar({ open, onToggle, mobile }: Props) {
   const { chats, activeChat, setActiveChat, loadChats, onlineUsers } = useChatStore();
