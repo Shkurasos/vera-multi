@@ -634,7 +634,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
           {lastUserSearch && !searching && foundUsers.length === 0 && <Typography sx={{ mt: 1, color: theme.textSec, fontSize: 13 }}>Ничего не найдено по запросу «{lastUserSearch}»</Typography>}
           {lastUserSearch && foundUsers.map(u => <ListItem key={u.id} onClick={() => handleStartChat(u)} sx={{ cursor: 'pointer' }}><Avatar src={u.avatarUrl || undefined}>{getInitials(u.firstName || u.username)}</Avatar><ListItemText sx={{ ml: 1 }} primary={[u.firstName, u.lastName].filter(Boolean).join(' ') || u.username} secondary={u.username} /></ListItem>)}
         </DialogContent>
-        <DialogActions><Button onClick={() => setAddContactOpen(false)}>Закрыть</Button></DialogActions>
+        <DialogActions><Button onClick={() => setAddContactOpen(false)} sx={{ color: theme.textSec }}>Закрыть</Button></DialogActions>
       </Dialog>
 
       <Snackbar open={!!inviteToast} autoHideDuration={2000} onClose={() => setInviteToast(null)}
@@ -678,7 +678,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
 
       <Dialog open={!!deleteConfirmChat} onClose={() => setDeleteConfirmChat(null)}><DialogTitle>Удалить чат?</DialogTitle><DialogContent>Чат «{getChatName(deleteConfirmChat)}» будет удалён.</DialogContent><DialogActions><Button onClick={() => setDeleteConfirmChat(null)}>Отмена</Button><Button color="error" disabled={deleting} onClick={() => deleteConfirmChat && handleDeleteChat(deleteConfirmChat)}>Удалить</Button></DialogActions></Dialog>
 
-      <Dialog open={musicOpen} onClose={() => setMusicOpen(false)} fullWidth maxWidth="md" PaperProps={{ sx: { height: '82vh', bgcolor: theme.bg, color: theme.text, borderRadius: 3 } }}><DialogTitle>Музыка и плейлисты</DialogTitle><DialogContent sx={{ p: 0 }}><MusicLibrary /></DialogContent><DialogActions><Button onClick={() => setMusicOpen(false)}>Закрыть</Button></DialogActions></Dialog>
+      <Dialog open={musicOpen} onClose={() => setMusicOpen(false)} fullWidth maxWidth="md" PaperProps={{ sx: { height: '82vh', bgcolor: theme.bg, color: theme.text, borderRadius: 3 } }}><DialogTitle>Музыка и плейлисты</DialogTitle><DialogContent sx={{ p: 0 }}><MusicLibrary /></DialogContent><DialogActions><Button onClick={() => setMusicOpen(false)} sx={{ color: theme.textSec }}>Закрыть</Button></DialogActions></Dialog>
 
       <Dialog open={myLinkDialogOpen} onClose={() => setMyLinkDialogOpen(false)} fullWidth maxWidth="sm" PaperProps={{ sx: { bgcolor: theme.bg, color: theme.text, borderRadius: 3 } }}>
         <DialogTitle sx={{ color: theme.text, bgcolor: theme.bg, borderBottom: `1px solid ${theme.border}` }}>Моя ссылка для добавления в друзья</DialogTitle>

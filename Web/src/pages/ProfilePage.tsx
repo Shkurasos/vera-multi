@@ -26,12 +26,14 @@ import { useCustomEquipStore } from '../store/customEquipStore';
 import { useProfileDraftStore } from '../store/profileDraftStore';
 import { specToStyle } from '../utils/customStyle';
 import { buildShopRingSx } from '../utils/rarityStyles';
+import { useUserSettingsStore } from '../store/userSettingsStore';
 
 export default function ProfilePage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, setUser } = useAuthStore();
   const { theme, themeId, setTheme } = useThemeStore();
+  const layout = useUserSettingsStore((s) => s.layout);
 
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -41,6 +43,7 @@ export default function ProfilePage() {
   });
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const bannerInputRef = useRef<HTMLInputElement>(null);
+  const aboutMediaInputRef = useRef<HTMLInputElement>(null);
 
   const handleBannerChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -61,6 +64,35 @@ export default function ProfilePage() {
       });
       customization.set('bannerUrl', dataUrl);
       setSnack({ open: true, message: 'Шапка обновлена', severity: 'success' });
+    } catch {
+      setSnack({ open: true, message: 'Не удалось загрузить', severity: 'error' });
+    }
+  };
+
+  const handleAboutMediaChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const isVideo = /^video\//i.test(file.type);
+    const isImage = /^image\//i.test(file.type);
+    if (!isVideo && !isImage) {
+      setSnack({ open: true, message: 'Только картинки или видео', severity: 'error' });
+      return;
+    }
+    const maxMb = isVideo ? 8 : 2;
+    if (file.size > maxMb * 1024 * 1024) {
+      setSnack({ open: true, message: `Файл больше ${maxMb} МБ`, severity: 'error' });
+      return;
+    }
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result || ''));
+        r.onerror = () => reject(new Error('read'));
+        r.readAsDataURL(file);
+      });
+      customization.set('aboutMediaUrl', dataUrl);
+      setSnack({ open: true, message: 'Медиа добавлено', severity: 'success' });
     } catch {
       setSnack({ open: true, message: 'Не удалось загрузить', severity: 'error' });
     }
@@ -376,7 +408,7 @@ export default function ProfilePage() {
         <Box sx={{ position: 'relative' }}>
           {uploadingAvatar ? (
             <Box sx={{
-              width: 110, height: 110, borderRadius: '50%',
+              width: { xs: 90, sm: 110 }, height: { xs: 90, sm: 110 }, borderRadius: '50%',
               bgcolor: theme.accent + '40',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
@@ -386,7 +418,9 @@ export default function ProfilePage() {
             <Avatar
               src={user?.avatarUrl || undefined}
               sx={{
-                width: 110, height: 110, fontSize: 40,
+                width: { xs: 90, sm: 110 }, 
+                height: { xs: 90, sm: 110 }, 
+                fontSize: { xs: 32, sm: 40 },
                 bgcolor: theme.accent + '80',
                 border: `4px solid ${theme.accent}`,
                 boxShadow: `0 0 24px ${theme.accent}50`,
@@ -443,13 +477,13 @@ export default function ProfilePage() {
           </Box>
         </Box>
 
-        <Typography sx={{ mt: 2, fontSize: 22, fontWeight: 700, color: theme.text }}>
+        <Typography sx={{ mt: 2, fontSize: { xs: 19, sm: 22 }, fontWeight: 700, color: theme.text }}>
           {displayName}
         </Typography>
-        <Typography sx={{ fontSize: 15, color: theme.accent, mt: 0.5 }}>
+        <Typography sx={{ fontSize: { xs: 14, sm: 15 }, color: theme.accent, mt: 0.5 }}>
           @{user?.username}
         </Typography>
-        <Typography sx={{ fontSize: 14, color: user?.isOnline ? theme.online : theme.textSec, mt: 0.5 }}>
+        <Typography sx={{ fontSize: { xs: 13, sm: 14 }, color: user?.isOnline ? theme.online : theme.textSec, mt: 0.5 }}>
           {user?.isOnline ? '● в сети' : '○ не в сети'}
         </Typography>
         {user?.id && <Box sx={{ mt: 1 }}><ActivityLine userId={user.id} /></Box>}
@@ -625,6 +659,53 @@ export default function ProfilePage() {
                   </Typography>
                 </Box>
               )}
+              {customization.aboutMediaUrl && (
+                <Box sx={{ mt: 2, pt: 2, borderTop: `1px solid ${theme.border}`, position: 'relative' }}>
+                  {/^data:video\//i.test(customization.aboutMediaUrl) || /\.(mp4|webm|mov)$/i.test(customization.aboutMediaUrl) ? (
+                    <video
+                      src={customization.aboutMediaUrl}
+                      autoPlay loop muted playsInline
+                      style={{ width: '100%', maxHeight: 320, objectFit: 'contain', borderRadius: 8 }}
+                    />
+                  ) : (
+                    <Box
+                      component="img"
+                      src={customization.aboutMediaUrl}
+                      alt="О себе"
+                      sx={{ width: '100%', maxHeight: 320, objectFit: 'contain', borderRadius: 2 }}
+                    />
+                  )}
+                  {editing && (
+                    <IconButton
+                      onClick={() => customization.set('aboutMediaUrl', '')}
+                      sx={{
+                        position: 'absolute', top: 10, right: 10,
+                        bgcolor: 'rgba(0,0,0,0.6)', color: '#fff',
+                        '&:hover': { bgcolor: 'rgba(0,0,0,0.8)' },
+                      }}
+                    >
+                      <Close sx={{ fontSize: 18 }} />
+                    </IconButton>
+                  )}
+                </Box>
+              )}
+              {editing && !customization.aboutMediaUrl && (
+                <Box
+                  onClick={() => aboutMediaInputRef.current?.click()}
+                  sx={{
+                    mt: 2, border: `1px dashed ${theme.accent}40`,
+                    borderRadius: 2, p: 2, textAlign: 'center', cursor: 'pointer',
+                    '&:hover': { bgcolor: theme.accent + '08' },
+                  }}
+                >
+                  <PhotoCamera sx={{ fontSize: 20, color: theme.textSec, mb: 0.5 }} />
+                  <Typography sx={{ fontSize: 14, color: theme.textSec }}>
+                    Добавить картинку/анимацию в "О себе"
+                  </Typography>
+                </Box>
+              )}
+              <input ref={aboutMediaInputRef} type="file" hidden accept="image/*,video/*"
+                onChange={handleAboutMediaChange} />
               {!user?.bio && !user?.firstName && (
                 <Box onClick={handleEdit} sx={{
                   mt: 1, border: `1px dashed ${theme.accent}40`,
@@ -721,7 +802,7 @@ export default function ProfilePage() {
               Копировать ссылку
             </Button>
           )}
-          <Button onClick={() => setQrOpen(false)} sx={{ color: theme.text }}>Закрыть</Button>
+          <Button onClick={() => setQrOpen(false)} sx={{ color: theme.textSec }}>Закрыть</Button>
         </DialogActions>
       </Dialog>
 

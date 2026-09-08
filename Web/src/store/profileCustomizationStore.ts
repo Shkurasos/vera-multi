@@ -24,6 +24,7 @@ export interface ProfileCustomization {
   showcase: string;                // произвольный текст витрины (multi-line)
   activityKind: ActivityKind;
   activityText: string;            // текст, когда activityKind !== 'auto'/'off'
+  aboutMediaUrl: string;           // картинка/анимация для секции "О себе"
 }
 
 interface ProfileCustomizationState extends ProfileCustomization {
@@ -39,6 +40,7 @@ const initial: ProfileCustomization = {
   showcase: '',
   activityKind: 'auto',
   activityText: '',
+  aboutMediaUrl: '',
 };
 
 export const useProfileCustomizationStore = create<ProfileCustomizationState>()(

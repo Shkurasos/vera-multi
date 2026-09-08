@@ -103,7 +103,7 @@ export default function MobileBottomNav() {
           <IconButton onClick={() => setMusicOpen(false)} sx={{ color: theme.textSec }}><span style={{ fontSize: 22 }}>✕</span></IconButton>
         </DialogTitle>
         <DialogContent sx={{ p: 0 }}><MusicLibrary /></DialogContent>
-        <DialogActions><Button onClick={() => setMusicOpen(false)}>Закрыть</Button></DialogActions>
+        <DialogActions><Button onClick={() => setMusicOpen(false)} sx={{ color: theme.textSec }}>Закрыть</Button></DialogActions>
       </Dialog>
 
       {/* Магазин тем */}

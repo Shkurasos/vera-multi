@@ -8,6 +8,7 @@ import { Close, Add, Edit, Publish, Unpublished, Delete, Payment } from '@mui/ic
 import { creatorApi, CustomItem } from '../services/api';
 import CustomItemPreview from './CustomItemPreview';
 import CreatorEditor from './CreatorEditor';
+import { useThemeStore } from '../store/themeStore';
 
 interface Props { open: boolean; onClose: () => void; }
 
@@ -16,6 +17,7 @@ interface Props { open: boolean; onClose: () => void; }
  * Гейт: `feePaid` (200₽ единоразово). Админу гейт не показывается.
  */
 export default function Workshop({ open, onClose }: Props) {
+  const { theme } = useThemeStore();
   const [me, setMe] = useState<{ feePaid: boolean; isAdmin: boolean; feeRub: number; revenueVp: number } | null>(null);
   const [items, setItems] = useState<CustomItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,7 +106,7 @@ export default function Workshop({ open, onClose }: Props) {
           />
         )}
       </DialogContent>
-      <DialogActions><Button onClick={onClose}>Закрыть</Button></DialogActions>
+      <DialogActions><Button onClick={onClose} sx={{ color: theme.textSec }}>Закрыть</Button></DialogActions>
 
       <CreatorEditor
         open={editorOpen}
