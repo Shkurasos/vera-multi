@@ -52,6 +52,7 @@ export interface UserSettingsState {
   brightness: number;              // 0.5 .. 1.5 (CSS filter: brightness)
   textScale: number;               // 0.8 .. 1.6 (CSS var --vera-text-scale)
   language: 'ru' | 'en' | 'uk' | 'es';
+  globalFontFamily: string;        // глобальный шрифт для всего приложения
 
   // Данные и экономия трафика
   autoDownloadMedia: boolean;
@@ -99,6 +100,7 @@ const initial: Omit<UserSettingsState, 'set' | 'reset' | 'setLayout' | 'resetLay
   brightness: 1,
   textScale: 1,
   language: 'ru',
+  globalFontFamily: 'inherit',
 
   autoDownloadMedia: true,
   compressUploads: true,

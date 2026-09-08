@@ -161,6 +161,9 @@ export const chatsApi = {
   pin: (chatId: string, pinned: boolean) => api.patch(`/chats/${chatId}/pin`, { pinned }),
   mute: (chatId: string, muted: boolean) => api.patch(`/chats/${chatId}/mute`, { muted }),
   addMember: (chatId: string, userId: string) => api.post(`/chats/${chatId}/members`, { userId }),
+  invite: (chatId: string, userId: string) => api.post(`/chats/${chatId}/invite`, { userId }),
+  acceptInvite: (token: string) => api.post(`/group-invites/${token}/accept`),
+  declineInvite: (token: string) => api.post(`/group-invites/${token}/decline`),
 };
 
 export const messagesApi = {

@@ -40,8 +40,10 @@ export default function NotificationSettingsDialog({
 
   function playPreview() {
     if (playing) { stopPreview(); return; }
-    if (current?.url) {
-      const a = new Audio(current.url);
+    const store = useChatSoundStore.getState();
+    const soundToPlay = current || store.globalSound;
+    if (soundToPlay?.url) {
+      const a = new Audio(soundToPlay.url);
       a.volume = volume;
       a.onended = () => setPlaying(false);
       audioRef.current = a;
@@ -112,7 +114,7 @@ export default function NotificationSettingsDialog({
           <Stack direction="row" spacing={1} alignItems="center">
             <Typography sx={{ flex: 1, fontSize: 14, color: current ? theme.accent : theme.textSec,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {current ? current.name : 'Стандартный звук'}
+              {current ? current.name : (useChatSoundStore.getState().globalSound ? `По умолчанию: ${useChatSoundStore.getState().globalSound.name}` : 'Стандартный beep')}
             </Typography>
             <Tooltip title={playing ? 'Стоп' : 'Прослушать'}>
               <IconButton size="small" onClick={playPreview} sx={{ color: theme.textSec }}>

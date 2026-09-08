@@ -65,6 +65,13 @@ function playNotificationSound(chatId?: string) {
         a.play().catch(() => playDefaultBeep(volume));
         return;
       }
+      // Fallback на глобальный звук
+      if (store.globalSound?.url) {
+        const a = new Audio(store.globalSound.url);
+        a.volume = volume;
+        a.play().catch(() => playDefaultBeep(volume));
+        return;
+      }
       playDefaultBeep(volume);
       return;
     }
@@ -346,15 +353,17 @@ export default function App() {
     }
   }, [isAuthenticated]);
 
-  // Применяем глобальные настройки внешнего вида: яркость и масштаб текста.
+  // Применяем глобальные настройки внешнего вида: яркость, масштаб текста и шрифт.
   const brightness = useUserSettingsStore((s) => s.brightness);
   const textScale = useUserSettingsStore((s) => s.textScale);
+  const globalFontFamily = useUserSettingsStore((s) => s.globalFontFamily);
   const appTheme = useThemeStore((s) => s.theme);
   useEffect(() => {
     document.body.style.filter = brightness === 1 ? '' : `brightness(${brightness})`;
     document.documentElement.style.setProperty('--vera-text-scale', String(textScale));
     document.documentElement.style.fontSize = `${16 * textScale}px`;
-  }, [brightness, textScale]);
+    document.body.style.fontFamily = globalFontFamily === 'inherit' ? '' : globalFontFamily;
+  }, [brightness, textScale, globalFontFamily]);
 
   // Текущая тема как CSS-переменные: слайдеры, свитчи, прогресс-бары и фокус
   // полей ввода следуют акценту темы (см. глобальные стили в main.tsx).

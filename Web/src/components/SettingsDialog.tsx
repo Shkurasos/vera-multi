@@ -8,11 +8,12 @@ import {
 import {
   Link as LinkIcon, DevicesOther, ChevronRight, ExpandMore, AutoAwesome,
   Brightness6, TextFields, Language, DataUsage, Notifications, Security, Lock, Public,
-  ViewSidebar, RestartAlt, Storefront, Palette, Wallpaper,
+  ViewSidebar, RestartAlt, Storefront, Palette, Wallpaper, VolumeUp,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useThemeStore } from '../store/themeStore';
 import WallpaperSettingsDialog from './WallpaperSettingsDialog';
+import GlobalSoundSettingsDialog from './GlobalSoundSettingsDialog';
 import {
   useUserSettingsStore, hashPassword,
   PrivacyScope, PreviewMode, AutoDeleteMonths,
@@ -35,6 +36,7 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
   const [inviteOpen, setInviteOpen] = useState(false);
   const [designerOpen, setDesignerOpen] = useState(false);
   const [wallpaperOpen, setWallpaperOpen] = useState(false);
+  const [soundOpen, setSoundOpen] = useState(false);
   const shopSetOpen = useShopStore((x) => x.setOpen);
   const s = useUserSettingsStore();
   const { iconPack, uiStyle, setIconPack, setUiStyle } = useUiPrefsStore();
@@ -90,6 +92,14 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
             <ListItemButton onClick={() => setWallpaperOpen(true)} sx={{ py: 1.5 }}>
               <ListItemIcon sx={{ color: theme.accent, minWidth: 40 }}><Wallpaper /></ListItemIcon>
               <ListItemText primary="Обои для всех чатов" secondary="Выбор стоковых обоев по умолчанию"
+                primaryTypographyProps={{ sx: { color: theme.text, fontWeight: 600 } }}
+                secondaryTypographyProps={{ sx: { color: theme.textSec, fontSize: 12 } }} />
+              <ChevronRight sx={{ color: theme.textSec }} />
+            </ListItemButton>
+            <Divider sx={{ borderColor: theme.border }} />
+            <ListItemButton onClick={() => setSoundOpen(true)} sx={{ py: 1.5 }}>
+              <ListItemIcon sx={{ color: theme.accent, minWidth: 40 }}><VolumeUp /></ListItemIcon>
+              <ListItemText primary="Звук уведомлений по умолчанию" secondary="Применяется ко всем чатам"
                 primaryTypographyProps={{ sx: { color: theme.text, fontWeight: 600 } }}
                 secondaryTypographyProps={{ sx: { color: theme.textSec, fontSize: 12 } }} />
               <ChevronRight sx={{ color: theme.textSec }} />
@@ -215,6 +225,24 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
                 <Slider min={0.8} max={1.6} step={0.05} value={s.textScale}
                   onChange={(_, v) => s.set('textScale', Array.isArray(v) ? v[0] : v)}
                   valueLabelDisplay="auto" valueLabelFormat={(v) => `${Math.round(v * 100)}%`} />
+                <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <TextFields fontSize="small" /> Глобальный шрифт
+                </Typography>
+                <Select fullWidth size="small" value={s.globalFontFamily}
+                  onChange={(e) => s.set('globalFontFamily', e.target.value)}
+                  sx={{ fontFamily: s.globalFontFamily }}>
+                  <MenuItem value="inherit" sx={{ fontFamily: 'inherit' }}>По умолчанию</MenuItem>
+                  <MenuItem value="'Inter', sans-serif" sx={{ fontFamily: "'Inter', sans-serif" }}>Inter</MenuItem>
+                  <MenuItem value="'Roboto', sans-serif" sx={{ fontFamily: "'Roboto', sans-serif" }}>Roboto</MenuItem>
+                  <MenuItem value="'Montserrat', sans-serif" sx={{ fontFamily: "'Montserrat', sans-serif" }}>Montserrat</MenuItem>
+                  <MenuItem value="'Source Code Pro', monospace" sx={{ fontFamily: "'Source Code Pro', monospace" }}>Source Code Pro</MenuItem>
+                  <MenuItem value="Georgia, serif" sx={{ fontFamily: 'Georgia, serif' }}>Georgia</MenuItem>
+                  <MenuItem value="Arial, sans-serif" sx={{ fontFamily: 'Arial, sans-serif' }}>Arial</MenuItem>
+                  <MenuItem value="'Comic Sans MS', cursive" sx={{ fontFamily: "'Comic Sans MS', cursive" }}>Comic Sans</MenuItem>
+                </Select>
+                <Alert severity="info" sx={{ mt: 1, fontSize: 12 }}>
+                  Этот шрифт применится ко всему приложению. Шрифты для отдельных чатов настраиваются в их параметрах.
+                </Alert>
                 <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
                   <Language fontSize="small" /> Язык интерфейса
                 </Typography>
@@ -472,6 +500,7 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
       <InviteLinkDialog open={inviteOpen} onClose={() => setInviteOpen(false)} />
       <LayoutDesignerDialog open={designerOpen} onClose={() => setDesignerOpen(false)} />
       <WallpaperSettingsDialog open={wallpaperOpen} onClose={() => setWallpaperOpen(false)} />
+      <GlobalSoundSettingsDialog open={soundOpen} onClose={() => setSoundOpen(false)} />
     </>
   );
 }

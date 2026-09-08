@@ -22,6 +22,8 @@ import { useAuthStore } from '../store/authStore';
 import { useThemeStore, getFinishStyles } from '../store/themeStore';
 import { useChatSettingsStore, BUILTIN_FONTS } from '../store/chatSettingsStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
+import { useDraftsStore } from '../store/draftsStore';
+import { useChatFontStore, STOCK_FONTS } from '../store/chatFontStore';
 import { sendTypingStart, sendTypingStop } from '../services/socket';
 import { filesApi, messagesApi } from '../services/api';
 import MessageBubble from './MessageBubble';
@@ -184,6 +186,9 @@ function ChatWindowInner() {
   const clearChatWallpaper = useChatBgPrefsStore((s) => s.clearChatWallpaper);
   const liveBgStamp = useChatBgPrefsStore((s) => s.liveBgStamp);
 
+  const { getDraft, setDraft, clearDraft } = useDraftsStore();
+  const { getChatFont, setChatFont, clearChatFont } = useChatFontStore();
+  const globalFontFamily = useUserSettingsStore((s) => s.globalFontFamily);
   const [text, setText] = useState('');
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [forwardMsg, setForwardMsg] = useState<Message | null>(null);
@@ -289,6 +294,9 @@ function ChatWindowInner() {
           else setChatNotFound(true);
         });
       }
+      // Загружаем черновик для этого чата
+      const draft = getDraft(id);
+      setText(draft);
     }
   }, [id]);
 
@@ -368,6 +376,7 @@ function ChatWindowInner() {
     if ((!text.trim() && pendingFiles.length === 0) || !id) return;
     const msg = text.trim();
     setText('');
+    if (id) clearDraft(id); // Очищаем черновик после отправки
     if (typingTimer.current) clearTimeout(typingTimer.current);
     try { sendTypingStop(id); } catch {}
     if (msg) {
@@ -386,6 +395,7 @@ function ChatWindowInner() {
 
   const handleTyping = (value: string) => {
     setText(value);
+    if (id) setDraft(id, value); // Сохраняем черновик при каждом изменении
     if (!id) return;
     try {
       sendTypingStart(id);
@@ -1168,9 +1178,45 @@ function ChatWindowInner() {
 
               <MuiDivider sx={{ borderColor: theme.border, my: 1.5 }} />
 
+              {/* Шрифт для этого чата */}
+              <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 1, fontWeight: 600 }}>
+                Шрифт для этого чата
+              </Typography>
+              <Select
+                value={id ? (getChatFont(id) || 'default') : 'default'}
+                onChange={(e) => {
+                  if (!id) return;
+                  const val = e.target.value;
+                  if (val === 'default') {
+                    clearChatFont(id);
+                  } else {
+                    setChatFont(id, val);
+                  }
+                }}
+                size="small"
+                fullWidth
+                sx={{
+                  color: theme.text, bgcolor: theme.bgInput, borderRadius: 2, mb: 1,
+                  fontFamily: id ? (getChatFont(id) || globalFontFamily) : globalFontFamily,
+                  '& .MuiOutlinedInput-notchedOutline': { borderColor: theme.border },
+                  '& .MuiSvgIcon-root': { color: theme.textSec },
+                  '& .MuiSelect-select': { py: 1 },
+                }}
+                MenuProps={{ PaperProps: { sx: { bgcolor: theme.bgHeader, border: `1px solid ${theme.border}` } } }}
+              >
+                {STOCK_FONTS.map(f => (
+                  <MenuItem key={f.id} value={f.id === 'default' ? 'default' : f.family} sx={{ fontFamily: f.family, color: theme.text }}>
+                    {f.name}
+                  </MenuItem>
+                ))}
+              </Select>
+              <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 2, fontStyle: 'italic' }}>
+                💡 Шрифт применяется только к этому чату. Глобальные настройки шрифта можно изменить в настройках приложения.
+              </Typography>
+
               {/* Шрифт */}
               <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 1, fontWeight: 600 }}>
-                Шрифт чата
+                Шрифт сообщений (устаревшее, для совместимости)
               </Typography>
               <Select
                 value={fontFamily}
@@ -1338,6 +1384,7 @@ function ChatWindowInner() {
           backgroundImage: theme.chatPattern,
           backgroundBlendMode: 'screen',
           scrollBehavior: 'smooth',
+          fontFamily: id ? (getChatFont(id) || globalFontFamily) : globalFontFamily,
           '&::-webkit-scrollbar': { width: 5 },
           '&::-webkit-scrollbar-thumb': { bgcolor: theme.accent + '30', borderRadius: 4 },
           position: 'relative', zIndex: 2, order: 2,

@@ -19,6 +19,7 @@ import { useChatPrefsStore } from '../store/chatPrefsStore';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore, getFinishStyles } from '../store/themeStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
+import { useDraftsStore } from '../store/draftsStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { useCustomEquipStore } from '../store/customEquipStore';
 import { specToStyle } from '../utils/customStyle';
@@ -66,6 +67,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   const { togglePin, toggleArchive, toggleMute, isPinned, isArchived, isMuted } = useChatPrefsStore();
   const { user } = useAuthStore();
   const { theme } = useThemeStore();
+  const { getDraft } = useDraftsStore();
   const navigate = useNavigate();
 
   // Обводка аватара из магазина VERA — применяем к своей аватарке (в футере/шапке).
@@ -371,6 +373,14 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
     return !!otherId && onlineUsers.has(otherId);
   }
 
+  function getLastMessageText(chat: Chat): string {
+    const draft = getDraft(chat.id);
+    if (draft) return `Черновик: ${draft}`;
+    if (chat.lastMessage?.content) return chat.lastMessage.content;
+    if (chat.lastMessage?.attachments?.length) return '📎 Вложение';
+    return 'Нет сообщений';
+  }
+
   return (
     <Box sx={{
       ...(horizontal
@@ -516,7 +526,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
              </Badge>
             {horizontal
               ? <Typography noWrap sx={{ mt: .6, color: theme.text, fontSize: 12, fontWeight: isPinned(chat.id) ? 700 : 600, maxWidth: 76 }}>{isPinned(chat.id) ? '📌 ' : ''}{name}</Typography>
-              : (open && <ListItemText sx={{ ml: 1.25, minWidth: 0 }} primary={<Box sx={{ display: 'flex', alignItems: 'center', gap: .5 }}><Typography noWrap sx={{ color: theme.text, fontWeight: isPinned(chat.id) ? 700 : 600, flex: 1 }}>{isPinned(chat.id) ? '📌 ' : ''}{name}</Typography><Typography sx={{ color: theme.textSec, fontSize: 11 }}>{timeAgo(chat.lastMessage?.createdAt || chat.updatedAt || chat.createdAt)}</Typography></Box>} secondary={<Typography noWrap sx={{ color: theme.textSec, fontSize: 13 }}>{chat.lastMessage?.content || (chat.lastMessage?.attachments?.length ? '📎 Вложение' : 'Нет сообщений')}</Typography>} />)}
+              : (open && <ListItemText sx={{ ml: 1.25, minWidth: 0 }} primary={<Box sx={{ display: 'flex', alignItems: 'center', gap: .5 }}><Typography noWrap sx={{ color: theme.text, fontWeight: isPinned(chat.id) ? 700 : 600, flex: 1 }}>{isPinned(chat.id) ? '📌 ' : ''}{name}</Typography><Typography sx={{ color: theme.textSec, fontSize: 11 }}>{timeAgo(chat.lastMessage?.createdAt || chat.updatedAt || chat.createdAt)}</Typography></Box>} secondary={<Typography noWrap sx={{ color: theme.textSec, fontSize: 13 }}>{getLastMessageText(chat)}</Typography>} />)}
             {!horizontal && open && !!chat.unreadCount && <Badge badgeContent={chat.unreadCount} color="primary" />}
             {horizontal && !!chat.unreadCount && <Box sx={{ position: 'absolute', top: 4, right: 6, minWidth: 18, height: 18, px: .6, borderRadius: 999, bgcolor: theme.accent, color: '#fff', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{chat.unreadCount}</Box>}
           </ListItem>;
