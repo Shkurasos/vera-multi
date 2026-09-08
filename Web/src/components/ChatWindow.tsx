@@ -10,7 +10,7 @@ import {
   Send, Send as SendIcon, AttachFile, MoreVert, Search, Mic, Stop,
   EmojiEmotions, InfoOutlined, Close, PushPin,
   Call, Videocam, NotificationsOff, NotificationsActive,
-  FormatSize, ExitToApp, ArrowBack, Palette,
+  FormatSize, ExitToApp, ArrowBack, Palette, KeyboardArrowDown,
 } from '@mui/icons-material';
 import { CallModal } from './CallModal';
 import { useCallStore } from '../store/callStore';
@@ -240,6 +240,10 @@ function ChatWindowInner() {
   const liveBgInputRef = useRef<HTMLInputElement>(null);
   const [liveBgUrl, setLiveBgUrl] = useState<string | null>(null);
   const [liveBgVersion, setLiveBgVersion] = useState(0);
+  
+  // Состояние для кнопки "прокрутить вниз"
+  const [showScrollButton, setShowScrollButton] = useState(false);
+  const [unreadAtBottom, setUnreadAtBottom] = useState(0);
 
   // Загружаем живые обои (видео) из IndexedDB при монтировании и при смене версии
   useEffect(() => {
@@ -330,6 +334,44 @@ function ChatWindowInner() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
+
+  // Отслеживаем позицию скролла для показа кнопки "вниз"
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+      
+      // Показываем кнопку если прокрутили вверх больше чем на 200px от низа
+      setShowScrollButton(distanceFromBottom > 200);
+      
+      // Считаем непрочитанные внизу (если есть новые сообщения)
+      if (distanceFromBottom > 200) {
+        const lastReadIndex = chatMessages.findIndex(msg => msg.senderId !== user?.id && !msg.readBy?.includes(user?.id || ''));
+        if (lastReadIndex !== -1) {
+          const unreadCount = chatMessages.slice(lastReadIndex).filter(msg => 
+            msg.senderId !== user?.id && !msg.readBy?.includes(user?.id || '')
+          ).length;
+          setUnreadAtBottom(unreadCount);
+        } else {
+          setUnreadAtBottom(0);
+        }
+      } else {
+        setUnreadAtBottom(0);
+      }
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [chatMessages, user?.id]);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    setShowScrollButton(false);
+    setUnreadAtBottom(0);
+  };
 
   const typingList = typingUsers[id || ''] || [];
 
@@ -1456,6 +1498,62 @@ function ChatWindowInner() {
           )}
           <div ref={messagesEndRef} />
         </Box>
+
+        {/* ── Кнопка "Прокрутить вниз" ── */}
+        {showScrollButton && (
+          <Box
+            onClick={scrollToBottom}
+            sx={{
+              position: 'absolute',
+              bottom: { xs: 80, sm: 90 },
+              right: { xs: 16, sm: 24 },
+              width: 48,
+              height: 48,
+              borderRadius: '50%',
+              bgcolor: theme.accent,
+              color: '#fff',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              boxShadow: `0 4px 12px ${theme.accent}66`,
+              transition: 'all 0.25s ease',
+              zIndex: 10,
+              '&:hover': {
+                transform: 'scale(1.1)',
+                boxShadow: `0 6px 16px ${theme.accent}88`,
+              },
+              '&:active': {
+                transform: 'scale(0.95)',
+              },
+            }}
+          >
+            <KeyboardArrowDown sx={{ fontSize: 28 }} />
+            {unreadAtBottom > 0 && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: -4,
+                  right: -4,
+                  minWidth: 20,
+                  height: 20,
+                  borderRadius: '10px',
+                  bgcolor: theme.online || '#4CAF50',
+                  color: '#fff',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  px: 0.5,
+                  border: `2px solid ${theme.bg}`,
+                }}
+              >
+                {unreadAtBottom > 99 ? '99+' : unreadAtBottom}
+              </Box>
+            )}
+          </Box>
+        )}
 
         {/* ── Reply bar ── */}
         {replyTo && (
