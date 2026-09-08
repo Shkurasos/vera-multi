@@ -680,19 +680,30 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
 
       <Dialog open={musicOpen} onClose={() => setMusicOpen(false)} fullWidth maxWidth="md" PaperProps={{ sx: { height: '82vh', bgcolor: theme.bg, color: theme.text, borderRadius: 3 } }}><DialogTitle>Музыка и плейлисты</DialogTitle><DialogContent sx={{ p: 0 }}><MusicLibrary /></DialogContent><DialogActions><Button onClick={() => setMusicOpen(false)}>Закрыть</Button></DialogActions></Dialog>
 
-      <Dialog open={myLinkDialogOpen} onClose={() => setMyLinkDialogOpen(false)} fullWidth maxWidth="sm">
-        <DialogTitle>Моя ссылка для добавления в друзья</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+      <Dialog open={myLinkDialogOpen} onClose={() => setMyLinkDialogOpen(false)} fullWidth maxWidth="sm" PaperProps={{ sx: { bgcolor: theme.bg, color: theme.text, borderRadius: 3 } }}>
+        <DialogTitle sx={{ color: theme.text, bgcolor: theme.bg, borderBottom: `1px solid ${theme.border}` }}>Моя ссылка для добавления в друзья</DialogTitle>
+        <DialogContent sx={{ bgcolor: theme.bg, color: theme.text }}>
+          <Typography variant="body2" sx={{ color: theme.textSec, mb: 2 }}>
             Отправьте эту ссылку другу любым способом. Когда он её вставит у себя — вы окажетесь в контактах друг у друга и откроется чат.
           </Typography>
           <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
-            <TextField 
-              size="small" 
-              fullWidth 
-              value={myInviteLink} 
-              InputProps={{ readOnly: true }} 
-              placeholder={myPk ? '' : 'Ключ ещё не готов…'} 
+            <TextField
+              size="small"
+              fullWidth
+              value={myInviteLink}
+              InputProps={{ readOnly: true }}
+              placeholder={myPk ? '' : 'Ключ ещё не готов…'}
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  color: theme.text,
+                  backgroundColor: theme.bgInput,
+                  fontSize: 14,
+                  borderRadius:  1.5,
+                  '& fieldset': { borderColor: theme.border },
+                  '&:hover fieldset': { borderColor: theme.textSec + '80' },
+                  '&.Mui-focused fieldset': { borderColor: theme.accent },
+                },
+              }}
             />
             <Button 
               variant="contained" 
@@ -705,13 +716,24 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
             </Button>
           </Stack>
           
-          <Divider sx={{ my: 2 }} />
+          <Divider sx={{ my: 2, borderColor: theme.border }} />
           
-          <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>Добавить по ссылке друга</Typography>
+          <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1, color: theme.text }}>Добавить по ссылке друга</Typography>
           <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
             <TextField size="small" fullWidth placeholder="vera://add?pk=..." value={inviteInput}
               onChange={(e) => setInviteInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleAddByInvite(); }} />
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAddByInvite(); }}
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  color: theme.text,
+                  backgroundColor: theme.bgInput,
+                  fontSize: 14,
+                  borderRadius: 1.5,
+                  '& fieldset': { borderColor: theme.border },
+                  '&:hover fieldset': { borderColor: theme.textSec + '80' },
+                  '&.Mui-focused fieldset': { borderColor: theme.accent },
+                },
+              }} />
             <Button variant="outlined" startIcon={<ContentPaste />} onClick={pasteInvite} sx={{ minWidth: 120 }}>
               Вставить
             </Button>
@@ -726,7 +748,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
           </Button>
           {inviteError && <Alert severity="error" sx={{ mt: 2 }}>{inviteError}</Alert>}
         </DialogContent>
-        <DialogActions>
+        <DialogActions sx={{ bgcolor: theme.bg, borderTop: `1px solid ${theme.border}`, px: 3, py: 1.5 }}>
           <Button onClick={() => setMyLinkDialogOpen(false)}>Закрыть</Button>
         </DialogActions>
       </Dialog>

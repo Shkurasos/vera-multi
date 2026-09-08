@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   Button, TextField, Stack, Divider, Typography, Alert, Snackbar,
@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import { peer, isPeerAvailable } from '../services/peer';
 import { useAuthStore } from '../store/authStore';
 import { useChatStore } from '../store/chatStore';
+import { useThemeStore } from '../store/themeStore';
 
 /**
  * Самодостаточный диалог «Моя ссылка / Добавить по ссылке».
@@ -17,6 +18,7 @@ export default function InviteLinkDialog({ open, onClose }: { open: boolean; onC
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const { loadChats, setActiveChat } = useChatStore();
+  const { theme } = useThemeStore();
 
   const [myPk, setMyPk] = useState('');
   const [inviteInput, setInviteInput] = useState('');
@@ -87,10 +89,10 @@ export default function InviteLinkDialog({ open, onClose }: { open: boolean; onC
 
   return (
     <>
-      <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-        <DialogTitle>Моя ссылка для добавления в друзья</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+      <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm" PaperProps={{ sx: { bgcolor: theme.bg, color: theme.text, borderRadius: 3 } }}>
+        <DialogTitle sx={{ color: theme.text, bgcolor: theme.bg, borderBottom: `1px solid ${theme.border}` }}>Моя ссылка для добавления в друзья</DialogTitle>
+        <DialogContent sx={{ bgcolor: theme.bg, color: theme.text }}>
+          <Typography variant="body2" sx={{ color: theme.textSec, mb: 2 }}>
             Отправьте эту ссылку другу любым способом. Когда он её вставит у себя — вы окажетесь в контактах друг у друга и откроется чат.
           </Typography>
           <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
@@ -100,6 +102,17 @@ export default function InviteLinkDialog({ open, onClose }: { open: boolean; onC
               value={myInviteLink}
               InputProps={{ readOnly: true }}
               placeholder={myPk ? '' : 'Ключ ещё не готов…'}
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  color: theme.text,
+                  backgroundColor: theme.bgInput,
+                  fontSize: 14,
+                  borderRadius: 1.5,
+                  '& fieldset': { borderColor: theme.border },
+                  '&:hover fieldset': { borderColor: theme.textSec + '80' },
+                  '&.Mui-focused fieldset': { borderColor: theme.accent },
+                },
+              }}
             />
             <Button
               variant="contained"
@@ -112,13 +125,24 @@ export default function InviteLinkDialog({ open, onClose }: { open: boolean; onC
             </Button>
           </Stack>
 
-          <Divider sx={{ my: 2 }} />
+          <Divider sx={{ my: 2, borderColor: theme.border }} />
 
-          <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>Добавить по ссылке друга</Typography>
+          <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1, color: theme.text }}>Добавить по ссылке друга</Typography>
           <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
             <TextField size="small" fullWidth placeholder="vera://add?pk=..." value={inviteInput}
               onChange={(e) => setInviteInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleAddByInvite(); }} />
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAddByInvite(); }}
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  color: theme.text,
+                  backgroundColor: theme.bgInput,
+                  fontSize: 14,
+                  borderRadius: 1.5,
+                  '& fieldset': { borderColor: theme.border },
+                  '&:hover fieldset': { borderColor: theme.textSec + '80' },
+                  '&.Mui-focused fieldset': { borderColor: theme.accent },
+                },
+              }} />
             <Button variant="outlined" startIcon={<ContentPaste />} onClick={pasteInvite} sx={{ minWidth: 120 }}>
               Вставить
             </Button>
@@ -133,12 +157,13 @@ export default function InviteLinkDialog({ open, onClose }: { open: boolean; onC
           </Button>
           {inviteError && <Alert severity="error" sx={{ mt: 2 }}>{inviteError}</Alert>}
         </DialogContent>
-        <DialogActions>
+        <DialogActions sx={{ bgcolor: theme.bg, borderTop: `1px solid ${theme.border}`, px: 3, py: 1.5 }}>
           <Button onClick={onClose}>Закрыть</Button>
         </DialogActions>
       </Dialog>
       <Snackbar open={!!inviteToast} autoHideDuration={2000} onClose={() => setInviteToast(null)}
-        message={inviteToast || ''} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }} />
+        message={inviteToast || ''} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        ContentProps={{ sx: { bgcolor: theme.bgHeader, color: theme.text, border: `1px solid ${theme.border}` } }} />
     </>
   );
 }
