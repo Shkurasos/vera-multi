@@ -16,6 +16,8 @@ export type AutoDeleteMonths = 0 | 1 | 3 | 6 | 12; // 0 = отключено
 export type SidePos = 'left' | 'right' | 'top' | 'bottom';
 export type VertPos = 'top' | 'bottom';
 export type Density = 'compact' | 'cozy' | 'roomy';
+/** Сторона сообщений в чате: auto — свои справа/чужие слева (как обычно), left/right — все с одной стороны. */
+export type MessageAlign = 'auto' | 'left' | 'right';
 
 export interface LayoutSettings {
   sidebarSide: SidePos;        // left | right
@@ -28,6 +30,8 @@ export interface LayoutSettings {
   radius: number;              // 0..28 радиус углов панелей
   chatOuterMargin: number;     // 0..24 внешний отступ окна чата (десктоп)
   bubbleRadius: number;        // 4..28 радиус пузырьков сообщений
+  messageMaxWidth: number;     // 35..95 максимальная ширина сообщений (% от ширины чата)
+  messageAlign: MessageAlign;  // auto | left | right сторона сообщений
   showAvatarsInList: boolean;  // аватары в списке чатов
   showTabs: boolean;           // вкладки Диалоги/Архив/Группы
 }
@@ -43,6 +47,8 @@ export const defaultLayout: LayoutSettings = {
   radius: 10,
   chatOuterMargin: 8,
   bubbleRadius: 14,
+  messageMaxWidth: 72,
+  messageAlign: 'auto',
   showAvatarsInList: true,
   showTabs: true,
 };

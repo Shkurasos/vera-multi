@@ -189,6 +189,7 @@ function ChatWindowInner() {
   const { getDraft, setDraft, clearDraft } = useDraftsStore();
   const { getChatFont, setChatFont, clearChatFont } = useChatFontStore();
   const globalFontFamily = useUserSettingsStore((s) => s.globalFontFamily);
+  const chatLayout = useUserSettingsStore((s) => s.layout);
   const [text, setText] = useState('');
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [forwardMsg, setForwardMsg] = useState<Message | null>(null);
@@ -1434,6 +1435,8 @@ function ChatWindowInner() {
                   bgBubbleOther={theme.bgBubbleOther}
                   bubbleOwnShadow={theme.bubbleOwnShadow}
                   bubbleOtherShadow={theme.bubbleOtherShadow}
+                  messageMaxWidth={chatLayout.messageMaxWidth}
+                  messageAlign={chatLayout.messageAlign}
                 />
               ))}
             </Box>

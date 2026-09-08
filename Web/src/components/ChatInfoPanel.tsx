@@ -5,7 +5,7 @@ import {
   CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material';
 import {
-  ChevronRight, Edit, Check, CameraAlt, ExitToApp, PersonAdd, Search,
+  ChevronRight, Edit, Check, CameraAlt, ExitToApp, PersonAdd, Search, Close,
 } from '@mui/icons-material';
 import { Chat, User } from '../types';
 import { useAuthStore } from '../store/authStore';

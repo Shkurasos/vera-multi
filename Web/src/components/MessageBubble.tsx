@@ -42,6 +42,10 @@ interface Props {
   bgBubbleOther: string;
   bubbleOwnShadow?: string;
   bubbleOtherShadow?: string;
+  /** Максимальная ширина сообщений (% от ширины окна чата), 35..95. */
+  messageMaxWidth?: number;
+  /** Сторона сообщений: auto | left | right. */
+  messageAlign?: 'auto' | 'left' | 'right';
 }
 
 const REACTION_EMOJIS = ['👍', '❤️', '🔥', '😂', '😮', '😢', '😡', '🎉', '👎', '⭐'];
@@ -204,9 +208,13 @@ function VideoPlayer({ src }: { src: string }) {
     <>
       <Box onClick={() => setModalOpen(true)} sx={{
         position: 'relative', cursor: 'pointer', borderRadius: 2, overflow: 'hidden',
-        maxWidth: 280, '&:hover .play-overlay': { opacity: 1 },
+        maxWidth: '100%', display: 'block', height: 'auto',
+        '&:hover .play-overlay': { opacity: 1 },
       }}>
-        <video src={src} style={{ display: 'block', width: '100%', borderRadius: 8 }} preload="metadata" />
+        <video src={src} style={{
+          display: 'block', width: '100%', height: '100%',
+          maxHeight: 420, objectFit: 'contain', background: '#000',
+        }} preload="metadata" />
         <Box className="play-overlay" sx={{
           position: 'absolute', inset: 0, bgcolor: 'rgba(0,0,0,0.4)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -296,11 +304,18 @@ function MessageBubble({
   bgBubbleOther,
   bubbleOwnShadow,
   bubbleOtherShadow,
+  messageMaxWidth,
+  messageAlign,
 }: Props) {
   const { user } = useAuthStore();
   const { theme } = useThemeStore();
   const { addReaction, pinMessage, editMessage, deleteMessage, sendMessage, addMessage } = useChatStore();
   const { fontSize, emojiSize, fontFamily } = useChatSettingsStore();
+
+  // На какой стороне показывать сообщение.
+  // auto — как обычно (свои справа, чужие слева); left/right — все с одной стороны.
+  const isOwnSide = messageAlign === 'left' ? false : messageAlign === 'right' ? true : isOwn;
+  const maxWidthPct = Math.min(95, Math.max(35, messageMaxWidth || 72));
 
   // Активные покупки из магазина: обводка аватара и «плашка» своих сообщений.
   const shopActiveRing = useShopStore((s) => s.activeRing);
@@ -504,7 +519,7 @@ function MessageBubble({
       onMouseEnter={() => onHover?.(message.id)}
       onMouseLeave={() => onHover?.(null)}
       sx={{
-        display: 'flex', flexDirection: isOwn ? 'row-reverse' : 'row', alignItems: 'flex-end', gap: 1,
+        display: 'flex', flexDirection: isOwnSide ? 'row-reverse' : 'row', alignItems: 'flex-end', gap: 1,
         px: 2.5, py: 1.2, position: 'relative',
         '&:hover .msg-actions': { opacity: 1 },
       }}
@@ -517,7 +532,7 @@ function MessageBubble({
         {senderName[0]?.toUpperCase()}
       </Avatar>
 
-      <Box sx={{ maxWidth: '72%', minWidth: 0 }}>
+      <Box sx={{ maxWidth: `${maxWidthPct}%`, minWidth: 0 }}>
         {!isOwn && (
           <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 0.3, ml: 0.5 }}>
             {senderName}
@@ -619,16 +634,20 @@ function MessageBubble({
               )}
 
               {isImage && attachment && (
-                <Box component="img" src={attachmentUrl} sx={{
-                  maxWidth: '100%',
-                  maxHeight: 320,
-                  width: 'auto',
-                  height: 'auto',
-                  objectFit: 'contain',
-                  borderRadius: 2, mt: 0.75, cursor: 'pointer',
+                <Box onClick={() => window.open(attachmentUrl, '_blank')} sx={{
+                  mt: 0.75, cursor: 'pointer',
+                  display: 'block', maxWidth: '100%',
+                  overflow: 'hidden', borderRadius: 2,
                   border: `1px solid ${theme.border}`,
-                  display: 'block',
-                }} onClick={() => window.open(attachmentUrl, '_blank')} />
+                }}>
+                  <Box component="img" src={attachmentUrl} sx={{
+                    width: '100%',
+                    height: 'auto',
+                    maxHeight: 420,
+                    objectFit: 'contain',
+                    display: 'block',
+                  }} />
+                </Box>
               )}
 
               {isDocument && attachment && (
@@ -677,7 +696,7 @@ function MessageBubble({
 
         {/* Реакции */}
         {message.reactions && message.reactions.length > 0 && (
-          <Box sx={{ display: 'flex', gap: 0.5, mt: 0.4, flexWrap: 'wrap', justifyContent: isOwn ? 'flex-end' : 'flex-start' }}>
+          <Box sx={{ display: 'flex', gap: 0.5, mt: 0.4, flexWrap: 'wrap', justifyContent: isOwnSide ? 'flex-end' : 'flex-start' }}>
             {message.reactions.map((r) => (
               <Box
                 key={r.emoji}
@@ -697,7 +716,7 @@ function MessageBubble({
           </Box>
         )}
 
-        <Box sx={{ display: 'flex', gap: 0.5, mt: 0.4, justifyContent: isOwn ? 'flex-end' : 'flex-start', opacity: isHovered ? 1 : 0, transition: 'opacity 180ms' }} className="msg-actions">
+        <Box sx={{ display: 'flex', gap: 0.5, mt: 0.4, justifyContent: isOwnSide ? 'flex-end' : 'flex-start', opacity: isHovered ? 1 : 0, transition: 'opacity 180ms' }} className="msg-actions">
           <Tooltip title="Ответить">
             <IconButton size="small" onClick={() => onReply(message)} sx={{ color: theme.textSec, ...membranePressSx }}><Reply sx={{ fontSize: 16 }} /></IconButton>
           </Tooltip>
@@ -786,5 +805,7 @@ export default memo(
     prev.isOwn === next.isOwn &&
     prev.isHovered === next.isHovered &&
     prev.accent === next.accent &&
-    prev.themeVersion === next.themeVersion
+    prev.themeVersion === next.themeVersion &&
+    prev.messageMaxWidth === next.messageMaxWidth &&
+    prev.messageAlign === next.messageAlign
 );

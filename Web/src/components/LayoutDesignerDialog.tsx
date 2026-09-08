@@ -8,7 +8,7 @@ import { Close, RestartAlt, SwapHoriz, Undo } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
 import {
   useUserSettingsStore, LayoutSettings,
-  SidePos, VertPos, Density,
+  SidePos, VertPos, Density, MessageAlign,
 } from '../store/userSettingsStore';
 
 /**
@@ -240,19 +240,23 @@ export default function LayoutDesignerDialog({ open, onClose }: Props) {
                 overflow: 'hidden',
               }}>
                 {[
-                  { own: false, w: '55%' }, { own: true, w: '45%' },
-                  { own: false, w: '70%' }, { own: true, w: '38%' },
-                ].map((m, i) => (
-                  <Box key={i} sx={{
-                    alignSelf: m.own ? 'flex-end' : 'flex-start',
-                    width: m.w, height: 14,
-                    bgcolor: m.own ? theme.accent : ((theme as any).bgBubbleOther || theme.bgHover),
-                    borderRadius: m.own
-                      ? `${layout.bubbleRadius}px ${layout.bubbleRadius}px 4px ${layout.bubbleRadius}px`
-                      : `${layout.bubbleRadius}px ${layout.bubbleRadius}px ${layout.bubbleRadius}px 4px`,
-                    opacity: 0.9,
-                  }} />
-                ))}
+                  { own: false, k: 0.82 }, { own: true, k: 0.6 },
+                  { own: false, k: 0.95 }, { own: true, k: 0.74 },
+                ].map((m, i) => {
+                  const isRight = layout.messageAlign === 'left' ? false
+                    : layout.messageAlign === 'right' ? true : m.own;
+                  const wPct = Math.round(layout.messageMaxWidth * m.k);
+                  return (
+                    <Box key={i} sx={{
+                      alignSelf: isRight ? 'flex-end' : 'flex-start',
+                      width: `${wPct}%`, height: 14, opacity: 0.9,
+                      bgcolor: m.own ? theme.accent : ((theme as any).bgBubbleOther || theme.bgHover),
+                      borderRadius: isRight
+                        ? `${layout.bubbleRadius}px ${layout.bubbleRadius}px 4px ${layout.bubbleRadius}px`
+                        : `${layout.bubbleRadius}px ${layout.bubbleRadius}px ${layout.bubbleRadius}px 4px`,
+                    }} />
+                  );
+                })}
               </Box>
 
               <Box
@@ -319,6 +323,23 @@ export default function LayoutDesignerDialog({ open, onClose }: Props) {
             </Typography>
             <Slider min={4} max={28} step={1} value={layout.bubbleRadius}
               onChange={(_, v) => setLayout('bubbleRadius', Array.isArray(v) ? v[0] : v)} />
+          </Box>
+          <Box>
+            <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
+              Ширина сообщений — {layout.messageMaxWidth}%
+            </Typography>
+            <Slider min={35} max={95} step={5} value={layout.messageMaxWidth}
+              onChange={(_, v) => setLayout('messageMaxWidth', Array.isArray(v) ? v[0] : v)} />
+          </Box>
+          <Box>
+            <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Сторона сообщений</Typography>
+            <ToggleButtonGroup exclusive size="small" fullWidth
+              value={layout.messageAlign}
+              onChange={(_, v) => v && setLayout('messageAlign', v as MessageAlign)}>
+              <ToggleButton value="auto">Авто</ToggleButton>
+              <ToggleButton value="left">Все слева</ToggleButton>
+              <ToggleButton value="right">Все справа</ToggleButton>
+            </ToggleButtonGroup>
           </Box>
           <Box>
             <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
