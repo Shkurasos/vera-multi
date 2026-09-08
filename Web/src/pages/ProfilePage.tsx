@@ -483,7 +483,7 @@ export default function ProfilePage() {
             border: `1px solid ${theme.border}`,
           }}>
             <Typography sx={{ fontSize: 16, color: theme.text, fontWeight: 700, mb: 2 }}>
-              Проф профиль
+              Профиль
             </Typography>
             
             <Box display="flex" flexDirection="column" gap={1.5}>
