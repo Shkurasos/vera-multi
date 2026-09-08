@@ -23,6 +23,7 @@ import ActivityLine from '../components/ActivityLine';
 import { useProfileCustomizationStore } from '../store/profileCustomizationStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { useCustomEquipStore } from '../store/customEquipStore';
+import { useProfileDraftStore } from '../store/profileDraftStore';
 import { specToStyle } from '../utils/customStyle';
 import { buildShopRingSx } from '../utils/rarityStyles';
 
@@ -77,6 +78,49 @@ export default function ProfilePage() {
   });
   const [usernameError, setUsernameError] = useState('');
 
+  // ── Черновик редактора профиля (localStorage + синхронизация между устройствами) ──
+  const formFromUser = () => ({
+    firstName: user?.firstName || '',
+    lastName: user?.lastName || '',
+    username: user?.username || '',
+    bio: user?.bio || '',
+    birthDate: user?.birthDate ? user.birthDate.slice(0, 10) : '',
+    country: user?.country || '',
+    region: user?.region || '',
+    city: user?.city || '',
+  });
+
+  const isSameAsUser = (f: typeof form) =>
+    f.firstName === (user?.firstName || '') &&
+    f.lastName === (user?.lastName || '') &&
+    f.username === (user?.username || '') &&
+    f.bio === (user?.bio || '') &&
+    f.birthDate === (user?.birthDate ? user.birthDate.slice(0, 10) : '') &&
+    f.country === (user?.country || '') &&
+    f.region === (user?.region || '') &&
+    f.city === (user?.city || '');
+
+  // Общее обновление формы + автосохранение черновика (только если форма отличается от профиля)
+  const updateForm = (patch: Partial<typeof form>) => {
+    const next = { ...form, ...patch };
+    setForm(next);
+    if (!editing) return;
+    const draftStore = useProfileDraftStore.getState();
+    if (isSameAsUser(next)) {
+      // Всё вернулось к данным профиля — черновик не нужен (первый заход будет стандартным)
+
+      draftStore.clearDraft();
+    } else {
+      draftStore.saveDraft(next);
+    }
+  };
+
+  // Намеренная отмена: чистим черновик, чтобы при первом заходе был стандартный вид
+  const cancelEdit = () => {
+    useProfileDraftStore.getState().clearDraft();
+    setEditing(false);
+  };
+
   // QR-код привязки нового устройства (правило "1 аккаунт = 2 устройства через QR").
   const [qrOpen, setQrOpen] = useState(false);
   const [qrLoading, setQrLoading] = useState(false);
@@ -129,19 +173,26 @@ export default function ProfilePage() {
   }
 
   const handleEdit = () => {
-    setUsernameError('');
-    setForm({
-      firstName: user?.firstName || '',
-      lastName: user?.lastName || '',
-      username: user?.username || '',
-      bio: user?.bio || '',
-      birthDate: user?.birthDate ? user.birthDate.slice(0, 10) : '',
-      country: user?.country || '',
-      region: user?.region || '',
-      city: user?.city || '',
-    });
+    setUsernameError("");
+    const draft = useProfileDraftStore.getState().draft;
+    if (draft?.form) {
+      // Восстанавливаем черновик (обновили страницу в редакторе / вышли нечайно)
+      setForm(draft.form);
+    } else {
+      setForm(formFromUser());
+    }
     setEditing(true);
   };
+
+  // Восстановить черновик редактора при повторном заходе (после refresh или случайного выхода)
+  useEffect(() => {
+    const draft = useProfileDraftStore.getState().draft;
+    if (draft?.form && user) {
+      setForm(draft.form);
+      setEditing(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   // Автоматически открывать редактирование, если пришли по /profile?edit=1
   useEffect(() => {
@@ -181,6 +232,7 @@ export default function ProfilePage() {
         setUser(res.data);
       }
       setEditing(false);
+      useProfileDraftStore.getState().clearDraft();
       setSnack({ open: true, message: 'Профиль сохранён', severity: 'success' });
     } catch (err: any) {
       const msg = err?.response?.data?.message || 'Ошибка сохранения';
@@ -274,7 +326,7 @@ export default function ProfilePage() {
           </Tooltip>
         ) : (
           <Box display="flex" gap={0.5}>
-            <IconButton onClick={() => setEditing(false)} sx={{ color: theme.textSec }}>
+            <IconButton onClick={cancelEdit} sx={{ color: theme.textSec }}>
               <Close />
             </IconButton>
             <IconButton onClick={handleSave} disabled={saving} sx={{ color: '#4CAF50' }}>
@@ -285,11 +337,11 @@ export default function ProfilePage() {
       </Box>
 
 
-      {/* ── Banner (клик = сменить фон шапки, платно/бесплатно решает магазин) ── */}
+      {/* ── Banner (клик = сменить фон шапки; доступно только в режиме редактирования) ── */}
       <Box
-        onClick={() => bannerInputRef.current?.click()}
+        onClick={() => { if (editing) bannerInputRef.current?.click(); }}
         sx={{
-          height: 180, position: 'relative', cursor: 'pointer', overflow: 'hidden',
+          height: 180, position: 'relative', cursor: editing ? 'pointer' : 'default', overflow: 'hidden',
           background: (customization.bannerUrl && !/^data:video\//i.test(customization.bannerUrl) && !/\.(mp4|webm|mov)$/i.test(customization.bannerUrl))
             ? `url(${customization.bannerUrl}) center/cover no-repeat`
             : (customization.bannerUrl ? 'transparent' : `linear-gradient(135deg, ${customization.bannerColor || theme.accent} 0%, ${theme.bgChat} 100%)`),
@@ -303,6 +355,7 @@ export default function ProfilePage() {
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
           />
         )}
+        {editing && (
         <Box className="banner-edit" sx={{
           position: 'absolute', inset: 0, opacity: 0, transition: 'opacity 0.2s',
           bgcolor: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -310,6 +363,7 @@ export default function ProfilePage() {
         }}>
           <PhotoCamera sx={{ fontSize: 20 }} /> Сменить шапку
         </Box>
+      )}
         <input ref={bannerInputRef} type="file" hidden accept="image/*,video/*"
           onChange={handleBannerChange} />
       </Box>
@@ -353,20 +407,22 @@ export default function ProfilePage() {
               {getInitials(displayName)}
             </Avatar>
           )}
-          <Tooltip title="Изменить фото">
-            <IconButton
-              onClick={() => avatarInputRef.current?.click()}
-              disabled={uploadingAvatar}
-              sx={{
-                position: 'absolute', bottom: 2, right: 2,
-                bgcolor: theme.accent, color: '#fff', width: 34, height: 34,
-                '&:hover': { bgcolor: theme.accent + 'CC' },
-                boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
-              }}
-            >
-              <PhotoCamera sx={{ fontSize: 17 }} />
-            </IconButton>
-          </Tooltip>
+          {editing && (
+            <Tooltip title="Изменить фото">
+              <IconButton
+                onClick={() => avatarInputRef.current?.click()}
+                disabled={uploadingAvatar}
+                sx={{
+                  position: 'absolute', bottom: 2, right: 2,
+                  bgcolor: theme.accent, color: '#fff', width: 34, height: 34,
+                  '&:hover': { bgcolor: theme.accent + 'CC' },
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+                }}
+              >
+                <PhotoCamera sx={{ fontSize: 17 }} />
+              </IconButton>
+            </Tooltip>
+          )}
           <input ref={avatarInputRef} type="file" hidden accept="image/*" onChange={handleAvatarChange} />
         </Box>
 
@@ -440,7 +496,7 @@ export default function ProfilePage() {
                 inputProps={{ maxLength: 32 }}
                 onChange={e => {
                   setUsernameError('');
-                  setForm(f => ({ ...f, username: e.target.value }));
+                  updateForm({ username: e.target.value });
                 }}
                 sx={{
                   ...inputSx,
@@ -450,23 +506,23 @@ export default function ProfilePage() {
               <Box display="flex" gap={1}>
                 <TextField label="Имя" fullWidth size="small"
                   value={form.firstName}
-                  onChange={e => setForm(f => ({ ...f, firstName: e.target.value }))}
+                  onChange={e => updateForm({ firstName: e.target.value })}
                   sx={inputSx} />
                 <TextField label="Фамилия" fullWidth size="small"
                   value={form.lastName}
-                  onChange={e => setForm(f => ({ ...f, lastName: e.target.value }))}
+                  onChange={e => updateForm({ lastName: e.target.value })}
                   sx={inputSx} />
               </Box>
               <TextField label="О себе" fullWidth multiline rows={2.5} size="small"
                 value={form.bio} inputProps={{ maxLength: 300 }}
-                onChange={e => setForm(f => ({ ...f, bio: e.target.value }))}
+                onChange={e => updateForm({ bio: e.target.value })}
                 sx={inputSx} />
               <TextField
                 label="Дата рождения"
                 fullWidth size="small"
                 type="date"
                 value={form.birthDate}
-                onChange={e => setForm(f => ({ ...f, birthDate: e.target.value }))}
+                onChange={e => updateForm({ birthDate: e.target.value })}
                 InputLabelProps={{ shrink: true }}
                 inputProps={{ max: new Date().toISOString().slice(0, 10) }}
                 sx={{
@@ -477,11 +533,11 @@ export default function ProfilePage() {
               <Box display="flex" gap={1}>
                 <TextField label="Страна" fullWidth size="small"
                   value={form.country}
-                  onChange={e => setForm(f => ({ ...f, country: e.target.value }))}
+                  onChange={e => updateForm({ country: e.target.value })}
                   sx={inputSx} />
                 <TextField label="Город" fullWidth size="small"
                   value={form.city}
-                  onChange={e => setForm(f => ({ ...f, city: e.target.value }))}
+                  onChange={e => updateForm({ city: e.target.value })}
                   sx={inputSx} />
               </Box>
             <Stack direction="row" spacing={1} mt={2}>
@@ -496,7 +552,7 @@ export default function ProfilePage() {
                 }}>
                 {saving ? 'Сохраняем...' : 'Сохранить'}
               </Button>
-              <Button variant="outlined" startIcon={<Close />} onClick={() => setEditing(false)}
+              <Button variant="outlined" startIcon={<Close />} onClick={cancelEdit}
                 sx={{ 
                   borderColor: theme.border, 
                   color: theme.textSec, 
