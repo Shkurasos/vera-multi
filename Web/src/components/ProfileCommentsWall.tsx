@@ -107,8 +107,8 @@ export default function ProfileCommentsWall({ targetUserId, targetUserName }: Pr
           <Avatar 
             src={me.avatarUrl || undefined} 
             sx={{ 
-              width: 34, 
-              height: 34, 
+              width: 40, 
+              height: 40, 
               flexShrink: 0,
               bgcolor: theme.accent + '80',
             }}
