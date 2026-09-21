@@ -35,3 +35,9 @@ App/electron-install.log
 
 # temp
 tmp-data/
+
+# local scratch (логи тестов/сборки, локальные скрипты запуска)
+local/
+
+# скачанные бинарники для туннеля
+cloudflared.exe

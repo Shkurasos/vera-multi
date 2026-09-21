@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { usersApi } from '../services/api';
+import { enableStoreSync } from '../services/storeSyncSimple';
 
 export type ThemeFinish = 'solid' | 'glass' | 'matte' | 'metal';
 
@@ -23,10 +24,16 @@ export interface Theme {
   online: string;
   // CSS background-image для фона области сообщений (SVG-паттерн или null)
   chatPattern?: string;
+  // Диапазон размеров тайлов паттерна в пикселях
+  chatPatternSizeMin?: number;
+  chatPatternSizeMax?: number;
   // Отключить фоновые размытые пузыри (animated blobs)
   disableBackgroundBlobs?: boolean;
-  // Отключить фиолетово-розовое фоновое свечение (градиенты за всеми слоями)
+  // Отключить фоновое свечение (градиенты за всеми слоями)
   disableBackgroundGlow?: boolean;
+  // Цвет и интенсивность фонового свечения
+  backgroundGlowColor?: string;
+  backgroundGlowIntensity?: number;
   // Режим отделки поверхностей: solid / стекло (прозрачность) / матовый (шероховатость) / металлик
   finish?: ThemeFinish;
   // Интенсивность эффекта отделки (0..1; для стекла — прозрачность, для металла — блеск, для матовости — зерно)
@@ -49,6 +56,8 @@ export interface Theme {
   headerGradient?: string;
   // Цвет текста на своём пузыре
   bubbleOwnText?: string;
+  // Цвет текста на чужом пузыре
+  bubbleOtherText?: string;
   // Фото чата (аватар чата), base64/data URL, независимо от темы
   chatPhoto?: string;
 }
@@ -152,8 +161,12 @@ export function themeToLink(theme: Theme): string {
       bd: theme.border,
       on: theme.online,
       cp: theme.chatPattern,
+      cpn: theme.chatPatternSizeMin,
+      cpx: theme.chatPatternSizeMax,
       db: theme.disableBackgroundBlobs,
       dg: theme.disableBackgroundGlow,
+      gc: theme.backgroundGlowColor,
+      gi: theme.backgroundGlowIntensity,
       ci: theme.chatBgImage,
       co: theme.chatBgImageOpacity,
       og: theme.bubbleOwnGradient,
@@ -163,6 +176,7 @@ export function themeToLink(theme: Theme): string {
       sl: theme.sidebarBlur,
       hg: theme.headerGradient,
       ot: theme.bubbleOwnText,
+      pt: theme.bubbleOtherText,
       f: theme.finish,
       fa: theme.finishAmount,
     };
@@ -196,8 +210,12 @@ export function themeFromLink(link: string): Theme | null {
       border: p.bd || 'rgba(255,255,255,0.08)',
       online: p.on || '#0f0',
       chatPattern: p.cp,
+      chatPatternSizeMin: p.cpn ?? 860,
+      chatPatternSizeMax: p.cpx ?? 1400,
       disableBackgroundBlobs: p.db,
       disableBackgroundGlow: p.dg,
+      backgroundGlowColor: p.gc || '#8FE3CF',
+      backgroundGlowIntensity: p.gi ?? 0.18,
       chatBgImage: p.ci,
       chatBgImageOpacity: p.co ?? 0.35,
       bubbleOwnGradient: p.og,
@@ -207,6 +225,7 @@ export function themeFromLink(link: string): Theme | null {
       sidebarBlur: p.sl,
       headerGradient: p.hg,
       bubbleOwnText: p.ot,
+      bubbleOtherText: p.pt || p.t,
       finish: p.f,
       finishAmount: p.fa ?? 0.5,
     };
@@ -260,15 +279,15 @@ export function getFinishStyles(theme: Theme) {
 export const THEMES: Theme[] = [
   // ── 0 ── Vera 0.2 Betta — AMOLED Glass / 2026 ─────────────────────────────
   {
-    id: 0, name: 'AMOLED Live',
-    bg: '#000000', text: '#F8FBFF', accent: '#00F5D4',
-    bgSidebar: 'rgba(0,0,0,0.86)', bgChat: '#000000', bgHeader: 'rgba(0,0,0,0.72)',
-    bgInput: 'rgba(255,255,255,0.070)', bgBubbleOwn: '#00F5D4', bgBubbleOther: 'rgba(255,255,255,0.055)',
-    bgHover: 'rgba(0,245,212,0.12)', bgActive: 'rgba(0,245,212,0.22)',
-    textSec: '#8E98A8', border: 'rgba(0,245,212,0.18)', online: '#B8FF00',
-    chatPattern: stars('rgba(0,245,212,0.055)'),
-    bubbleOwnGradient: 'linear-gradient(135deg, #B8FF00 0%, #00F5D4 42%, #00C2FF 72%, #FF2E93 100%)',
-    bubbleOwnShadow: '0 0 34px rgba(0,245,212,0.34), 0 0 70px rgba(255,46,147,0.18), 0 0 0 1px rgba(255,255,255,0.22) inset',
+    id: 0, name: 'Atelier Minimal',
+    bg: '#11151B', text: '#EEF3F7', accent: '#8FE3CF',
+    bgSidebar: '#151A21', bgChat: '#11151B', bgHeader: '#171D25',
+    bgInput: '#1B232C', bgBubbleOwn: '#8FE3CF', bgBubbleOther: '#202934',
+    bgHover: 'rgba(143,227,207,0.10)', bgActive: 'rgba(143,227,207,0.18)',
+    textSec: '#9AAAB3', border: 'rgba(143,227,207,0.18)', online: '#8FE3CF',
+    chatPattern: stars('rgba(143,227,207,0.045)'),
+    bubbleOwnGradient: 'linear-gradient(135deg, #B9F3E2 0%, #8FE3CF 55%, #6BC7B5 100%)',
+    bubbleOwnShadow: '0 5px 16px rgba(92,196,173,0.22), 0 0 0 1px rgba(210,255,244,0.28) inset',
     bubbleOtherShadow: '0 18px 44px rgba(0,0,0,0.62), 0 0 0 1px rgba(0,245,212,0.14) inset, 0 0 24px rgba(0,194,255,0.08)',
     sidebarGradient: 'radial-gradient(circle at 20% 0%, rgba(0,245,212,0.18), transparent 34%), radial-gradient(circle at 100% 72%, rgba(255,46,147,0.14), transparent 38%), linear-gradient(180deg, rgba(3,5,10,0.92) 0%, rgba(0,0,0,0.98) 100%)',
     sidebarBlur: 'blur(26px) saturate(1.45)',
@@ -308,7 +327,7 @@ export const THEMES: Theme[] = [
     bubbleOtherShadow: '0 2px 8px rgba(0,0,0,0.24)',
     sidebarGradient: 'linear-gradient(180deg, #22203A 0%, #1A1930 50%, #16152A 100%)',
     headerGradient: 'linear-gradient(90deg, #1D1C32 0%, #17162A 100%)',
-    bubbleOwnText: '#ffffff',
+    bubbleOwnText: '#10201F',
   },
 
   // ── 101 ── Ночной изумруд ─────────────────────────────────────────────────
@@ -811,7 +830,7 @@ export const THEMES: Theme[] = [
     border: 'rgba(0,0,0,0.08)', online: '#34C759',
     chatPattern: undefined,
     disableBackgroundBlobs: true,
-    disableBackgroundGlow: true,
+    disableBackgroundGlow: false,
     bubbleOwnGradient: undefined,
     bubbleOwnShadow: '0 1px 2px rgba(0,0,0,0.08)',
     bubbleOtherShadow: '0 1px 2px rgba(0,0,0,0.04)',
@@ -833,7 +852,7 @@ export const THEMES: Theme[] = [
     border: 'rgba(255,255,255,0.10)', online: '#34C759',
     chatPattern: undefined,
     disableBackgroundBlobs: true,
-    disableBackgroundGlow: true,
+    disableBackgroundGlow: false,
     bubbleOwnGradient: undefined,
     bubbleOwnShadow: '0 1px 2px rgba(0,0,0,0.5)',
     bubbleOtherShadow: '0 1px 2px rgba(0,0,0,0.3)',
@@ -844,7 +863,158 @@ export const THEMES: Theme[] = [
     finish: 'matte',
     finishAmount: 0.6,
   },
+
+  // ── 31 ── Telegram — светлый интерфейс с голубым акцентом ────────────────
+  {
+    id: 31, name: 'Telegram Blue',
+    bg: '#DDE7EF', text: '#17212B', accent: '#229ED9',
+    bgSidebar: '#FFFFFF', bgChat: '#DDE7EF', bgHeader: '#FFFFFF',
+    bgInput: '#FFFFFF', bgBubbleOwn: '#EFFDDE', bgBubbleOther: '#FFFFFF',
+    bgHover: '#EAF4FA', bgActive: '#D9EEF9', textSec: '#70808F',
+    border: 'rgba(23,33,43,0.10)', online: '#34B24A',
+    bubbleOwnShadow: '0 1px 2px rgba(23,33,43,0.12)',
+    bubbleOtherShadow: '0 1px 2px rgba(23,33,43,0.10)',
+    sidebarGradient: 'linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%)',
+    headerGradient: 'linear-gradient(90deg, #FFFFFF 0%, #F8FBFE 100%)',
+    bubbleOwnText: '#17212B',
+    bubbleOtherText: '#17212B',
+    disableBackgroundBlobs: true,
+    disableBackgroundGlow: true,
+    finish: 'matte',
+    finishAmount: 0.3,
+  },
+
+  // ── 36 ── Telegram Dark — тёмная палитра Telegram с голубым акцентом ─────
+  {
+    id: 36, name: 'Telegram Dark',
+    bg: '#17212B', text: '#F5F7F9', accent: '#229ED9',
+    bgSidebar: '#202B36', bgChat: '#17212B', bgHeader: '#202B36',
+    bgInput: '#242F3D', bgBubbleOwn: '#2B5278', bgBubbleOther: '#202B36',
+    bgHover: '#263746', bgActive: '#2B5278', textSec: '#9AAAB5',
+    border: 'rgba(154,170,181,0.16)', online: '#4DCD65',
+    chatPattern: dots('rgba(154,170,181,0.055)', 28),
+    bubbleOwnShadow: '0 2px 8px rgba(0,0,0,0.24)',
+    bubbleOtherShadow: '0 2px 8px rgba(0,0,0,0.20)',
+    sidebarGradient: 'linear-gradient(180deg, #202B36 0%, #17212B 100%)',
+    headerGradient: 'linear-gradient(90deg, #202B36 0%, #263746 50%, #202B36 100%)',
+    bubbleOwnText: '#FFFFFF',
+    bubbleOtherText: '#F5F7F9',
+    disableBackgroundBlobs: true,
+    disableBackgroundGlow: true,
+    finish: 'matte',
+    finishAmount: 0.34,
+  },
+
+  // ── 32 ── VK — фирменный синий и светлые панели ──────────────────────────
+  {
+    id: 32, name: 'VK',
+    bg: '#F2F3F5', text: '#1D1D1F', accent: '#0077FF',
+    bgSidebar: '#FFFFFF', bgChat: '#F2F3F5', bgHeader: '#FFFFFF',
+    bgInput: '#FFFFFF', bgBubbleOwn: '#2688EB', bgBubbleOther: '#FFFFFF',
+    bgHover: '#F0F2F5', bgActive: '#E5F1FF', textSec: '#818C99',
+    border: 'rgba(29,29,31,0.09)', online: '#4BB34B',
+    bubbleOwnShadow: '0 2px 5px rgba(0,119,255,0.18)',
+    bubbleOtherShadow: '0 2px 5px rgba(29,29,31,0.08)',
+    sidebarGradient: 'linear-gradient(180deg, #FFFFFF 0%, #F7F8FA 100%)',
+    headerGradient: 'linear-gradient(90deg, #FFFFFF 0%, #F6FAFF 100%)',
+    bubbleOwnText: '#FFFFFF',
+    bubbleOtherText: '#1D1D1F',
+    disableBackgroundBlobs: true,
+    disableBackgroundGlow: true,
+    finish: 'matte',
+    finishAmount: 0.28,
+  },
+
+  // ── 33 ── X — контрастная чёрная тема с акцентом X Blue ──────────────────
+  {
+    id: 33, name: 'X',
+    bg: '#000000', text: '#E7E9EA', accent: '#1D9BF0',
+    bgSidebar: '#000000', bgChat: '#000000', bgHeader: 'rgba(0,0,0,0.86)',
+    bgInput: '#202327', bgBubbleOwn: '#1D9BF0', bgBubbleOther: '#16181C',
+    bgHover: '#181818', bgActive: '#202327', textSec: '#71767B',
+    border: 'rgba(231,233,234,0.12)', online: '#00BA7C',
+    bubbleOwnShadow: '0 3px 12px rgba(29,155,240,0.24)',
+    bubbleOtherShadow: '0 2px 8px rgba(0,0,0,0.42)',
+    sidebarGradient: 'linear-gradient(180deg, #000000 0%, #050505 100%)',
+    headerGradient: 'linear-gradient(90deg, rgba(0,0,0,0.94) 0%, rgba(18,18,18,0.88) 100%)',
+    bubbleOwnText: '#FFFFFF',
+    bubbleOtherText: '#E7E9EA',
+    disableBackgroundBlobs: true,
+    disableBackgroundGlow: true,
+    finish: 'matte',
+    finishAmount: 0.42,
+  },
+
+  // ── 34 ── Facebook — светлая тема с синими сообщениями ───────────────────
+  {
+    id: 34, name: 'Facebook',
+    bg: '#F0F2F5', text: '#050505', accent: '#1877F2',
+    bgSidebar: '#FFFFFF', bgChat: '#F0F2F5', bgHeader: '#FFFFFF',
+    bgInput: '#F0F2F5', bgBubbleOwn: '#0084FF', bgBubbleOther: '#E4E6EB',
+    bgHover: '#F2F3F5', bgActive: '#E7F3FF', textSec: '#65676B',
+    border: 'rgba(5,5,5,0.10)', online: '#31A24C',
+    bubbleOwnShadow: '0 2px 6px rgba(0,132,255,0.18)',
+    bubbleOtherShadow: '0 2px 6px rgba(5,5,5,0.08)',
+    sidebarGradient: 'linear-gradient(180deg, #FFFFFF 0%, #FAFBFC 100%)',
+    headerGradient: 'linear-gradient(90deg, #FFFFFF 0%, #F7FAFF 100%)',
+    bubbleOwnText: '#FFFFFF',
+    bubbleOtherText: '#050505',
+    disableBackgroundBlobs: true,
+    disableBackgroundGlow: true,
+    finish: 'matte',
+    finishAmount: 0.3,
+  },
+
+  // ── 35 ── Discord — тёмный интерфейс и blurple-акцент ────────────────────
+  {
+    id: 35, name: 'Discord',
+    bg: '#313338', text: '#F2F3F5', accent: '#5865F2',
+    bgSidebar: '#2B2D31', bgChat: '#313338', bgHeader: '#313338',
+    bgInput: '#383A40', bgBubbleOwn: '#5865F2', bgBubbleOther: '#2B2D31',
+    bgHover: '#3F4147', bgActive: '#404249', textSec: '#B5BAC1',
+    border: 'rgba(242,243,245,0.10)', online: '#23A559',
+    bubbleOwnShadow: '0 4px 14px rgba(88,101,242,0.28)',
+    bubbleOtherShadow: '0 3px 10px rgba(0,0,0,0.24)',
+    sidebarGradient: 'linear-gradient(180deg, #2B2D31 0%, #232428 100%)',
+    headerGradient: 'linear-gradient(90deg, #313338 0%, #353841 100%)',
+    bubbleOwnText: '#FFFFFF',
+    bubbleOtherText: '#F2F3F5',
+    disableBackgroundBlobs: true,
+    disableBackgroundGlow: true,
+    finish: 'matte',
+    finishAmount: 0.38,
+  },
 ];
+
+// У старых встроенных тем были хорошие палитры, но панели оставались
+// плоскими. Добавляем им единый аккуратный слой отделки, не трогая темы,
+// которые уже описывают собственные glass/matte эффекты.
+THEMES.forEach((theme) => {
+  // Встроенные темы используют только свою базовую палитру.
+  // Паттерн появляется только после явного выбора пользователем в редакторе.
+  theme.chatPattern = undefined;
+  if (!theme.backgroundGlowColor) theme.backgroundGlowColor = '#8FE3CF';
+  if (theme.backgroundGlowIntensity === undefined) theme.backgroundGlowIntensity = 0.18;
+  if (!theme.finish) {
+    theme.finish = theme.id === 29 || theme.id === 30 ? 'matte' : 'glass';
+    theme.finishAmount = theme.id === 29 || theme.id === 30 ? 0.35 : 0.24;
+  }
+  if (!theme.border || theme.border === 'rgba(255,255,255,0.06)') {
+    theme.border = `${theme.accent}22`;
+  }
+  if (!theme.sidebarGradient) {
+    theme.sidebarGradient = `linear-gradient(180deg, ${theme.bgSidebar} 0%, ${theme.bg} 100%)`;
+  }
+  if (!theme.headerGradient) {
+    theme.headerGradient = `linear-gradient(90deg, ${theme.bgHeader} 0%, ${theme.accent}12 50%, ${theme.bgHeader} 100%)`;
+  }
+  if (!theme.bubbleOwnShadow) {
+    theme.bubbleOwnShadow = `0 6px 18px ${theme.accent}25, 0 1px 3px rgba(0,0,0,0.22)`;
+  }
+  if (!theme.bubbleOtherShadow) {
+    theme.bubbleOtherShadow = '0 3px 10px rgba(0,0,0,0.18)';
+  }
+});
 
 interface ThemeState {
   themeId: number;
@@ -988,3 +1158,7 @@ export const useThemeStore = create<ThemeState>()(
     }
   )
 );
+
+// Тема, кастомные скины и фон чата принадлежат аккаунту и должны
+// восстанавливаться на новом устройстве после привязки по QR.
+enableStoreSync('theme', useThemeStore);

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { enableStoreSync } from '../services/storeSyncSimple';
 
 /**
  * Стоковые обои (встроенные пресеты).
@@ -31,6 +32,8 @@ export type ResolvedWallpaper = { type: 'stock' | 'photo' | 'live'; value: strin
  * Глобальные и per-chat настройки обоев/яркости.
  */
 export interface ChatBgPrefsState {
+  editAllChats: boolean;
+  setEditAllChats: (value: boolean) => void;
   /** Глобальные обои (применяются ко всем чатам по умолчанию): id из STOCK_WALLPAPERS или CUSTOM_* */
   globalStockWallpaper: string;
 
@@ -66,6 +69,8 @@ export interface ChatBgPrefsState {
 export const useChatBgPrefsStore = create<ChatBgPrefsState>()(
   persist(
     (set, get) => ({
+      editAllChats: false,
+      setEditAllChats: (value) => set({ editAllChats: value }),
       globalStockWallpaper: 'none',
       perChatOverrides: {},
       perChatBrightness: {},
@@ -117,3 +122,5 @@ export const useChatBgPrefsStore = create<ChatBgPrefsState>()(
     { name: 'vera-chat-bg-prefs', version: 2 }
   )
 );
+
+enableStoreSync('chat-bg-prefs', useChatBgPrefsStore);

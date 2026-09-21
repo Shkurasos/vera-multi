@@ -11,7 +11,7 @@ import {
   Search, Group, PersonAdd, Archive,
   PinDropOutlined as Pin, NotificationsOffOutlined as Mute, DeleteForever, Palette,
   LibraryMusic, AccountCircle, SmartToy, Security, ChevronLeft,
-  ContentCopy, ContentPaste, QrCode, Link, Download,
+  ContentCopy, ContentPaste, QrCode, Link,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useChatStore } from '../store/chatStore';
@@ -24,6 +24,7 @@ import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { useCustomEquipStore } from '../store/customEquipStore';
 import { specToStyle } from '../utils/customStyle';
 import { buildShopRingSx } from '../utils/rarityStyles';
+import { skinColors } from '../utils/skinColors';
 import { chatsApi, usersApi } from '../services/api';
 import { peer, isPeerAvailable } from '../services/peer';
 import { Chat, User } from '../types';
@@ -59,8 +60,7 @@ const TABS: { id: SidebarTab; label: string }[] = [
   { id: 'groups', label: 'Группы' },
 ];
 
-const SIDEBAR_MIN = 200;
-const SIDEBAR_MAX = typeof window !== 'undefined' ? Math.floor(window.innerWidth * 0.5) : 960;
+const SIDEBAR_MIN = 72;
 
 export default function Sidebar({ open, onToggle, mobile }: Props) {
   const { chats, activeChat, setActiveChat, loadChats, onlineUsers } = useChatStore();
@@ -76,6 +76,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   const shopActiveRing = useShopStore((s) => s.activeRing);
   const ringItem = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === shopActiveRing);
   const ringVal = ringItem?.value as any;
+  const colorModes = useShopStore(s => s.colorModes);
   const customProfileSpec = useCustomEquipStore((s) => s.equipped.profile ? s.items[s.equipped.profile]?.spec : undefined);
   const buildRingSx = (active: boolean): Record<string, any> => {
     const base: Record<string, any> = {
@@ -83,7 +84,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
     };
     if (ringVal) {
       // Единый стиль обводки из магазина (с анимациями для gradient/glow/pulse/aurora).
-      Object.assign(base, buildShopRingSx(ringVal, theme.accent, active));
+      Object.assign(base, skinColors(buildShopRingSx(ringVal, theme.accent, active, 1), ringItem, theme.accent, !!ringItem && colorModes[ringItem.id] === 'theme'));
     }
     // Кастомный «профиль» от авторов — только для собственной аватарки.
     if (active && customProfileSpec) {
@@ -97,6 +98,22 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
 
   const [tab, setTab] = useState<SidebarTab>('chats');
   const [search, setSearch] = useState('');
+  const [channelsFound, setChannelsFound] = useState<Pick<Chat, 'id' | 'name' | 'avatarUrl'>[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    setChannelsFound([]);
+    if (!search.trim().startsWith('!')) return;
+    const timer = setTimeout(() => {
+      chatsApi.searchChannels(search.trim()).then(res => { if (!cancelled) setChannelsFound(res.data); }).catch(() => {});
+    }, 250);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [search]);
+  async function openChannel(channelId: string) {
+    try {
+      const res = await chatsApi.joinChannel(channelId);
+      await loadChats(); setActiveChat(res.data); navigate('/chat/' + channelId); setSearch('');
+    } catch (e: any) { alert(e.response?.data?.message || 'Не удалось открыть канал'); }
+  }
   const [addContactOpen, setAddContactOpen] = useState(false);
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
@@ -186,11 +203,19 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   const scrollTimerRef = React.useRef<number | null>(null);
   const layout = useUserSettingsStore((s) => s.layout);
   const setLayout = useUserSettingsStore((s) => s.setLayout);
-  const sidebarWidth = Math.min(Math.max(layout.sidebarWidth, SIDEBAR_MIN), SIDEBAR_MAX);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  const sidebarMax = Math.max(SIDEBAR_MIN, Math.floor(viewportWidth / 2));
+  const sidebarWidth = Math.min(Math.max(layout.sidebarWidth, SIDEBAR_MIN), sidebarMax);
   const horizontal = layout.sidebarSide === 'top' || layout.sidebarSide === 'bottom';
+  const avatarOnly = !mobile && !horizontal && sidebarWidth <= 112;
   const [resizing, setResizing] = useState(false);
 
   useEffect(() => { loadChats(); }, []);
+  useEffect(() => {
+    const updateViewportWidth = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', updateViewportWidth);
+    return () => window.removeEventListener('resize', updateViewportWidth);
+  }, []);
   useEffect(() => () => { if (scrollTimerRef.current) window.clearTimeout(scrollTimerRef.current); }, []);
 
   useEffect(() => {
@@ -200,7 +225,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       const x = layout.sidebarSide === 'right'
         ? window.innerWidth - e.clientX
         : e.clientX;
-      const w = Math.min(Math.max(x, SIDEBAR_MIN), SIDEBAR_MAX);
+      const w = Math.min(Math.max(x, SIDEBAR_MIN), sidebarMax);
       setLayout('sidebarWidth', w);
     };
     const onUp = () => {
@@ -214,7 +239,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [resizing, layout.sidebarSide, setLayout]);
+  }, [resizing, layout.sidebarSide, setLayout, sidebarMax]);
 
   function handleChatListScroll() {
     setScrollPulse(true);
@@ -228,7 +253,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
     const name = c.name || [otherMember?.user?.firstName, otherMember?.user?.lastName].filter(Boolean).join(' ') || otherMember?.user?.username || '';
     const matchSearch = name.toLowerCase().includes(search.toLowerCase());
     if (tab === 'archive') return matchSearch && isArchived(c.id);
-    if (tab === 'groups') return matchSearch && c.type === 'group';
+    if (tab === 'groups') return matchSearch && (c.type === 'group' || c.type === 'channel');
     return matchSearch && !isArchived(c.id);
   });
 
@@ -320,7 +345,8 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
         const chat = await peer.createGroup(name, selected);
         createdId = (chat as any)?.id || null;
       } else {
-        await chatsApi.createGroup(name, []);
+        const result = await chatsApi.createGroup(name, selected);
+        createdId = result.data.id;
       }
       await loadChats();
       setCreateGroupOpen(false);
@@ -405,22 +431,24 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       backdropFilter: theme.sidebarBlur || 'blur(18px)',
       display: 'flex',
       flexDirection: 'column',
+      flexShrink: 0,
+      boxSizing: 'border-box',
       transition: resizing ? 'none' : 'width .2s ease, min-width .2s ease',
       overflow: 'hidden',
       position: 'relative',
       ...getFinishStyles(theme),
       '&::before': {
         content: '""', position: 'absolute', inset: 0, pointerEvents: 'none',
-        background: `radial-gradient(circle at 20% 0%, ${theme.accent}22 0, transparent 34%), radial-gradient(circle at 80% 100%, rgba(255,79,216,0.14) 0, transparent 30%)`,
+        background: theme.disableBackgroundGlow ? 'none' : `radial-gradient(circle at 20% 0%, ${theme.backgroundGlowColor || '#8FE3CF'}22 0, transparent 34%), radial-gradient(circle at 80% 100%, ${theme.backgroundGlowColor || '#8FE3CF'}14 0, transparent 30%)`,
       },
     }}>
-      <Box sx={{ p: 1.25, display: 'flex', alignItems: 'center', gap: 1, position: 'relative', zIndex: 1 }}>
-        {open && <TextField size="small" fullWidth value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск" InputProps={{ startAdornment: <InputAdornment position="start"><Search fontSize="small" /></InputAdornment> }} sx={{ '& .MuiInputBase-root': { bgcolor: theme.bgInput, color: theme.text, borderRadius: 999, height: 38, boxShadow: '0 8px 24px rgba(0,0,0,0.20)' } }} />}
-        {open && <Tooltip title="Добавить чат / контакт"><IconButton onClick={() => setAddContactOpen(true)} sx={{ color: theme.textSec }}><PersonAdd /></IconButton></Tooltip>}
-        {open && <Tooltip title="Создать группу"><IconButton onClick={() => setCreateGroupOpen(true)} sx={{ color: theme.textSec }}><Group /></IconButton></Tooltip>}
+      <Box sx={{ p: { xs: 1, md: 1.25 }, display: 'flex', alignItems: 'center', gap: 1, position: 'relative', zIndex: 1, paddingTop: mobile ? 'calc(0.5rem + env(safe-area-inset-top))' : undefined }}>
+        {!avatarOnly && open && <TextField size="small" fullWidth value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск" InputProps={{ startAdornment: <InputAdornment position="start"><Search fontSize="small" /></InputAdornment> }} sx={{ '& .MuiInputBase-root': { bgcolor: theme.bgInput, color: theme.text, borderRadius: 999, height: 38, boxShadow: '0 8px 24px rgba(0,0,0,0.20)' } }} />}
+        {!avatarOnly && open && <Tooltip title="Добавить чат / контакт"><IconButton onClick={() => setAddContactOpen(true)} sx={{ color: theme.textSec }}><PersonAdd /></IconButton></Tooltip>}
+        {!avatarOnly && open && <Tooltip title="Создать группу"><IconButton onClick={() => setCreateGroupOpen(true)} sx={{ color: theme.textSec }}><Group /></IconButton></Tooltip>}
       </Box>
 
-      {open && layout.showTabs && (
+      {!avatarOnly && open && layout.showTabs && (
         <Box sx={{
           display: 'grid',
           gridTemplateColumns: `repeat(${TABS.length}, 1fr)`,
@@ -451,7 +479,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
                     fontSize: 12.5,
                     fontWeight: active ? 700 : 500,
                     color: active ? '#001018' : theme.textSec,
-                    bgcolor: 'transparent',
+                    bgcolor: active ? theme.accent : 'transparent',
                     border: 'none',
                     position: 'relative',
                     zIndex: 1,
@@ -466,7 +494,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
                       opacity: active ? 1 : 0,
                       transform: active ? 'scale(1)' : 'scale(0.6)',
                       transition: 'opacity 260ms cubic-bezier(0.34, 1.3, 0.64, 1), transform 300ms cubic-bezier(0.34, 1.3, 0.64, 1)',
-                      zIndex: -1,
+                      zIndex: 0,
                     },
                     '&:hover::before': {
                       opacity: active ? 1 : 0.12,
@@ -475,12 +503,15 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
                     '& .MuiButton-startIcon': {
                       transition: 'margin 200ms ease',
                     },
+                    '& > *': { position: 'relative', zIndex: 1 },
                     boxShadow: active
                       ? `0 4px 18px ${theme.accent}55`
                       : 'none',
                   }}
                 >
-                  {t.label}
+                  <Box component="span" sx={{ position: 'relative', zIndex: 1 }}>
+                    {t.label}
+                  </Box>
                 </Button>
               </Box>
             );
@@ -489,12 +520,13 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       )}
 
       <List data-vera-list onScroll={handleChatListScroll} sx={{ flex: 1, overflowY: horizontal ? 'hidden' : 'auto', overflowX: horizontal ? 'auto' : 'hidden', display: horizontal ? 'flex' : 'block', flexDirection: horizontal ? 'row' : 'column', py: .5, px: open ? 1 : .5, position: 'relative', zIndex: 1, scrollBehavior: 'smooth', '&::-webkit-scrollbar': { height: 6 } }}>
+        {channelsFound.filter(c => !chats.some(existing => existing.id === c.id)).map(c => <ListItem key={c.id} onClick={() => openChannel(c.id)} sx={{ cursor: 'pointer' }}><Avatar src={c.avatarUrl} /><ListItemText sx={{ ml: 1 }} primary={c.name} secondary="Канал · подписаться" /></ListItem>)}
         {sorted.map(chat => {
           const name = getChatName(chat);
           const active = activeChat?.id === chat.id;
-           return <ListItem key={chat.id} onClick={() => { setActiveChat(chat); navigate(`/chat/${chat.id}`); }} onContextMenu={(e) => handleContextMenu(e, chat)} sx={{ cursor: 'pointer', ...(horizontal ? { flexDirection: 'column', width: 84, minWidth: 84, mr: .5, py: 1, px: .5, alignItems: 'center', textAlign: 'center' } : { px: open ? 1.15 : .65, py: .85, mb: .55 }), borderRadius: 3.5, bgcolor: active ? theme.bgActive : 'rgba(255,255,255,0.026)', border: `1px solid ${active ? theme.accent + '66' : 'rgba(255,255,255,0.045)'}`, boxShadow: active ? `0 12px 34px ${theme.accent}22` : 'none', backdropFilter: 'blur(14px)', overflow: 'hidden', '&::before': { content: '""', position: 'absolute', inset: 0, opacity: 0, background: 'linear-gradient(90deg, rgba(255,72,105,.34), rgba(255,145,77,.20), transparent 78%)', filter: 'blur(10px)', transform: 'translateX(-18%)', transition: `opacity 260ms ${motion.easeOut}, transform 360ms ${motion.easeOut}` }, '&:hover': { bgcolor: theme.bgHover, transform: 'translateY(-1px)' }, '&:active': { transform: horizontal ? 'scale(.94)' : 'translateX(10px) scale(.985)', boxShadow: horizontal ? `inset 0 0 24px ${theme.accent}33` : 'inset 10px 0 28px rgba(255,80,110,.26)' }, '&:active::before': { opacity: 1, transform: 'translateX(0)' }, transition: `background .22s ${motion.easeOut}, transform .28s ${motion.spring}, box-shadow .22s ${motion.easeOut}` }}>
-             <Badge color="success" variant="dot" invisible={!isChatOnline(chat)} overlap="circular">
-               {layout.showAvatarsInList ? (
+           return <Tooltip key={chat.id} title={avatarOnly ? name : ''} placement="right"><ListItem onClick={() => { setActiveChat(chat); navigate(`/chat/${chat.id}`); }} onContextMenu={(e) => handleContextMenu(e, chat)} sx={{ cursor: 'pointer', ...(horizontal ? { flexDirection: 'column', width: 84, minWidth: 84, mr: .5, py: 1, px: .5, alignItems: 'center', textAlign: 'center' } : avatarOnly ? { justifyContent: 'center', px: .5, py: .65, mb: .4 } : { px: open ? 1.15 : .65, py: .85, mb: .55 }), borderRadius: 3.5, bgcolor: active ? theme.bgActive : 'rgba(255,255,255,0.026)', border: `1px solid ${active ? theme.accent + '66' : 'rgba(255,255,255,0.045)'}`, boxShadow: active ? `0 12px 34px ${theme.accent}22` : 'none', backdropFilter: 'blur(14px)', overflow: 'hidden', '&:hover': { bgcolor: theme.bgHover, transform: 'translateY(-1px)' }, transition: `background .22s ${motion.easeOut}, transform .28s ${motion.spring}, box-shadow .22s ${motion.easeOut}` }}>
+             <Badge color={avatarOnly && chat.unreadCount ? 'primary' : 'success'} variant={avatarOnly && chat.unreadCount ? 'standard' : 'dot'} badgeContent={avatarOnly ? chat.unreadCount : undefined} invisible={!isChatOnline(chat) && !(avatarOnly && chat.unreadCount)} overlap="circular">
+               {avatarOnly || layout.showAvatarsInList ? (
                  chat.type === 'saved' ? (
                    <Avatar sx={{ 
                      width: horizontal ? 52 : 46, 
@@ -524,20 +556,19 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
                  <Box sx={{ width: horizontal ? 46 : 6, height: horizontal ? 4 : 46, borderRadius: 3, bgcolor: active ? theme.accent : 'transparent' }} />
                )}
              </Badge>
-            {horizontal
+             {horizontal
               ? <Typography noWrap sx={{ mt: .6, color: theme.text, fontSize: 12, fontWeight: isPinned(chat.id) ? 700 : 600, maxWidth: 76 }}>{isPinned(chat.id) ? '📌 ' : ''}{name}</Typography>
-              : (open && <ListItemText sx={{ ml: 1.25, minWidth: 0 }} primary={<Box sx={{ display: 'flex', alignItems: 'center', gap: .5 }}><Typography noWrap sx={{ color: theme.text, fontWeight: isPinned(chat.id) ? 700 : 600, flex: 1 }}>{isPinned(chat.id) ? '📌 ' : ''}{name}</Typography><Typography sx={{ color: theme.textSec, fontSize: 11 }}>{timeAgo(chat.lastMessage?.createdAt || chat.updatedAt || chat.createdAt)}</Typography></Box>} secondary={<Typography noWrap sx={{ color: theme.textSec, fontSize: 13 }}>{getLastMessageText(chat)}</Typography>} />)}
-            {!horizontal && open && !!chat.unreadCount && <Badge badgeContent={chat.unreadCount} color="primary" />}
+              : (!avatarOnly && open && <ListItemText sx={{ ml: 1.25, minWidth: 0 }} primary={<Box sx={{ display: 'flex', alignItems: 'center', gap: .5 }}><Typography noWrap sx={{ color: theme.text, fontWeight: isPinned(chat.id) ? 700 : 600, flex: 1 }}>{isPinned(chat.id) ? '📌 ' : ''}{name}</Typography><Typography sx={{ color: theme.textSec, fontSize: 11 }}>{timeAgo(chat.lastMessage?.createdAt || chat.updatedAt || chat.createdAt)}</Typography></Box>} secondary={<Typography noWrap sx={{ color: theme.textSec, fontSize: 13 }}>{getLastMessageText(chat)}</Typography>} />)}
+             {!horizontal && !avatarOnly && open && !!chat.unreadCount && <Badge badgeContent={chat.unreadCount} color="primary" />}
             {horizontal && !!chat.unreadCount && <Box sx={{ position: 'absolute', top: 4, right: 6, minWidth: 18, height: 18, px: .6, borderRadius: 999, bgcolor: theme.accent, color: '#fff', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{chat.unreadCount}</Box>}
-          </ListItem>;
+          </ListItem></Tooltip>;
         })}
       </List>
 
-      <Box sx={{ p: 1, borderTop: `1px solid ${theme.border}`, display: 'flex', gap: .5, justifyContent: open ? 'space-between' : 'center', flexWrap: 'wrap', position: 'relative', zIndex: 1, background: 'rgba(0,0,0,0.18)', backdropFilter: 'blur(18px)' }}>
+      <Box sx={{ p: 1, borderTop: `1px solid ${theme.border}`, display: mobile ? 'none' : 'flex', gap: .5, justifyContent: open ? 'space-between' : 'center', flexWrap: 'wrap', position: 'relative', zIndex: 1, background: 'rgba(0,0,0,0.18)', backdropFilter: 'blur(18px)' }}>
         <Tooltip title="Профиль"><IconButton onClick={() => navigate('/profile')} sx={{ color: theme.textSec, ...membranePressSx }}><AccountCircle /></IconButton></Tooltip>
         <Tooltip title="Моя музыка и плейлисты"><IconButton onClick={() => setMusicOpen(true)} sx={{ color: theme.textSec, ...membranePressSx }}><LibraryMusic /></IconButton></Tooltip>
-        <Tooltip title="Магазин тем"><IconButton onClick={() => setMarketplaceOpen(true)} sx={{ color: theme.textSec, ...membranePressSx }}><Palette /></IconButton></Tooltip>
-        <Tooltip title="Скачать приложение"><IconButton onClick={() => navigate('/download')} sx={{ color: theme.textSec, ...membranePressSx }}><Download /></IconButton></Tooltip>
+        <Tooltip title="Редактор тем"><IconButton onClick={() => setThemeEditorOpen(true)} sx={{ color: theme.textSec, ...membranePressSx }}><Palette /></IconButton></Tooltip>
         {user?.isAdmin && (
           <Tooltip title="Bug Bounty Tools"><IconButton onClick={() => navigate('/admin')} sx={{ color: theme.textSec, ...membranePressSx }}><Security /></IconButton></Tooltip>
         )}
@@ -587,6 +618,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
           document.body.style.userSelect = 'none';
         }}
         sx={{
+          display: mobile || horizontal ? 'none' : 'block',
           position: 'absolute',
           ...(layout.sidebarSide === 'left' ? { right: -5 } : { left: -5 }),
           top: 0,
@@ -643,7 +675,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       <Dialog open={createGroupOpen} onClose={() => setCreateGroupOpen(false)} fullWidth maxWidth="xs">
         <DialogTitle>Новая группа</DialogTitle>
         <DialogContent>
-          <TextField fullWidth autoFocus margin="dense" label="Название" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} />
+          <TextField fullWidth autoFocus margin="dense" label="Название" helperText="Начните название с !, чтобы создать публичный канал" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} />
           <Typography sx={{ mt: 2, mb: 1, fontSize: 13, color: theme.textSec }}>
             Участники ({contactsForGroup.length ? 'выберите контакты' : 'контактов пока нет — создайте группу и пришлите ссылку'})
           </Typography>

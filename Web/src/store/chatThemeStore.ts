@@ -10,6 +10,12 @@ import { enableStoreSync } from '../services/storeSyncSimple';
  */
 
 export interface ChatThemeOverride {
+  /** Переключатель применения персональной темы; false означает общую тему. */
+  enabled?: boolean;
+  name?: string;
+  sourceThemeId?: number;
+  // Поля совпадают с Theme, но хранятся только для конкретного chatId.
+  [key: string]: any;
   accent?: string;
   bubbleOwn?: string;
   bubbleOther?: string;

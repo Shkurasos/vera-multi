@@ -11,6 +11,9 @@ const STORE = 'videos';
 const KEY = 'chat-bg-video';
 export const LIVE_BG_FLAG_KEY = 'vera-live-bg-set';
 
+const videoKey = (scope: string) => scope === 'global' ? KEY : `${KEY}:${scope}`;
+const flagKey = (scope: string) => scope === 'global' ? LIVE_BG_FLAG_KEY : `${LIVE_BG_FLAG_KEY}:${scope}`;
+
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1);
@@ -23,23 +26,23 @@ function openDb(): Promise<IDBDatabase> {
   });
 }
 
-export async function saveLiveBg(blob: Blob): Promise<void> {
+export async function saveLiveBg(blob: Blob, scope = 'global'): Promise<void> {
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE, 'readwrite');
-    tx.objectStore(STORE).put(blob, KEY);
+    tx.objectStore(STORE).put(blob, videoKey(scope));
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
-  try { localStorage.setItem(LIVE_BG_FLAG_KEY, '1'); } catch {}
+  try { localStorage.setItem(flagKey(scope), '1'); } catch {}
 }
 
-export async function loadLiveBgUrl(): Promise<string | null> {
+export async function loadLiveBgUrl(scope = 'global'): Promise<string | null> {
   try {
     const db = await openDb();
     const blob = await new Promise<Blob | undefined>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readonly');
-      const req = tx.objectStore(STORE).get(KEY);
+      const req = tx.objectStore(STORE).get(videoKey(scope));
       req.onsuccess = () => resolve(req.result as Blob | undefined);
       req.onerror = () => reject(req.error);
     });
@@ -50,19 +53,38 @@ export async function loadLiveBgUrl(): Promise<string | null> {
   }
 }
 
-export async function clearLiveBg(): Promise<void> {
+export async function getLiveBgBlob(scope = 'global'): Promise<Blob | null> {
+  try {
+    const db = await openDb();
+    return await new Promise<Blob | null>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readonly');
+      const req = tx.objectStore(STORE).get(videoKey(scope));
+      req.onsuccess = () => resolve((req.result as Blob | undefined) || null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function saveLiveBgDataUrl(dataUrl: string, scope = 'global'): Promise<void> {
+  const response = await fetch(dataUrl);
+  await saveLiveBg(await response.blob(), scope);
+}
+
+export async function clearLiveBg(scope = 'global'): Promise<void> {
   try {
     const db = await openDb();
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).delete(KEY);
+      tx.objectStore(STORE).delete(videoKey(scope));
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
   } catch {}
-  try { localStorage.removeItem(LIVE_BG_FLAG_KEY); } catch {}
+  try { localStorage.removeItem(flagKey(scope)); } catch {}
 }
 
-export function hasLiveBg(): boolean {
-  try { return localStorage.getItem(LIVE_BG_FLAG_KEY) === '1'; } catch { return false; }
+export function hasLiveBg(scope = 'global'): boolean {
+  try { return localStorage.getItem(flagKey(scope)) === '1'; } catch { return false; }
 }

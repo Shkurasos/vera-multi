@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useMemo, memo } from 'react';
+import { createPortal } from 'react-dom';
 import { Box, Typography, Avatar, IconButton, Tooltip, Slider, Popover, Button, CircularProgress } from '@mui/material';
 import {
-  Reply, Delete, ContentCopy, DoneAll, Done, GraphicEq, Pause, Download,
+  Reply, Delete, ContentCopy, DoneAll, Done, AccessTime, GraphicEq, Pause, Download,
   PushPin, Forward, AddReaction, OpenInNew, Edit, Close,
   Image as ImageIcon, Videocam, AudioFile, PictureAsPdf,
   FolderZip, Description, TableChart, Slideshow,
@@ -13,13 +14,20 @@ import { useThemeStore } from '../store/themeStore';
 import { useAuthStore } from '../store/authStore';
 import { useChatSettingsStore } from '../store/chatSettingsStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
+import { useEquipmentStore } from '../store/equipmentStore';
 import { useCustomEquipStore } from '../store/customEquipStore';
 import { specToStyle, specAnimationClass } from '../utils/customStyle';
 import { buildPlaqueSx, buildShopRingSx } from '../utils/rarityStyles';
-import { voiceApi } from '../services/api';
+import { skinColors } from '../utils/skinColors';
+import { bubbleSkin, selfcardSkin } from '../utils/bubbleSkin';
+import { mirrorBubble } from '../utils/mirrorBubble';
+import { clampBubble } from '../utils/bubbleSettings';
+import { messagesApi, voiceApi } from '../services/api';
 import PlaylistMessageCard, { VeraPlaylistPayload } from './PlaylistMessageCard';
 import GroupInviteCard from './GroupInviteCard';
 import ContextMenu from './ContextMenu';
+import ChannelComments from './ChannelComments';
+import { hasGroupRight } from '../services/groupPermissions';
 import { membranePressSx, motion } from '../styles/motion';
 
 interface Props {
@@ -46,6 +54,12 @@ interface Props {
   messageMaxWidth?: number;
   /** Сторона сообщений: auto | left | right. */
   messageAlign?: 'auto' | 'left' | 'right';
+  bubbleEnabled?: boolean;
+  bubbleTextSize?: number;
+  bubblePadding?: number;
+  /** Соседние сообщения того же автора в пределах одной даты. */
+  isGroupStart?: boolean;
+  isGroupEnd?: boolean;
 }
 
 const REACTION_EMOJIS = ['👍', '❤️', '🔥', '😂', '😮', '😢', '😡', '🎉', '👎', '⭐'];
@@ -87,14 +101,34 @@ function splitEmoji(text: string): { type: 'emoji' | 'text'; value: string }[] {
   return parts.length ? parts : [{ type: 'text', value: text }];
 }
 
+function splitContent(text: string): Array<{ type: 'emoji' | 'text' | 'link'; value: string; href?: string }> {
+  const parts: Array<{ type: 'emoji' | 'text' | 'link'; value: string; href?: string }> = [];
+  const urlRe = /(?:https?:\/\/[^\s]+|\/#(?:\/|\?)[^\s]+)/g;
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = urlRe.exec(text)) !== null) {
+    const raw = match[0];
+    const trailing = raw.match(/[.,!?;:)\]}]+$/)?.[0] || '';
+    const value = trailing ? raw.slice(0, -trailing.length) : raw;
+    if (match.index > last) parts.push(...splitEmoji(text.slice(last, match.index)));
+    if (value) parts.push({ type: 'link', value, href: value });
+    if (trailing) parts.push(...splitEmoji(trailing));
+    last = match.index + raw.length;
+  }
+  if (last < text.length) parts.push(...splitEmoji(text.slice(last)));
+  return parts.length ? parts : splitEmoji(text);
+}
+
 // ── Аудиоплеер ──────────────────────────────────────────────────────────────
-function AudioPlayer({ src, fileName, accent, attachmentId, onTranscribe }: { src: string; fileName?: string; accent: string; attachmentId?: string; onTranscribe?: (id: string) => void }) {
+function AudioPlayer({ src, fileName, accent, attachmentId }: { src: string; fileName?: string; accent: string; attachmentId?: string }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [transcribing, setTranscribing] = useState(false);
+  const [transcription, setTranscription] = useState('');
+  const [transcriptionError, setTranscriptionError] = useState('');
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -134,23 +168,20 @@ function AudioPlayer({ src, fileName, accent, attachmentId, onTranscribe }: { sr
   const handleTranscribe = async () => {
     if (!attachmentId || transcribing) return;
     setTranscribing(true);
+    setTranscriptionError('');
 
     try {
       const res = await voiceApi.transcribe(attachmentId);
       const text = (res.data as any).text;
       if (!text) {
-        throw new Error('Пустой ответ от сервера');
+        throw new Error(res.data.message || 'В аудио не удалось обнаружить речь');
       }
-      if (onTranscribe) onTranscribe(text);
+      setTranscription(text);
     } catch (e: any) {
       console.error('Transcription failed:', e?.message || e);
       // Показываем понятную ошибку
       const msg = e?.response?.data?.message || e?.message || '';
-      alert(
-        msg.includes('ECONNREFUSED') || msg.includes('localhost:5000')
-          ? '⚠️ AI Engine (Whisper) не запущен.\n\nЗапустите в папке ai-engine:\n  python server.py'
-          : `Не удалось распознать голосовое сообщение.\n\n${msg}`
-      );
+      setTranscriptionError(msg || 'Не удалось распознать аудио');
     } finally {
       setTranscribing(false);
     }
@@ -158,7 +189,7 @@ function AudioPlayer({ src, fileName, accent, attachmentId, onTranscribe }: { sr
 
   return (
     <Box sx={{
-      display: 'flex', alignItems: 'center', gap: 1.5,
+      display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap',
       bgcolor: 'rgba(0,0,0,0.2)', borderRadius: 3, px: 1.5, py: 1,
       minWidth: 220, maxWidth: 320,
     }}>
@@ -184,7 +215,7 @@ function AudioPlayer({ src, fileName, accent, attachmentId, onTranscribe }: { sr
       </Box>
       {attachmentId && (
         <Tooltip title={transcribing ? 'Распознавание...' : 'Распознать текст голосового сообщения'}>
-          <IconButton size="small" onClick={handleTranscribe} sx={{
+          <IconButton size="small" disabled={transcribing} aria-label="Распознать текст" onClick={handleTranscribe} sx={{
             color: transcribing ? accent : 'rgba(255,255,255,0.4)',
             '&:hover': { color: accent },
           }}>
@@ -192,12 +223,71 @@ function AudioPlayer({ src, fileName, accent, attachmentId, onTranscribe }: { sr
           </IconButton>
         </Tooltip>
       )}
+      {(transcription || transcriptionError) && <Typography role="status" sx={{ width: '100%', fontSize: 13, whiteSpace: 'pre-wrap', color: transcriptionError ? '#ff8a80' : 'inherit' }}>{transcriptionError || transcription}</Typography>}
       <a href={src} download style={{ textDecoration: 'none' }}>
         <IconButton size="small" sx={{ color: 'rgba(255,255,255,0.4)', '&:hover': { color: '#fff' } }}>
           <Download sx={{ fontSize: 16 }} />
         </IconButton>
       </a>
     </Box>
+  );
+}
+
+// ── Просмотр картинки во весь экран ──────────────────────────────────────────
+function ImageViewer({ src, border }: { src: string; border: string }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', onKey);
+    // блокируем скролл фона пока открыт просмотр
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open]);
+  return (
+    <>
+      <Box onClick={() => setOpen(true)} sx={{
+        mt: 0.75, cursor: 'zoom-in',
+        display: 'block', maxWidth: '100%',
+        overflow: 'hidden', borderRadius: 2,
+        border: `1px solid ${border}`,
+      }}>
+        <Box component="img" src={src} sx={{
+          width: '100%', height: 'auto', maxHeight: 420,
+          objectFit: 'contain', display: 'block',
+        }} />
+      </Box>
+      {open && createPortal((
+        <Box onClick={() => setOpen(false)} sx={{
+          position: 'fixed', inset: 0, zIndex: 13000,
+          bgcolor: 'rgba(0,0,0,0.94)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'zoom-out',
+        }}>
+          <IconButton onClick={(e) => { e.stopPropagation(); setOpen(false); }} sx={{
+            position: 'absolute', top: 16, right: 16, color: '#fff',
+            bgcolor: 'rgba(0,0,0,0.5)', '&:hover': { bgcolor: 'rgba(0,0,0,0.75)' }, zIndex: 2,
+          }}>
+            <Close />
+          </IconButton>
+          <IconButton
+            component="a" href={src} download
+            onClick={(e) => e.stopPropagation()}
+            sx={{
+              position: 'absolute', top: 16, right: 72, color: '#fff',
+              bgcolor: 'rgba(0,0,0,0.5)', '&:hover': { bgcolor: 'rgba(0,0,0,0.75)' }, zIndex: 2,
+            }}>
+            <Download />
+          </IconButton>
+          <Box component="img" src={src} onClick={(e) => e.stopPropagation()}
+            sx={{ maxWidth: '96vw', maxHeight: '94vh', objectFit: 'contain', borderRadius: 1, boxShadow: '0 8px 40px rgba(0,0,0,0.6)' }} />
+        </Box>
+      ), document.body)}
+    </>
   );
 }
 
@@ -223,15 +313,31 @@ function VideoPlayer({ src }: { src: string }) {
           <GraphicEq sx={{ fontSize: 52, color: '#fff' }} />
         </Box>
       </Box>
-      {modalOpen && (
+      {modalOpen && createPortal((
         <Box onClick={() => setModalOpen(false)} sx={{
-          position: 'fixed', inset: 0, zIndex: 9999,
-          bgcolor: 'rgba(0,0,0,0.92)',
+          position: 'fixed', inset: 0, zIndex: 13000,
+          bgcolor: 'rgba(0,0,0,0.94)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
-          <video src={src} controls autoPlay style={{ maxWidth: '90vw', maxHeight: '85vh', borderRadius: 8 }} />
+          <IconButton onClick={(e) => { e.stopPropagation(); setModalOpen(false); }} sx={{
+            position: 'absolute', top: 16, right: 16, color: '#fff',
+            bgcolor: 'rgba(0,0,0,0.5)', '&:hover': { bgcolor: 'rgba(0,0,0,0.75)' }, zIndex: 2,
+          }}>
+            <Close />
+          </IconButton>
+          <IconButton
+            component="a" href={src} download
+            onClick={(e) => e.stopPropagation()}
+            sx={{
+              position: 'absolute', top: 16, right: 72, color: '#fff',
+              bgcolor: 'rgba(0,0,0,0.5)', '&:hover': { bgcolor: 'rgba(0,0,0,0.75)' }, zIndex: 2,
+            }}>
+            <Download />
+          </IconButton>
+          <video src={src} controls autoPlay onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '96vw', maxHeight: '94vh', borderRadius: 8, background: '#000' }} />
         </Box>
-      )}
+      ), document.body)}
     </>
   );
 }
@@ -306,10 +412,20 @@ function MessageBubble({
   bubbleOtherShadow,
   messageMaxWidth,
   messageAlign,
+  bubbleEnabled = true,
+  bubbleTextSize,
+  bubblePadding = 6,
+  isGroupStart = true,
+  isGroupEnd = true,
 }: Props) {
   const { user } = useAuthStore();
+  const groupChat = useChatStore(s => s.chats.find(c => c.id === message.chatId));
+  const channelPost = groupChat?.type === 'channel' && !message.replyToId;
+  const canEdit = isOwn || hasGroupRight(groupChat?.members.find(m => m.userId === user?.id), 'editMessages');
+  const canDelete = isOwn || hasGroupRight(groupChat?.members.find(m => m.userId === user?.id), 'deleteMessages');
+  const senderTitle = groupChat?.members.find(m => m.userId === message.senderId && m.role === 'admin')?.adminTitle;
   const { theme } = useThemeStore();
-  const { addReaction, pinMessage, editMessage, deleteMessage, sendMessage, addMessage } = useChatStore();
+  const { addReaction, pinMessage, editMessage, deleteMessage, sendMessage, addMessage, updateMessage } = useChatStore();
   const { fontSize, emojiSize, fontFamily } = useChatSettingsStore();
 
   // На какой стороне показывать сообщение.
@@ -321,9 +437,7 @@ function MessageBubble({
   const shopActiveRing = useShopStore((s) => s.activeRing);
   const shopActiveSelfCard = useShopStore((s) => s.activeSelfCard);
   const ringItem = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === shopActiveRing);
-  const selfCardItem = SHOP_CATALOG.find(i => i.applyKey === 'selfCard' && i.id === shopActiveSelfCard);
   const shopActiveBubble = useShopStore((s) => s.activeBubble);
-  const bubbleItem = SHOP_CATALOG.find(i => i.applyKey === 'bubbleStyle' && i.id === shopActiveBubble);
 
   // Кастомные предметы от авторов (перебивают выбор из фиксированного каталога).
   const customProfileSpec = useCustomEquipStore((s) => s.equipped.profile ? s.items[s.equipped.profile]?.spec : undefined);
@@ -332,68 +446,112 @@ function MessageBubble({
 
   const [showActions, setShowActions] = useState(false);
   const [openReply, setOpenReply] = useState(false);
-  const [openForward, setOpenForward] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [forwardChatId, setForwardChatId] = useState('');
   const [chatListAnchor, setChatListAnchor] = useState<HTMLElement | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [reactionAnchor, setReactionAnchor] = useState<HTMLElement | null>(null);
+  const [actionsPlacement, setActionsPlacement] = useState<'above' | 'below'>('below');
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchOrigin = useRef<{ x: number; y: number } | null>(null);
+  const suppressTouchClick = useRef(false);
+  const attachmentsRef = useRef<HTMLDivElement>(null);
+  const cancelHold = () => {
+    if (holdTimer.current !== null) clearTimeout(holdTimer.current);
+    holdTimer.current = null;
+  };
+  useEffect(() => cancelHold, []);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(message.content || '');
-  const [transcribedText, setTranscribedText] = useState<string | null>(null);
+  const [pollSelection, setPollSelection] = useState<string[]>([]);
+  const [pollBusy, setPollBusy] = useState(false);
+  const [pollError, setPollError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const actionBusy = useRef(false);
+  const runAction = async (action: () => Promise<void>) => {
+    if (actionBusy.current) return;
+    actionBusy.current = true;
+    setActionError('');
+    try { await action(); }
+    catch (error: any) { setActionError(error?.response?.data?.message || error?.message || 'Не удалось сохранить изменение'); }
+    finally { actionBusy.current = false; }
+  };
 
   // Мемоизируем разбиение текста на эмодзи/текст, чтобы не делать это
   // на каждый рендер каждого сообщения (устраняет лаги в больших чатах).
   const contentParts = useMemo(
-    () => (message.content ? splitEmoji(message.content) : []),
+    () => (message.content ? splitContent(message.content) : []),
     [message.content]
   );
 
-  const sender = message.sender;
+  // Актуальные данные отправителя: message.sender — это снапшот на момент отправки,
+  // поэтому старый avatarUrl «залипает» на прошлых сообщениях. Берём свежие данные:
+  //  • для своих сообщений — из authStore (текущий пользователь);
+  //  • для чужих — из members активного чата (там обновляемый avatarUrl).
+  const activeChatMembers = useChatStore((s) => s.activeChat?.members);
+  const freshSender = useMemo(() => {
+    if (channelPost) return { ...message.sender, id: groupChat.id, firstName: groupChat.name, lastName: '', avatarUrl: groupChat.avatarUrl, activeRing: groupChat.activeRing, activeSelfCard: groupChat.activeSelfCard, activeBubble: groupChat.activeBubble };
+    if (isOwn && user) return user as any;
+    const m = activeChatMembers?.find((mm: any) => mm.userId === message.senderId);
+    return (m?.user as any) || message.sender || null;
+  }, [isOwn, user, activeChatMembers, message.senderId, message.sender, channelPost, groupChat]);
+  const equipment = useEquipmentStore(s => message.senderId ? s.users[message.senderId] : undefined);
+  useEffect(() => {
+    if (!channelPost && !isOwn && message.senderId) void useEquipmentStore.getState().refresh(message.senderId);
+  }, [isOwn, message.senderId, message.chatId]);
+  const sender = freshSender && !channelPost && !isOwn && equipment ? { ...freshSender, ...equipment } : freshSender;
+  const selfCardItem = SHOP_CATALOG.find(i => i.applyKey === 'selfCard' && i.id === (isOwn ? shopActiveSelfCard : sender?.activeSelfCard));
+  const bubbleItem = SHOP_CATALOG.find(i => i.applyKey === 'bubbleStyle' && i.id === (isOwn ? shopActiveBubble : sender?.activeBubble));
   const senderName = sender ? [sender.firstName, sender.lastName].filter(Boolean).join(' ') || sender.username : 'Бот';
+  // Добавляем cache-busting параметр по themeVersion, чтобы браузер перечитал
+  // картинку аватара после смены (иначе кэш держит старую).
   const senderAvatar = sender?.avatarUrl ? resolveFileUrl(sender.avatarUrl) : undefined;
 
   const attachment = message.attachments?.[0];
-  const isAudio = attachment?.mimeType?.startsWith('audio/') || message.type === 'voice';
-  const isVideo = attachment?.mimeType?.startsWith('video/') || message.type === 'video';
-  const isImage = attachment?.mimeType?.startsWith('image/') || message.type === 'photo';
-  const isDocument = !isAudio && !isVideo && !isImage && attachment;
-
-  const attachmentUrl = attachment?.fileUrl ? resolveFileUrl(attachment.fileUrl) : '';
 
   const handleAddReaction = (emoji: string) => {
-    addReaction(message.chatId, message.id, emoji);
-    setReactionAnchor(null);
+    void runAction(async () => {
+      await addReaction(message.chatId, message.id, emoji);
+      setReactionAnchor(null);
+    });
   };
 
   const handleTogglePin = () => {
-    pinMessage(message.chatId, message.isPinned ? null : message.id);
+    void runAction(() => pinMessage(message.chatId, message.isPinned ? null : message.id));
   };
 
   const handleSaveEdit = () => {
     const trimmed = editText.trim();
-    if (trimmed && trimmed !== message.content) {
-      editMessage(message.id, trimmed);
-    }
-    setEditing(false);
+    void runAction(async () => {
+      if (trimmed !== (message.content || '')) {
+        if (!trimmed && !message.attachments?.length) throw new Error('Сообщение не может быть пустым');
+        await editMessage(message.id, trimmed);
+      }
+      setEditing(false);
+    });
   };
 
   const handleDelete = () => {
-    deleteMessage(message.id, message.chatId);
+    void runAction(() => deleteMessage(message.id, message.chatId));
     setContextMenu(null);
   };
 
-  const handleTranscribedText = (text: string) => {
-    // Показываем распознанный текст как текст сообщения в чате
-    setTranscribedText(text);
-    // Отправляем распознанный текст как новое сообщение в этот же чат
-    sendMessage(message.chatId, `🎤 Расшифровка: ${text}`);
+  const updateActionsPlacement = (element: HTMLElement) => {
+    const rect = element.getBoundingClientRect();
+    const actionBarHeight = 52;
+    const gap = 8;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    setActionsPlacement(spaceBelow < actionBarHeight + gap && spaceAbove > spaceBelow ? 'above' : 'below');
   };
 
-  const bubbleTextColor = isOwn ? (theme.bubbleOwnText || '#fff') : theme.text;
+
+  const bubbleTextColor = isOwn ? (theme.bubbleOwnText || '#fff') : (theme.bubbleOtherText || theme.text);
 
   // ── Стиль пузырей из магазина (перебивает тему; кастом авторов перебивает магазин) ──
-  const shopBubbleVal = isOwn ? (bubbleItem?.value as any) : undefined;
+  const shopBubbleVal = bubbleItem?.value as any;
+  const ownColorModes = useShopStore(s => s.colorModes);
+  const colorModes = isOwn ? ownColorModes : {};
   const shopBubbleSx: Record<string, any> = {};
   let shopBubbleText: string | undefined;
   if (shopBubbleVal) {
@@ -455,6 +613,14 @@ function MessageBubble({
     }
   }
 
+  if (shopBubbleVal) {
+    Object.assign(shopBubbleSx, bubbleSkin(bubbleItem, accent, colorModes[bubbleItem!.id] === 'theme'));
+    shopBubbleText = shopBubbleSx.color;
+  }
+  const equippedBubbleSx = {
+    ...shopBubbleSx,
+    ...(isOwn && customBubbleSpec ? specToStyle(customBubbleSpec) : {}),
+  };
   // ── Обводка аватара из магазина ──────────────────────────────────────
   // Обводка аватара: для своих сообщений — своя покупка; для чужих — обводка ОТПРАВИТЕЛЯ,
   // переданная сервером (sender.activeRing). Так обводка привязана к аккаунту покупателя.
@@ -463,14 +629,14 @@ function MessageBubble({
   const ringItemForAvatar = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === (isOwn ? ownRingId : (sender?.activeRing || '')));
   const ringValForAvatar = ringItemForAvatar?.value as any;
   const avatarSx: Record<string, any> = {
-    width: 38, height: 38, cursor: 'pointer', flexShrink: 0,
+    width: 34, height: 34, cursor: 'pointer', flexShrink: 0,
     bgcolor: accent + '70',
     border: `2px solid ${isOwn ? accent : 'transparent'}`,
     transition: 'box-shadow 0.3s ease, border-color 0.3s ease',
   };
   if (ringValForAvatar) {
     // Единый стиль обводки из магазина (с анимациями для gradient/glow/pulse/aurora).
-    Object.assign(avatarSx, buildShopRingSx(ringValForAvatar, accent, false));
+    Object.assign(avatarSx, skinColors(buildShopRingSx(ringValForAvatar, accent, false, 1), ringItemForAvatar, accent, isOwn && colorModes[ringItemForAvatar!.id] === 'theme'));
   }
   // Кастомная обводка (spec от авторов) — только для собственной аватарки.
   if (isOwn && customProfileSpec) {
@@ -494,7 +660,7 @@ function MessageBubble({
       Object.assign(selfPlaqueSx, buildPlaqueSx(selfVal.rarity, accent));
     } else if (selfVal.type === 'gradient') {
       // Градиентная плашка строится из текущего акцента темы — под тему, а не фиксированный цвет.
-      selfPlaqueSx.background = `linear-gradient(90deg, ${accent}, ${accent}80)`;
+      selfPlaqueSx.background = selfVal.gradient || `linear-gradient(90deg, ${accent}, ${accent}80)`;
       selfPlaqueSx.color = '#fff';
       selfPlaqueSx.border = 'none';
       selfPlaqueSx.boxShadow = `0 2px 8px ${accent}44`;
@@ -506,9 +672,11 @@ function MessageBubble({
       selfPlaqueSx.px = 0.8;
     }
   }
+  Object.assign(selfPlaqueSx, skinColors(selfPlaqueSx, selfCardItem, accent, !!selfCardItem && colorModes[selfCardItem.id] === 'theme'));
+  if (selfVal?.pack) Object.assign(selfPlaqueSx, selfcardSkin(selfCardItem!, SHOP_CATALOG, accent, colorModes[selfCardItem!.id] === 'theme'));
   // Кастомная плашка от авторов перебивает.
   let selfPlaqueClass = '';
-  if (customSelfcardSpec) {
+  if (isOwn && customSelfcardSpec) {
     Object.assign(selfPlaqueSx, specToStyle(customSelfcardSpec));
     selfPlaqueClass = specAnimationClass(customSelfcardSpec);
   }
@@ -516,66 +684,150 @@ function MessageBubble({
   return (
     <Box
       id={`msg-${message.id}`}
-      onMouseEnter={() => onHover?.(message.id)}
-      onMouseLeave={() => onHover?.(null)}
       sx={{
-        display: 'flex', flexDirection: isOwnSide ? 'row-reverse' : 'row', alignItems: 'flex-end', gap: 1,
-        px: 2.5, py: 1.2, position: 'relative',
-        '&:hover .msg-actions': { opacity: 1 },
+        display: 'flex',
+        flexDirection: isOwnSide ? 'row-reverse' : 'row',
+        justifyContent: 'flex-start',
+        alignItems: 'flex-end',
+        gap: 0.5,
+        // Больший вертикальный ритм между сообщениями и место под панель действий,
+        // чтобы соседние сообщения не «ловили» hover пустой плоскостью строки.
+        width: '100%', boxSizing: 'border-box',
+        px: { xs: 1, md: 1.5 },
+        pt: isGroupStart ? { xs: 0.75, md: 1.1 } : 0.15,
+        pb: isGroupEnd ? { xs: 1.2, md: 1.6 } : 0.15,
+        position: 'relative',
+        touchAction: 'pan-y',
+        zIndex: isHovered ? 20 : 'auto',
       }}
     >
-      <Avatar
-        src={senderAvatar}
-        sx={avatarSx}
-        onClick={() => onAvatarClick?.(sender as User)}
-      >
-        {senderName[0]?.toUpperCase()}
-      </Avatar>
+      {isGroupEnd ? <Avatar
+          src={senderAvatar}
+          sx={avatarSx}
+          onClick={() => !channelPost && onAvatarClick?.(sender as User)}
+        >
+          {senderName[0]?.toUpperCase()}
+        </Avatar> : <Box sx={{ width: 34, flexShrink: 0 }} />}
 
-      <Box sx={{ maxWidth: `${maxWidthPct}%`, minWidth: 0 }}>
-        {!isOwn && (
+      <Box
+        onPointerEnter={(e) => {
+          if (e.pointerType === 'mouse') { onHover?.(message.id); updateActionsPlacement(e.currentTarget); }
+        }}
+        onTouchStart={(e) => {
+          cancelHold();
+          suppressTouchClick.current = false;
+          touchOrigin.current = null;
+          if (e.touches.length !== 1 || (e.target as HTMLElement).closest('button, a, input, textarea, video, audio, [role="slider"]')) return;
+          onHover?.(null);
+          const touch = e.touches[0];
+          touchOrigin.current = { x: touch.clientX, y: touch.clientY };
+          const target = e.currentTarget;
+          holdTimer.current = setTimeout(() => {
+            holdTimer.current = null;
+            suppressTouchClick.current = true;
+            updateActionsPlacement(target);
+            onHover?.(message.id);
+          }, 550);
+        }}
+        onTouchMove={(e) => {
+          const start = touchOrigin.current;
+          const touch = e.touches[0];
+          if (!start) return;
+          if (!touch || Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 8) {
+            cancelHold();
+            onHover?.(null);
+          }
+        }}
+        onTouchEnd={cancelHold}
+        onTouchCancel={() => { cancelHold(); onHover?.(null); }}
+        onClickCapture={(e) => {
+          if (!suppressTouchClick.current) return;
+          suppressTouchClick.current = false;
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        onPointerLeave={(e) => { if (e.pointerType === 'mouse') onHover?.(null); }}
+        sx={{
+          // Редактор не должен наследовать пользовательское ограничение ширины
+          // обычных пузырей (например, 35%): на узком окне оно делает поле
+          // ввода практически непригодным для текста.
+          width: editing ? { xs: '100%', sm: 'min(640px, 100%)' } : 'auto',
+          maxWidth: editing ? '100%' : `${maxWidthPct}%`,
+          minWidth: 0,
+          position: 'relative',
+        }}
+      >
+        {!isOwn && !selfCardItem && isGroupStart && (
           <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 0.3, ml: 0.5 }}>
-            {senderName}
+            {senderName}{senderTitle ? ` · ${senderTitle}` : ''}
           </Typography>
         )}
-        {isOwn && (
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 0.4 }}>
-            <Typography component="span" sx={selfPlaqueSx} className={selfPlaqueClass}>
-              Вы
+        {(isOwn || selfCardItem) && isGroupStart && (
+          <Box sx={{ display: 'flex', justifyContent: isOwnSide ? 'flex-end' : 'flex-start', mb: 0.4 }}>
+            <Typography component="span" sx={{ ...selfPlaqueSx, display: 'inline-flex', alignItems: 'center' }} className={selfPlaqueClass}>
+              {isOwn ? 'Вы' : senderName}{senderTitle ? ` · ${senderTitle}` : ''}
             </Typography>
           </Box>
         )}
 
         <Box
           data-vera-bubble
-          onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY }); }}
-          className={isOwn && customBubbleSpec ? specAnimationClass(customBubbleSpec) : ''}
+          onContextMenu={(e) => {
+            if ((e.target as HTMLElement).closest('input, textarea')) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (touchOrigin.current) {
+              cancelHold();
+              suppressTouchClick.current = true;
+              updateActionsPlacement(e.currentTarget);
+              onHover?.(message.id);
+            } else if (e.button === 2) setContextMenu({ x: e.clientX, y: e.clientY });
+          }}
+          onPointerDown={(e) => { if (e.pointerType === 'mouse') touchOrigin.current = null; }}
+          className={bubbleEnabled && isOwn && customBubbleSpec ? specAnimationClass(customBubbleSpec) : ''}
           sx={{
             position: 'relative',
-            background: isOwn
+            '@media (pointer: coarse)': {
+              userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
+              '& input, & textarea': { userSelect: 'text', WebkitUserSelect: 'text', WebkitTouchCallout: 'default' },
+            },
+            background: !bubbleEnabled ? 'transparent' : (isOwn
               ? bubbleOwnGradient || bgBubbleOwn
-              : bgBubbleOther,
+              : bgBubbleOther),
             color: shopBubbleText || bubbleTextColor,
             boxShadow: isOwn
               ? bubbleOwnShadow
               : bubbleOtherShadow,
-            borderRadius: isOwn
+            borderRadius: isOwnSide
               ? `var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) 4px var(--vera-bubble-radius, 16px)`
               : `var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) 4px`,
-            px: 1.75, py: 1.25,
+            maxWidth: '100%', boxSizing: 'border-box',
             border: `1px solid ${isOwn ? accent + '28' : theme.border}`,
             backdropFilter: 'blur(18px)',
             transition: `background 220ms ${motion.easeOut}, transform 220ms ${motion.spring}, box-shadow 220ms ${motion.easeOut}`,
-            transform: isHovered ? 'translateY(-2px)' : 'translateY(0)',
+            transform: { xs: 'none', md: isHovered ? 'translateY(-2px)' : 'translateY(0)' },
             ...(isOwn
               ? { boxShadow: `${bubbleOwnShadow || ''}, 0 0 0 1px ${accent}18 inset` }
               : {}),
             // Кастомный «пузырь» от авторов — перекрывает базовый стиль (только для своих).
             // Стиль пузырей из магазина — между темой и кастомом авторов.
-            ...(isOwn ? shopBubbleSx : {}),
-            ...(isOwn && customBubbleSpec ? specToStyle(customBubbleSpec) : {}),
+            ...(bubbleEnabled ? (isOwnSide ? equippedBubbleSx : mirrorBubble(equippedBubbleSx)) : {}),
+            paddingLeft: bubbleEnabled && !channelPost ? '14px' : 0,
+            paddingRight: bubbleEnabled && !channelPost ? '14px' : 0,
+            paddingTop: bubbleEnabled && !channelPost ? `${clampBubble('padding', bubblePadding)}px` : 0,
+            paddingBottom: bubbleEnabled && !channelPost ? `${clampBubble('padding', bubblePadding)}px` : 0,
+            minWidth: 0, overflowWrap: 'anywhere',
+            '& > *': { maxWidth: '100%', minWidth: 0, boxSizing: 'border-box' },
+            ...(!bubbleEnabled ? { background: 'transparent', backgroundImage: 'none', border: 'none', boxShadow: 'none', backdropFilter: 'none', color: theme.text, animation: 'none', '&::before': { display: 'none' }, '&::after': { display: 'none' } } : {}),
           }}
         >
+          <Box sx={channelPost ? {
+            px: bubbleEnabled ? '14px' : 0,
+            py: bubbleEnabled ? `${clampBubble('padding', bubblePadding)}px` : 0,
+          } : { display: 'contents' }}>
+          {message.forwardFromId && <Typography sx={{ fontSize: 12, color: theme.accent, mb: 0.5 }}>
+            Переслано от {message.forwardFromName || 'пользователя'}
+          </Typography>}
           {message.replyToId && (
             <Box sx={{
               mb: 1, p: 1, borderRadius: 2,
@@ -602,10 +854,10 @@ function MessageBubble({
                   if (e.key === 'Escape') setEditing(false);
                 }}
                 style={{
-                  width: '100%', boxSizing: 'border-box', resize: 'none',
+                  width: '100%', minHeight: 96, boxSizing: 'border-box', resize: 'vertical',
                   background: 'rgba(0,0,0,0.15)', color: bubbleTextColor,
                   border: `1px solid ${theme.accent}66`, borderRadius: 8,
-                  padding: '8px 10px', fontSize, fontFamily,
+                  padding: '8px 10px', fontSize, lineHeight: 1.5, fontFamily,
                 }}
               />
               <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
@@ -614,40 +866,75 @@ function MessageBubble({
               </Box>
             </Box>
           ) : (
-            <>
+            <Box sx={message.content && !attachment && !message.replyToId && !message.isEdited ? { display: 'flex', alignItems: 'center', gap: 1 } : {}}>
               {message.content && (
-                <Typography sx={{ fontSize, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily }}>
-                  {contentParts.map((part, i) =>
-                    part.type === 'emoji'
-                      ? <span key={i} style={{ fontSize: emojiSize, lineHeight: 1.2 }}>{part.value}</span>
+                <Typography sx={{ flex: 1, minWidth: 0, fontSize: bubbleTextSize || fontSize, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', fontFamily }}>
+                  {contentParts.map((part, i) => part.type === 'emoji'
+                    ? <span key={i} style={{ fontSize: emojiSize, lineHeight: 1.2 }}>{part.value}</span>
+                    : part.type === 'link'
+                      ? <a key={i} href={part.href} target={part.href?.startsWith('http') ? '_blank' : undefined}
+                        rel={part.href?.startsWith('http') ? 'noopener noreferrer' : undefined}
+                        onClick={(event) => event.stopPropagation()}
+                        style={{ color: theme.accent, textDecoration: 'underline', overflowWrap: 'anywhere' }}>
+                        {part.value}
+                      </a>
                       : <span key={i}>{part.value}</span>
                   )}
                 </Typography>
               )}
 
+              {message.type === 'poll' && message.poll && (() => {
+                const totalVotes = new Set(message.poll.options.flatMap(option => option.voterIds || [])).size;
+                const voted = message.poll.options.some(option => option.voterIds?.includes(user?.id || ''));
+                return <Box sx={{ mt: 1, p: 1.25, border: `1px solid ${theme.border}`, borderRadius: 2, bgcolor: 'rgba(255,255,255,0.05)' }}>
+                  <Typography sx={{ fontWeight: 700, mb: 1 }}>{message.poll.question}</Typography>
+                  {message.poll.options.map(option => {
+                    const selected = voted ? !!option.voterIds?.includes(user?.id || '') : pollSelection.includes(option.id);
+                    const percent = totalVotes ? Math.round(option.votes / totalVotes * 100) : 0;
+                    return <Button fullWidth key={option.id} disabled={pollBusy || voted} aria-pressed={selected} onClick={() => setPollSelection(current => message.poll?.multiple ? (selected ? current.filter(id => id !== option.id) : [...current, option.id]) : [option.id])} sx={{ display: 'block', textAlign: 'left', textTransform: 'none', color: 'inherit', '&.Mui-disabled': { color: 'inherit' }, position: 'relative', overflow: 'hidden', border: `1px solid ${selected ? theme.accent : theme.border}`, borderRadius: 1.5, p: 0.8, mb: 0.7 }}>
+                      <Box sx={{ position: 'absolute', inset: 0, width: `${percent}%`, bgcolor: `${theme.accent}22` }} />
+                      <Box sx={{ position: 'relative', display: 'flex', justifyContent: 'space-between', gap: 1 }}><span>{selected ? '✓ ' : ''}{option.text}</span><span>{percent}%</span></Box>
+                    </Button>;
+                  })}
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1 }}>
+                    <Typography sx={{ fontSize: 12, opacity: 0.7 }}>Участников: {totalVotes}{message.poll.multiple ? ' · Несколько вариантов' : ''}</Typography>
+                    <Button size="small" disabled={voted || !pollSelection.length || pollBusy} onClick={async () => {
+                      setPollBusy(true);
+                      setPollError('');
+                      try { const result = await messagesApi.votePoll(message.id, pollSelection); updateMessage(result.data); setPollSelection([]); }
+                      catch (error: any) { setPollError(error.response?.data?.message || 'Не удалось сохранить голос. Попробуйте ещё раз.'); }
+                      finally { setPollBusy(false); }
+                    }}>{voted ? 'Вы проголосовали' : pollBusy ? 'Отправка…' : 'Проголосовать'}</Button>
+                  </Box>
+                  {pollError && <Typography role="alert" color="error">{pollError}</Typography>}
+                </Box>;
+              })()}
+
+              {(message.attachments?.length || 0) > 1 && <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                <IconButton aria-label="Предыдущее вложение" onClick={e => { e.stopPropagation(); const el = attachmentsRef.current; el?.scrollBy({ left: -el.clientWidth, behavior: 'smooth' }); }} sx={{ color: 'inherit' }}>←</IconButton>
+                <IconButton aria-label="Следующее вложение" onClick={e => { e.stopPropagation(); const el = attachmentsRef.current; el?.scrollBy({ left: el.clientWidth, behavior: 'smooth' }); }} sx={{ color: 'inherit' }}>→</IconButton>
+              </Box>}
+              <Box ref={attachmentsRef} tabIndex={message.attachments?.length ? 0 : undefined} role="region" aria-label="Вложения поста" sx={{ display: 'flex', width: message.attachments?.length ? 360 : undefined, maxWidth: '100%', overflowX: 'auto', scrollSnapType: 'x mandatory', gap: 1 }}>
+              {(message.attachments || []).map((attachment, index, attachments) => {
+                const attachmentUrl = resolveFileUrl(attachment.fileUrl);
+                const isAudio = attachment.mimeType?.startsWith('audio/') || (attachments.length === 1 && message.type === 'voice');
+                const isVideo = attachment.mimeType?.startsWith('video/') || (attachments.length === 1 && message.type === 'video');
+                const isImage = attachment.mimeType?.startsWith('image/') || (attachments.length === 1 && message.type === 'photo');
+                const isDocument = !isAudio && !isVideo && !isImage;
+                return <Box key={attachment.id || index} sx={{ flex: '0 0 100%', minWidth: 0, scrollSnapAlign: 'start' }}>
+                  {attachments.length > 1 && <Typography sx={{ fontSize: 12, opacity: 0.75, mb: 0.5 }}>{index + 1} / {attachments.length} · Листайте →</Typography>}
               {isAudio && attachment && (
-                <AudioPlayer src={attachmentUrl} fileName={attachment.fileName} accent={theme.accent} attachmentId={attachment.id} onTranscribe={handleTranscribedText} />
+                <AudioPlayer src={attachmentUrl} fileName={attachment.fileName} accent={theme.accent} attachmentId={attachment.id} />
               )}
 
               {isVideo && attachment && (
-                <VideoPlayer src={attachmentUrl} />
+                /^video-note\.(webm|mp4)$/.test(attachment.fileName || '') ?
+                  <video src={attachmentUrl} controls playsInline preload="metadata" style={{ width: 240, maxWidth: '100%', aspectRatio: '1', borderRadius: '50%', objectFit: 'cover' }} /> :
+                  <VideoPlayer src={attachmentUrl} />
               )}
 
               {isImage && attachment && (
-                <Box onClick={() => window.open(attachmentUrl, '_blank')} sx={{
-                  mt: 0.75, cursor: 'pointer',
-                  display: 'block', maxWidth: '100%',
-                  overflow: 'hidden', borderRadius: 2,
-                  border: `1px solid ${theme.border}`,
-                }}>
-                  <Box component="img" src={attachmentUrl} sx={{
-                    width: '100%',
-                    height: 'auto',
-                    maxHeight: 420,
-                    objectFit: 'contain',
-                    display: 'block',
-                  }} />
-                </Box>
+                <ImageViewer src={attachmentUrl} border={theme.border} />
               )}
 
               {isDocument && attachment && (
@@ -661,6 +948,9 @@ function MessageBubble({
                   )}
                 </Box>
               )}
+                </Box>;
+              })}
+              </Box>
 
               {message.isEdited && (
                 <Typography sx={{ fontSize: 11, color: bubbleTextColor, opacity: 0.6, mt: 0.3, fontStyle: 'italic' }}>
@@ -668,11 +958,24 @@ function MessageBubble({
                 </Typography>
               )}
 
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.75, justifyContent: 'flex-end' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', flexShrink: 0, gap: 1, mt: message.content && !attachment && !message.replyToId && !message.isEdited ? 0 : 0.75, justifyContent: 'flex-end' }}>
                 <Typography sx={{ fontSize: 11, color: bubbleTextColor, opacity: 0.75 }}>
                   {formatTime(message.createdAt)}
                 </Typography>
                 {isOwn && (() => {
+                  const status = (message as any).status as string | undefined;
+                  if (status === 'pending' || status === 'sending' || status === 'failed') {
+                    const tip = status === 'failed'
+                      ? 'Не удалось отправить — попробуем снова'
+                      : 'Ожидает отправки (нет сети или сервер недоступен)';
+                    return (
+                      <Tooltip title={tip}>
+                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                          <AccessTime sx={{ fontSize: 14, color: status === 'failed' ? '#ff8a80' : theme.textSec }} />
+                        </Box>
+                      </Tooltip>
+                    );
+                  }
                   const readBy = message.readBy || [];
                   const readByOthers = readBy.filter(id => id !== message.senderId);
                   const isRead = readByOthers.length > 0;
@@ -690,8 +993,10 @@ function MessageBubble({
                   );
                 })()}
               </Box>
-            </>
+            </Box>
           )}
+          </Box>
+          {channelPost && <ChannelComments post={message} />}
         </Box>
 
         {/* Реакции */}
@@ -700,7 +1005,7 @@ function MessageBubble({
             {message.reactions.map((r) => (
               <Box
                 key={r.emoji}
-                onClick={() => addReaction(message.chatId, message.id, r.emoji)}
+                onClick={() => handleAddReaction(r.emoji)}
                 sx={{
                   display: 'inline-flex', alignItems: 'center', gap: 0.4,
                   bgcolor: 'rgba(255,255,255,0.10)', border: `1px solid ${theme.border}`,
@@ -716,28 +1021,70 @@ function MessageBubble({
           </Box>
         )}
 
-        <Box sx={{ display: 'flex', gap: 0.5, mt: 0.4, justifyContent: isOwnSide ? 'flex-end' : 'flex-start', opacity: isHovered ? 1 : 0, transition: 'opacity 180ms' }} className="msg-actions">
-          <Tooltip title="Ответить">
-            <IconButton size="small" onClick={() => onReply(message)} sx={{ color: theme.textSec, ...membranePressSx }}><Reply sx={{ fontSize: 16 }} /></IconButton>
-          </Tooltip>
+        {actionError && <Typography role="alert" color="error" sx={{ fontSize: 13, mt: 0.5 }}>{actionError}</Typography>}
+        <Box
+          onClick={e => e.stopPropagation()}
+          onPointerDown={e => e.stopPropagation()}
+          onMouseEnter={(e) => { onHover?.(message.id); updateActionsPlacement(e.currentTarget.parentElement as HTMLElement); }}
+          onMouseLeave={() => onHover?.(null)}
+          sx={{
+          display: 'flex', alignItems: 'center', gap: 0.5,
+          justifyContent: isOwnSide ? 'flex-end' : 'flex-start',
+          alignSelf: isOwnSide ? 'flex-end' : 'flex-start',
+          width: 'max-content',
+          maxWidth: 'calc(100vw - 24px)',
+          boxSizing: 'border-box',
+          flexWrap: 'nowrap',
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          scrollbarWidth: 'none',
+          '&::-webkit-scrollbar': { display: 'none' },
+          touchAction: 'pan-x',
+          opacity: isHovered ? 1 : 0, transition: 'opacity 180ms',
+          p: 0.25,
+          // Панель под пузырём. Держим её вплотную (top:100%) и с невидимой
+          // «зоной наведения» сверху через padding — чтобы курсор не терял
+          // hover при переходе с пузыря на панель. Плюс собственные mouse-
+          // хендлеры удерживают isHovered, пока курсор над панелью.
+          // top немного «залезает» внутрь родителя, а pt возвращает визуальный
+          // отступ — так между пузырём и панелью нет разрыва, на котором курсор
+          // покидал бы родительский Box и mouseleave гасил панель.
+          position: 'absolute',
+          top: actionsPlacement === 'below' ? 'calc(100% - 8px)' : 'auto',
+          bottom: actionsPlacement === 'above' ? 'calc(100% - 8px)' : 'auto',
+          left: isOwnSide ? 'auto' : 0,
+          right: isOwnSide ? 0 : 'auto',
+          pt: actionsPlacement === 'below' ? '12px' : 0,
+          pb: actionsPlacement === 'above' ? '12px' : 0,
+          bgcolor: theme.bgHeader,
+          border: `1px solid ${theme.border}`,
+          borderRadius: 2,
+          boxShadow: '0 5px 18px rgba(0,0,0,0.35)',
+          zIndex: 10,
+          pointerEvents: isHovered ? 'auto' : 'none',
+          visibility: isHovered ? 'visible' : 'hidden',
+        }} className="msg-actions">
+          {!channelPost && <Tooltip title="Ответить">
+            <IconButton size="small" onClick={() => onReply(message)} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><Reply sx={{ fontSize: 16 }} /></IconButton>
+          </Tooltip>}
           <Tooltip title="Переслать">
-            <IconButton size="small" onClick={() => { onForward(message); setOpenForward(true); }} sx={{ color: theme.textSec, ...membranePressSx }}><Forward sx={{ fontSize: 16 }} /></IconButton>
+            <IconButton size="small" onClick={() => onForward(message)} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><Forward sx={{ fontSize: 16 }} /></IconButton>
           </Tooltip>
           <Tooltip title="Копировать">
-            <IconButton size="small" onClick={() => { navigator.clipboard.writeText(message.content || ''); }} sx={{ color: theme.textSec, ...membranePressSx }}><ContentCopy sx={{ fontSize: 16 }} /></IconButton>
+            <IconButton size="small" onClick={() => { navigator.clipboard.writeText(message.content || ''); }} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><ContentCopy sx={{ fontSize: 16 }} /></IconButton>
           </Tooltip>
           <Tooltip title="Реакция">
-            <IconButton size="small" onClick={(e) => setReactionAnchor(e.currentTarget)} sx={{ color: theme.textSec, ...membranePressSx }}><AddReaction sx={{ fontSize: 16 }} /></IconButton>
+            <IconButton size="small" onClick={(e) => setReactionAnchor(e.currentTarget)} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><AddReaction sx={{ fontSize: 16 }} /></IconButton>
           </Tooltip>
           <Tooltip title={message.isPinned ? 'Открепить' : 'Закрепить'}>
-            <IconButton size="small" onClick={handleTogglePin} sx={{ color: message.isPinned ? theme.accent : theme.textSec, ...membranePressSx }}><PushPin sx={{ fontSize: 16 }} /></IconButton>
+            <IconButton size="small" onClick={handleTogglePin} sx={{ color: message.isPinned ? theme.accent : theme.textSec, flexShrink: 0, ...membranePressSx }}><PushPin sx={{ fontSize: 16 }} /></IconButton>
           </Tooltip>
-          {isOwn && !editing && (
+          {canEdit && !editing && (
             <Tooltip title="Редактировать">
               <IconButton size="small" onClick={() => { setEditText(message.content || ''); setEditing(true); }} sx={{ color: theme.textSec, ...membranePressSx }}><Edit sx={{ fontSize: 16 }} /></IconButton>
             </Tooltip>
           )}
-          {isOwn && (
+          {canDelete && (
             <Tooltip title="Удалить">
               <IconButton size="small" onClick={handleDelete} sx={{ color: '#f44336', ...membranePressSx }}><Delete sx={{ fontSize: 16 }} /></IconButton>
             </Tooltip>
@@ -782,13 +1129,12 @@ function MessageBubble({
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
           items={[
-            { key: 'reply', label: 'Ответить', icon: <Reply />, onClick: () => onReply(message) },
+            ...(!channelPost ? [{ key: 'reply', label: 'Ответить', icon: <Reply />, onClick: () => onReply(message) }] : []),
             { key: 'forward', label: 'Переслать', icon: <Forward />, onClick: () => onForward(message) },
             { key: 'copy', label: 'Копировать', icon: <ContentCopy />, onClick: () => navigator.clipboard.writeText(message.content || '') },
             { key: 'pin', label: message.isPinned ? 'Открепить' : 'Закрепить', icon: <PushPin />, onClick: () => handleTogglePin() },
-            { key: 'react', label: 'Реакция', icon: <AddReaction />, onClick: () => setReactionAnchor({ getBoundingClientRect: () => ({ left: contextMenu.x, top: contextMenu.y, right: contextMenu.x, bottom: contextMenu.y, width: 0, height: 0, x: contextMenu.x, y: contextMenu.y, toJSON: () => ({}) }) } as any) },
-            ...(isOwn ? [{ key: 'edit', label: 'Редактировать', icon: <Edit />, onClick: () => { setEditText(message.content || ''); setEditing(true); } }] : []),
-            { key: 'delete', label: 'Удалить', icon: <Delete />, danger: true, divider: true, onClick: handleDelete },
+            ...(canEdit ? [{ key: 'edit', label: 'Редактировать', icon: <Edit />, onClick: () => { setEditText(message.content || ''); setEditing(true); } }] : []),
+            ...(canDelete ? [{ key: 'delete', label: 'Удалить', icon: <Delete />, danger: true, divider: true, onClick: handleDelete }] : []),
           ]}
         />
       )}
@@ -807,5 +1153,10 @@ export default memo(
     prev.accent === next.accent &&
     prev.themeVersion === next.themeVersion &&
     prev.messageMaxWidth === next.messageMaxWidth &&
+    prev.bubbleEnabled === next.bubbleEnabled &&
+    prev.bubbleTextSize === next.bubbleTextSize &&
+    prev.bubblePadding === next.bubblePadding &&
     prev.messageAlign === next.messageAlign
+    && prev.isGroupStart === next.isGroupStart
+    && prev.isGroupEnd === next.isGroupEnd
 );

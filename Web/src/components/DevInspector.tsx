@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Box, Typography, IconButton, Tooltip } from '@mui/material';
+import { Box, Typography, IconButton, Tooltip, Switch, FormControlLabel } from '@mui/material';
 import { Close, ContentCopy } from '@mui/icons-material';
 import { useAuthStore } from '../store/authStore';
 
@@ -7,7 +7,7 @@ import { useAuthStore } from '../store/authStore';
  * DEV-оверлей инспектора элементов.
  * Активируется только у пользователей с user.isDev === true (DEV_IPS на сервере).
  *
- * Как открыть: наведись на элемент и нажми Z — откроется панель
+ * Как открыть: наведись на элемент и нажми X или Z — откроется панель
  * с информацией о компоненте, его кодом, путём к файлу и структурой.
  */
 
@@ -98,6 +98,10 @@ export default function DevInspector() {
   const isDev = useAuthStore(s => !!s.user?.isDev);
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [hoveredElement, setHoveredElement] = useState<Element | null>(null);
+  const [highlightEnabled, setHighlightEnabled] = useState(() => {
+    try { return localStorage.getItem('vera_dev_inspector_highlight') !== 'false'; }
+    catch { return true; }
+  });
   const hoveredRef = useRef<Element | null>(null);
 
   // Отслеживание наведения мыши
@@ -107,12 +111,14 @@ export default function DevInspector() {
     // Не подсвечиваем сам оверлей
     if ((target as HTMLElement).closest('[data-dev-inspector]')) return;
     hoveredRef.current = target;
-    setHoveredElement(target);
-  }, []);
+    if (highlightEnabled) setHoveredElement(target);
+  }, [highlightEnabled]);
 
   // Отслеживание нажатия клавиши Z
   const onKeyDown = useCallback((e: KeyboardEvent) => {
-    if (e.key.toLowerCase() === 'z' && hoveredRef.current) {
+    const input = e.target as HTMLElement | null;
+    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || input?.isContentEditable || input?.closest('input, textarea, select')) return;
+    if ((e.code === 'KeyX' || e.code === 'KeyZ') && hoveredRef.current) {
       e.preventDefault();
       const target = hoveredRef.current;
       const cls = typeof target.className === 'string' ? target.className : '';
@@ -152,7 +158,7 @@ export default function DevInspector() {
   if (!isDev) return null;
 
   // Подсветка наведённого элемента
-  const highlightBox = hoveredElement && !snap ? (() => {
+  const highlightBox = highlightEnabled && hoveredElement && !snap ? (() => {
     const rect = hoveredElement.getBoundingClientRect();
     return (
       <Box
@@ -215,7 +221,7 @@ export default function DevInspector() {
       >
         <Box display="flex" alignItems="center" gap={1} mb={1}>
           <Typography variant="caption" sx={{ color: '#7C6AF7', fontWeight: 700, flex: 1 }}>
-            DEV INSPECTOR (нажми Z)
+            DEV INSPECTOR (X / Z)
           </Typography>
           <Tooltip title="Скопировать JSON">
             <IconButton size="small" onClick={copy} sx={{ color: '#7C6AF7' }}>
@@ -227,6 +233,16 @@ export default function DevInspector() {
           </IconButton>
         </Box>
         
+        <FormControlLabel
+          sx={{ mb: 1, '& .MuiFormControlLabel-label': { fontSize: 12 } }}
+          label="Подсветка элементов под мышью"
+          control={<Switch size="small" checked={highlightEnabled} onChange={(_, enabled) => {
+            setHighlightEnabled(enabled);
+            setHoveredElement(enabled ? hoveredRef.current : null);
+            try { localStorage.setItem('vera_dev_inspector_highlight', String(enabled)); } catch {}
+          }} />}
+        />
+
         {snap.filePath && (
           <Box sx={{ mb: 1, p: 1, bgcolor: 'rgba(124,106,247,0.15)', borderRadius: 1 }}>
             <Typography sx={{ fontSize: 11, color: '#7C6AF7', fontWeight: 700 }}>

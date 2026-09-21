@@ -1,0 +1,15 @@
+{
+  "name": "vera-multi",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Vera Multi monorepo — корневые скрипты для запуска/перезапуска сервера и веб-клиента одной командой.",
+  "scripts": {
+    "server": "cd Server && npm start",
+    "web": "cd Web && npm run dev",
+    "build": "cd Web && npm run build",
+    "install-all": "cd Server && npm install && cd ../Web && npm install",
+    "kill": "powershell -NoProfile -Command \"Get-Process -Name node -ErrorAction SilentlyContinue | Stop-Process -Force; Get-CimInstance Win32_Process -Filter \\\"CommandLine LIKE '%vite%'\\\" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }\"",
+    "restart": "npm run kill && npm run start",
+    "start": "powershell -NoProfile -Command \"Start-Process powershell -ArgumentList '-NoExit','-Command','cd Server; npm start'; Start-Process powershell -ArgumentList '-NoExit','-Command','cd Web; npm run dev'\""
+  }
+}

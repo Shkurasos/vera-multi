@@ -3,6 +3,10 @@ import React from 'react';
 import type { SvgIconProps } from '@mui/material/SvgIcon';
 import { useUiPrefsStore } from './store/uiPrefsStore';
 
+import _vAccessTime from '@mui/icons-material/AccessTime';
+import _vAccessTimeOutlined from '@mui/icons-material/AccessTimeOutlined';
+import _vAccessTimeRounded from '@mui/icons-material/AccessTimeRounded';
+import _vAccessTimeSharp from '@mui/icons-material/AccessTimeSharp';
 import _vAccountBalanceWallet from '@mui/icons-material/AccountBalanceWallet';
 import _vAccountBalanceWalletOutlined from '@mui/icons-material/AccountBalanceWalletOutlined';
 import _vAccountBalanceWalletRounded from '@mui/icons-material/AccountBalanceWalletRounded';
@@ -207,6 +211,10 @@ import _vInventory2 from '@mui/icons-material/Inventory2';
 import _vInventory2Outlined from '@mui/icons-material/Inventory2Outlined';
 import _vInventory2Rounded from '@mui/icons-material/Inventory2Rounded';
 import _vInventory2Sharp from '@mui/icons-material/Inventory2Sharp';
+import _vKeyboardArrowDown from '@mui/icons-material/KeyboardArrowDown';
+import _vKeyboardArrowDownOutlined from '@mui/icons-material/KeyboardArrowDownOutlined';
+import _vKeyboardArrowDownRounded from '@mui/icons-material/KeyboardArrowDownRounded';
+import _vKeyboardArrowDownSharp from '@mui/icons-material/KeyboardArrowDownSharp';
 import _vLanguage from '@mui/icons-material/Language';
 import _vLanguageOutlined from '@mui/icons-material/LanguageOutlined';
 import _vLanguageRounded from '@mui/icons-material/LanguageRounded';
@@ -518,6 +526,7 @@ const MAP: Record<string, Record<string, React.ComponentType<SvgIconProps>>> = {
   FolderZip: { filled: _vFolderZip, outlined: _vFolderZipOutlined, rounded: _vFolderZipRounded, sharp: _vFolderZipSharp },
   FormatSize: { filled: _vFormatSize, outlined: _vFormatSizeOutlined, rounded: _vFormatSizeRounded, sharp: _vFormatSizeSharp },
   Forward: { filled: _vForward, outlined: _vForwardOutlined, rounded: _vForwardRounded, sharp: _vForwardSharp },
+  AccessTime: { filled: _vAccessTime, outlined: _vAccessTimeOutlined, rounded: _vAccessTimeRounded, sharp: _vAccessTimeSharp },
   Fullscreen: { filled: _vFullscreen, outlined: _vFullscreenOutlined, rounded: _vFullscreenRounded, sharp: _vFullscreenSharp },
   FullscreenExit: { filled: _vFullscreenExit, outlined: _vFullscreenExitOutlined, rounded: _vFullscreenExitRounded, sharp: _vFullscreenExitSharp },
   GraphicEq: { filled: _vGraphicEq, outlined: _vGraphicEqOutlined, rounded: _vGraphicEqRounded, sharp: _vGraphicEqSharp },
@@ -528,6 +537,7 @@ const MAP: Record<string, Record<string, React.ComponentType<SvgIconProps>>> = {
   Image: { filled: _vImage, outlined: _vImageOutlined, rounded: _vImageRounded, sharp: _vImageSharp },
   Info: { filled: _vInfo, outlined: _vInfoOutlined, rounded: _vInfoRounded, sharp: _vInfoSharp },
   Inventory2: { filled: _vInventory2, outlined: _vInventory2Outlined, rounded: _vInventory2Rounded, sharp: _vInventory2Sharp },
+  KeyboardArrowDown: { filled: _vKeyboardArrowDown, outlined: _vKeyboardArrowDownOutlined, rounded: _vKeyboardArrowDownRounded, sharp: _vKeyboardArrowDownSharp },
   Language: { filled: _vLanguage, outlined: _vLanguageOutlined, rounded: _vLanguageRounded, sharp: _vLanguageSharp },
   LibraryMusic: { filled: _vLibraryMusic, outlined: _vLibraryMusicOutlined, rounded: _vLibraryMusicRounded, sharp: _vLibraryMusicSharp },
   Link: { filled: _vLink, outlined: _vLinkOutlined, rounded: _vLinkRounded, sharp: _vLinkSharp },
@@ -608,6 +618,8 @@ function make(baseName: string) {
   return C;
 }
 
+export const AccessTime = make('AccessTime');
+export const Schedule = make('AccessTime');
 export const AccountBalanceWallet = make('AccountBalanceWallet');
 export const AccountCircle = make('AccountCircle');
 export const Add = make('Add');
@@ -661,6 +673,7 @@ export const Image = make('Image');
 export const Info = make('Info');
 export const InfoOutlined = make('Info');
 export const Inventory2 = make('Inventory2');
+export const KeyboardArrowDown = make('KeyboardArrowDown');
 export const Language = make('Language');
 export const LibraryMusic = make('LibraryMusic');
 export const Link = make('Link');

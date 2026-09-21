@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Box, Typography, Button, Paper, Alert, CircularProgress } from '@mui/material';
-import { devicesApi, getDeviceId } from '../services/api';
+import { devicesApi } from '../services/api';
 import { useAuthStore } from '../store/authStore';
 
 /**
@@ -18,17 +18,25 @@ export default function AcceptLinkPage() {
   const token = params.get('token') || '';
   const [state, setState] = useState<'idle' | 'busy' | 'ok' | 'error'>('idle');
   const [message, setMessage] = useState('');
+  const submitting = useRef(false);
 
-  useEffect(() => {
+  async function accept() {
+    if (submitting.current) return;
     if (!token) { setState('error'); setMessage('В ссылке нет токена привязки.'); return; }
+    submitting.current = true;
     setState('busy');
-    devicesApi.acceptLink(token)
-      .then(() => { setState('ok'); setMessage('Устройство привязано к аккаунту!'); })
+    await devicesApi.acceptLink(token)
+      .then((res) => {
+        localStorage.setItem('vera_token', res.data.accessToken);
+        localStorage.setItem('vera_user', JSON.stringify(res.data.user));
+        setState('ok'); setMessage('Устройство привязано к аккаунту!');
+        window.location.replace('/');
+      })
       .catch((e: any) => {
         setState('error');
         setMessage(e?.response?.data?.message || e?.message || 'Не удалось привязать устройство.');
-      });
-  }, [token]);
+      }).finally(() => { submitting.current = false; });
+  }
 
   return (
     <Box minHeight="100vh" bgcolor="#000" display="flex" alignItems="center" justifyContent="center" px={2}
@@ -38,11 +46,16 @@ export default function AcceptLinkPage() {
           Vera Link
         </Typography>
 
+        {state === 'idle' && <Box>
+          <Typography mb={2}>Добавить это устройство в аккаунт, с которого создана ссылка? Подтверждайте только ссылку, созданную вами на своём устройстве.</Typography>
+          <Button fullWidth variant="contained" onClick={accept}>Подтвердить привязку</Button>
+          <Button fullWidth onClick={() => navigate('/')}>Отмена</Button>
+        </Box>}
+
         {state === 'busy' && (
           <Box py={3}>
             <CircularProgress sx={{ color: '#00E5FF' }} />
             <Typography mt={2} color="text.secondary">Привязываем это устройство к аккаунту…</Typography>
-            <Typography variant="caption" color="text.secondary">deviceId: {getDeviceId()}</Typography>
           </Box>
         )}
 
@@ -57,7 +70,6 @@ export default function AcceptLinkPage() {
               fullWidth
               onClick={async () => {
                 // Теперь устройство в db.devices — /auth/device вернёт токен владельца.
-                localStorage.removeItem('vera_token');
                 await useAuthStore.getState().checkAuth();
                 navigate('/');
               }}

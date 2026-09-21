@@ -4,6 +4,8 @@
  * градиенты, image-rendering: pixelated для 8-bit «Культовой»).
  */
 
+import { packSkin } from './packSkin';
+
 export type RarityTier =
   | 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary'
   | 'mythic' | 'divine' | 'transcendent' | 'absolute' | 'exclusive'
@@ -53,35 +55,36 @@ export const RARITY_KEYFRAMES = `
 `;
 
 
-export function buildRingSx(rarity: RarityTier, accent: string, active = false): Record<string, any> {
+export function buildRingSx(rarity: RarityTier, accent: string, active = false, width = 2): Record<string, any> {
   const c = RARITY_META[rarity].color;
+  const ringWidth = Math.max(1, width);
   const base: Record<string, any> = {
-    border: `2px solid transparent`,
+    border: `${ringWidth}px solid transparent`,
     boxShadow: active ? `0 0 0 2px ${accent}55` : undefined,
     transition: 'box-shadow 0.3s ease, border-color 0.3s ease',
   };
   switch (rarity) {
-    case 'common':       return { ...base, border: `2px solid ${c}`, borderRadius: '50%' };
+    case 'common':       return { ...base, border: `${ringWidth}px solid ${c}`, borderRadius: '50%' };
     case 'uncommon':     return { ...base, border: `1px solid ${c}`, boxShadow: `0 0 0 3px ${c}CC, 0 0 8px ${c}55` };
-    case 'rare':         return { ...base, border: `2px solid ${c}`, boxShadow: `inset 0 0 0 1px ${c}AA, 0 0 10px ${c}66` };
-    case 'epic':         return { ...base, border: `2px solid ${c}`, boxShadow: `0 0 14px ${c}, 0 0 28px ${c}55`, animation: 'veraRarityPulse 2.6s ease-in-out infinite' };
-    case 'legendary':    return { ...base, border: `3px solid ${c}`, boxShadow: `0 0 20px ${c}AA, 0 0 40px ${c}44` };
-    case 'mythic':       return { ...base, border: `3px solid #0a0a12`, boxShadow: `inset 0 0 0 1px ${c}, 0 0 18px ${c}AA` };
-    case 'divine':       return { ...base, border: `2px solid ${c}`, boxShadow: `0 0 0 5px ${c}88, 0 0 0 9px ${c}44, 0 0 24px ${c}AA` };
-    case 'transcendent': return { ...base, border: `2px solid ${c}`, boxShadow: `2px 0 0 ${c}AA, -2px 0 0 #ff00c8AA, 0 0 12px ${c}88` };
-    case 'absolute':     return { ...base, border: `1px solid ${c}CC`, boxShadow: `0 0 0 4px ${c}66, 0 0 0 8px ${c}33, 0 0 16px ${c}AA`, animation: 'veraRaritySpin 8s linear infinite' };
-    case 'exclusive':    return { ...base, borderTop: `3px solid ${c}`, borderRight: `2px solid #C0C0C0`, borderBottom: `3px solid ${c}88`, borderLeft: `2px solid #C0C0C0AA`, boxShadow: `0 -4px 12px ${c}77, 4px 0 12px #C0C0C077, 0 4px 12px ${c}55` };
-    case 'crystal':      return { ...base, border: `2px solid ${c}`, clipPath: 'polygon(25% 0, 75% 0, 100% 25%, 100% 75%, 75% 100%, 25% 100%, 0 75%, 0 25%)', boxShadow: `0 0 12px ${c}AA` };
-    case 'plasma':       return { ...base, border: '3px solid transparent', backgroundImage: `linear-gradient(#0000, #0000), linear-gradient(90deg, ${c}, #ff8ac0, ${c})`, backgroundOrigin: 'border-box', backgroundClip: 'padding-box, border-box', boxShadow: `0 0 18px ${c}AA`, animation: 'veraRarityPulse 1.8s ease-in-out infinite' };
-    case 'digital':      return { ...base, border: `2px dashed ${c}`, boxShadow: `0 0 10px ${c}AA, inset 0 0 6px ${c}44` };
-    case 'relic':        return { ...base, border: `4px double ${c}`, boxShadow: `inset 0 0 4px #00000088, 0 2px 6px #00000066, 0 0 10px ${c}66` };
-    case 'holo':         return { ...base, border: `2px solid ${c}88`, boxShadow: `0 0 0 3px #ff77ff44, 0 0 0 6px #77ffff44, 0 0 20px ${c}88` };
-    case 'mechanic':     return { ...base, border: `3px dotted ${c}`, boxShadow: `inset 0 0 0 1px #0006, 0 0 8px ${c}77` };
-    case 'royal':        return { ...base, border: `3px solid ${c}`, boxShadow: `-12px 0 12px -6px ${c}AA, 12px 0 12px -6px ${c}AA, 0 0 20px ${c}88` };
-    case 'anomaly':      return { ...base, border: `2px solid ${c}`, borderRadius: '50% 30% 50% 40%', boxShadow: `0 0 14px ${c}AA, inset 0 0 6px ${c}55` };
-    case 'core':         return { ...base, border: `2px solid ${c}`, boxShadow: `0 0 0 4px ${c}77, 0 0 0 8px ${c}44, 0 0 22px ${c}CC`, animation: 'veraRarityPulse 2s ease-in-out infinite' };
-    case 'infinity':     return { ...base, border: `2px solid #FFF`, boxShadow: `0 0 0 4px #ff4870AA, 0 0 0 7px #4dd0ffAA, 0 0 24px #FFFFFFAA` };
-    case 'cult':         return { ...base, border: `2px solid ${c}`, borderRadius: 0, imageRendering: 'pixelated', boxShadow: `2px 0 0 ${c}, -2px 0 0 ${c}, 0 2px 0 ${c}, 0 -2px 0 ${c}, 4px 0 0 #000, -4px 0 0 #000, 0 4px 0 #000, 0 -4px 0 #000` };
+    case 'rare':         return { ...base, border: `${ringWidth}px solid ${c}`, boxShadow: `inset 0 0 0 1px ${c}AA, 0 0 10px ${c}66` };
+    case 'epic':         return { ...base, border: `${ringWidth}px solid ${c}`, boxShadow: `0 0 14px ${c}, 0 0 28px ${c}55`, animation: 'veraRarityPulse 2.6s ease-in-out infinite' };
+    case 'legendary':    return { ...base, border: `${Math.max(ringWidth, 2)}px solid ${c}`, boxShadow: `0 0 20px ${c}AA, 0 0 40px ${c}44` };
+    case 'mythic':       return { ...base, border: `${Math.max(ringWidth, 2)}px solid #0a0a12`, boxShadow: `inset 0 0 0 1px ${c}, 0 0 18px ${c}AA` };
+    case 'divine':       return { ...base, border: `${ringWidth}px solid ${c}`, boxShadow: `0 0 0 5px ${c}88, 0 0 0 9px ${c}44, 0 0 24px ${c}AA` };
+    case 'transcendent': return { ...base, border: `${ringWidth}px solid ${c}`, boxShadow: `2px 0 0 ${c}AA, -2px 0 0 #ff00c8AA, 0 0 12px ${c}88` };
+    case 'absolute':     return { ...base, border: `${Math.max(ringWidth, 2)}px double ${c}`, borderLeftColor: '#ffffff', borderRightColor: '#191a24', boxShadow: `-4px 0 0 ${c}66, 4px 0 0 #ffffff66`, borderRadius: '38% 62% 38% 62%' };
+    case 'exclusive':    return { ...base, borderTop: `${Math.max(ringWidth, 2)}px solid ${c}`, borderRight: `${ringWidth}px solid #C0C0C0`, borderBottom: `${Math.max(ringWidth, 2)}px solid ${c}88`, borderLeft: `${ringWidth}px solid #C0C0C0AA`, boxShadow: `0 -4px 12px ${c}77, 4px 0 12px #C0C0C077, 0 4px 12px ${c}55` };
+    case 'crystal':      return { ...base, border: `${ringWidth}px solid ${c}`, clipPath: 'polygon(25% 0, 75% 0, 100% 25%, 100% 75%, 75% 100%, 25% 100%, 0 75%, 0 25%)', boxShadow: `0 0 12px ${c}AA` };
+    case 'plasma':       return { ...base, border: `${Math.max(ringWidth, 2)}px solid transparent`, backgroundImage: `linear-gradient(#0000, #0000), linear-gradient(90deg, ${c}, #ff8ac0, ${c})`, backgroundOrigin: 'border-box', backgroundClip: 'padding-box, border-box', boxShadow: `0 0 18px ${c}AA`, animation: 'veraRarityPulse 1.8s ease-in-out infinite' };
+    case 'digital':      return { ...base, border: `${ringWidth}px dashed ${c}`, boxShadow: `0 0 10px ${c}AA, inset 0 0 6px ${c}44` };
+    case 'relic':        return { ...base, border: `${Math.max(ringWidth, 2)}px double ${c}`, boxShadow: `inset 0 0 4px #00000088, 0 2px 6px #00000066, 0 0 10px ${c}66` };
+    case 'holo':         return { ...base, border: `${ringWidth}px solid ${c}88`, boxShadow: `0 0 0 3px #ff77ff44, 0 0 0 6px #77ffff44, 0 0 20px ${c}88` };
+    case 'mechanic':     return { ...base, border: `${Math.max(ringWidth, 2)}px dotted ${c}`, boxShadow: `inset 0 0 0 1px #0006, 0 0 8px ${c}77` };
+    case 'royal':        return { ...base, border: `${Math.max(ringWidth, 2)}px solid ${c}`, boxShadow: `-12px 0 12px -6px ${c}AA, 12px 0 12px -6px ${c}AA, 0 0 20px ${c}88` };
+    case 'anomaly':      return { ...base, border: `${ringWidth}px solid ${c}`, borderRadius: '50% 30% 50% 40%', boxShadow: `0 0 14px ${c}AA, inset 0 0 6px ${c}55` };
+    case 'core':         return { ...base, border: `${ringWidth}px solid ${c}`, boxShadow: `0 0 0 4px ${c}77, 0 0 0 8px ${c}44, 0 0 22px ${c}CC`, animation: 'veraRarityPulse 2s ease-in-out infinite' };
+    case 'infinity':     return { ...base, border: `${ringWidth}px solid #FFF`, boxShadow: `0 0 0 4px #ff4870AA, 0 0 0 7px #4dd0ffAA, 0 0 24px #FFFFFFAA` };
+    case 'cult':         return { ...base, border: `${ringWidth}px solid ${c}`, borderRadius: 0, imageRendering: 'pixelated', boxShadow: `2px 0 0 ${c}, -2px 0 0 ${c}, 0 2px 0 ${c}, 0 -2px 0 ${c}, 4px 0 0 #000, -4px 0 0 #000, 0 4px 0 #000, 0 -4px 0 #000` };
   }
 }
 
@@ -102,9 +105,10 @@ export function buildShopRingSx(
     transition: 'box-shadow 0.3s ease, border-color 0.3s ease',
   };
   if (!val) return base;
+  if (val.pack) return { ...base, ...packSkin(val.pack, accent, 'ring') };
 
   if (val.type === 'rarity') {
-    return buildRingSx(val.rarity, accent, active);
+    return buildRingSx(val.rarity, accent, active, width);
   }
   if (val.type === 'gradient') {
     // Радужный градиент — вращающийся перелив.
@@ -155,6 +159,30 @@ export function buildShopRingSx(
 
 
 export function buildPlaqueSx(rarity: RarityTier, accent?: string): Record<string, any> {
+  const base = plaqueBase(rarity, accent);
+  const textures: Partial<Record<RarityTier, Record<string, any>>> = {
+    rare: { backgroundImage: 'linear-gradient(90deg,#ffffff15 1px,transparent 1px)', backgroundSize: '6px 100%' },
+    epic: { borderRadius: '2px 8px 2px 8px', borderBottomWidth: '3px' },
+    legendary: { border: '3px double #684316', background: 'linear-gradient(110deg,#efc16d,#fff3cb,#d7a447)', color: '#49351d' },
+    mythic: { background: 'linear-gradient(135deg,#111118 65%,#913754)', borderRadius: '8px 2px 8px 2px' },
+    divine: { border: '3px double #bba676', boxShadow: '0 2px 0 #fff, 0 -2px 0 #ffffff80' },
+    transcendent: { boxShadow: '3px 0 #ff4c96, -3px 0 #54e7d1', textShadow: 'none', borderRadius: 0 },
+    exclusive: { background: 'repeating-linear-gradient(135deg,#ffffff25 0 2px,transparent 2px 5px), #c3b9ac', color: '#24211b' },
+    crystal: { background: 'linear-gradient(130deg,#b4e5f2 45%,#e7faff 46%,#8fbacb)', color: '#214251', clipPath: 'none', borderRadius: '0px 8px 0px 8px' },
+    plasma: { background: 'linear-gradient(115deg,#831f57,#b73263,#713f71)', color: '#fff' },
+    digital: { backgroundImage: 'repeating-linear-gradient(0deg,transparent 0 3px,#58e1ad16 3px 4px)' },
+    relic: { backgroundImage: 'repeating-linear-gradient(120deg,transparent 0 7px,#dbc79718 7px 8px)', border: '3px double #c8a96a' },
+    holo: { background: 'linear-gradient(125deg,#c2ebec,#e9ceec,#d8e6bd)', color: '#343947', border: '1px solid #fff' },
+    mechanic: { background: 'repeating-linear-gradient(0deg,#ffffff09 0 1px,transparent 1px 3px), #293039', border: '3px ridge #9ca5af', color: '#fff', borderRadius: 0 },
+    royal: { background: '#4c2237', border: '3px double #e8c547', color: '#ffecad' },
+    anomaly: { background: 'linear-gradient(115deg,#2b1723 48%,#ff7299 49%,#1c3032 52%)' },
+    core: { borderLeft: '4px solid #e4faff', borderRight: '4px solid #e4faff', borderRadius: '4px' },
+    infinity: { background: 'linear-gradient(115deg,#223638,#3a2339)', borderTopColor: '#e4a9dc', borderBottomColor: '#97e2d1' },
+  };
+  return { ...base, ...textures[rarity], letterSpacing: 0, '@media (prefers-reduced-motion: reduce)': { animation: 'none' } };
+}
+
+function plaqueBase(rarity: RarityTier, accent?: string): Record<string, any> {
   // Цвет плашки всегда следует акценту активной темы; форма — от редкости.
   // Фиксированный цвет редкости используется только как fallback.
   const c = accent || RARITY_META[rarity].color;

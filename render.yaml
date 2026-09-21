@@ -4,7 +4,7 @@
 # Для постоянного хранения — обновить план или подключить внешнюю БД.
 services:
   - type: web
-    name: vera-multi
+    name: vera-koto
     runtime: docker
     dockerfilePath: ./Dockerfile
     plan: free
@@ -41,7 +41,7 @@ services:
       - key: DEV_IPS
         sync: false
       - key: ADMIN_USERNAMES
-        sync: false
+        value: Vera_koto_a,Vera_koto_b
       - key: ADMIN_BOOTSTRAP_TOKEN
         sync: false
 

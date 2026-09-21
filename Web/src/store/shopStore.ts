@@ -1,8 +1,12 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { usersApi } from '../services/api';
+import { marketApi, MarketListing as ApiMarketListing, usersApi, walletApi } from '../services/api';
 import { RARITY_META, RARITY_ORDER } from '../utils/rarityStyles';
 import { enableStoreSync } from '../services/storeSyncSimple';
+
+import { THEMED_PACKS } from './themedPacks';
+import { useAuthStore } from './authStore';
+import { packKeyFromItemId, packPartIds } from './packCatalog';
 
 /**
  * ИНВЕНТАРЬ VERA (бывший магазин).
@@ -31,12 +35,30 @@ export interface ShopItem {
   price?: number;
   /** Признак «показывать как купленное/активное». */
   ownedByDefault?: boolean;
+  /** Permanent standard appearance; selecting it clears the cosmetic slot. */
+  stock?: boolean;
   /** Уровень редкости (для платных ring/selfcard из линейки редкостей). */
   rarity?: import('../utils/rarityStyles').RarityTier;
 }
 
+export interface ShopEquipment {
+  id?: string;
+  activeRing?: string;
+  activeSelfCard?: string;
+  activeBubble?: string;
+}
+
 /** Каталог — зашит в клиент, значит все товары принадлежат нам (издателю). */
 export const SHOP_CATALOG: ShopItem[] = [
+  { id: 'stock-ring', category: 'profile', name: 'Стоковая обводка',
+    description: 'Обычный аватар без косметической обводки. Всегда доступен, не продаётся.',
+    applyKey: 'avatarRing', value: { type: 'stock' }, stock: true, previewColor: false },
+  { id: 'stock-selfcard', category: 'selfcard', name: 'Стоковая плашка',
+    description: 'Стандартная подпись «Вы» без декоративных эффектов. Всегда доступна, не продаётся.',
+    applyKey: 'selfCard', value: { type: 'stock' }, stock: true, previewColor: false },
+  { id: 'stock-bubble', category: 'bubble', name: 'Стоковый пузырь',
+    description: 'Обычные сообщения в оформлении текущей темы. Всегда доступен, не продаётся.',
+    applyKey: 'bubbleStyle', value: { type: 'stock' }, stock: true, previewColor: false },
   // ── Обводка аватара профиля ────────────────────────────────────────────
   { id: 'ring-default', category: 'profile', name: 'Классика',
     description: 'Элегантный акцентный ободок — минимализм в лучшем виде', applyKey: 'avatarRing',
@@ -384,12 +406,45 @@ for (let i = SHOP_CATALOG.length - 1; i >= 0; i--) {
 }
 
 
+// Dedicated pieces preserve legacy items while giving every pack its own set.
+for (const pack of THEMED_PACKS) {
+  const meta = RARITY_META[pack.rarity];
+  SHOP_CATALOG.push({ id: `bubble-${pack.id}`, category: 'bubble', applyKey: 'bubbleStyle',
+    name: pack.name, description: pack.story, rarity: pack.rarity, previewColor: meta.color,
+    value: { type: 'pack', pack: pack.id, color: meta.color } });
+}
+for (const bubble of SHOP_CATALOG.filter(i => i.category === 'bubble' && !i.stock)) {
+  const key = packKeyFromItemId(bubble.id);
+  if (!key) continue;
+  const parts = packPartIds(key);
+  bubble.value = { ...bubble.value, pack: key };
+  for (const [id, category, applyKey] of [[parts.ring, 'profile', 'avatarRing'], [parts.selfcard, 'selfcard', 'selfCard']] as const) {
+    SHOP_CATALOG.push({ id, category, applyKey,
+      name: bubble.name, description: bubble.description, previewColor: bubble.previewColor,
+      rarity: bubble.rarity, value: { type: 'pack', pack: key } });
+  }
+}
+for (const r of RARITY_ORDER) {
+  const meta = RARITY_META[r];
+  const parts = packPartIds(`r-${r}`);
+  for (const id of [parts.ring, parts.selfcard] as const) {
+    const item = SHOP_CATALOG.find(i => i.id === id)!;
+    item.name = meta.codename;
+    item.value = { ...item.value, pack: `r-${r}` };
+  }
+  SHOP_CATALOG.push({ id: parts.bubble, category: 'bubble', applyKey: 'bubbleStyle',
+    name: meta.codename, description: `Пузырь из пака ${meta.codename}`,
+    rarity: r, previewColor: meta.color, value: { type: 'pack', pack: `r-${r}`, color: meta.color } });
+}
+
 export const SHOP_CURRENCY = 'ВП';
 
 export type AvatarRingSetting = 'default' | 'rainbow' | 'glow';
 export type SelfCardSetting = 'plain' | 'gradient' | 'badge';
 
 export type ShopTab = 'inventory' | 'shop';
+export type ItemColorMode = 'stock' | 'theme';
+export type MarketListing = ApiMarketListing;
 
 export interface ShopState {
   /** Какие товары куплены (по умолчанию все бесплатные открыты). */
@@ -428,6 +483,19 @@ export interface ShopState {
   setBalance: (n: number) => void;
   /** Влить купленные товары от сервера (событие shop:owned / ответ покупки). */
   mergeOwned: (ids: string[]) => void;
+  /** Replace account-owned shop data when a different account logs in. */
+  resetForAccount: () => void;
+  /** Apply equipment returned by auth without sending it back to the server. */
+  hydrateEquipment: (equipment: ShopEquipment) => void;
+  colorModes: Record<string, ItemColorMode>;
+  favoriteIds: string[];
+  toggleFavorite: (id: string) => void;
+  setColorMode: (id: string, mode: ItemColorMode) => void;
+  marketListings: MarketListing[];
+  listForSale: (itemId: string, price: number) => Promise<void>;
+  cancelListing: (id: string) => Promise<void>;
+  buyListing: (id: string) => Promise<void>;
+  loadMarket: () => Promise<void>;
 }
 
 /** Кладёт активный выбор по категории. Повторный клик по активному — снимает (сброс на дефолт). */
@@ -435,6 +503,13 @@ export function selectShopItem(id: string): void {
   const item = SHOP_CATALOG.find(i => i.id === id);
   if (!item) return;
   const s = useShopStore.getState();
+  if (!s.isOwned(id)) return;
+  if (item.stock) {
+    if (item.category === 'profile') s.setActiveRing('');
+    if (item.category === 'selfcard') s.setActiveSelfCard('');
+    if (item.category === 'bubble') s.setActiveBubble('');
+    return;
+  }
   if (item.category === 'profile') {
     s.setActiveRing(s.activeRing === id ? '' : id);
   } else if (item.category === 'selfcard') {
@@ -452,8 +527,8 @@ export const useShopStore = create<ShopState>()(
       const isOwned = (id: string) => {
         const item = SHOP_CATALOG.find(i => i.id === id);
         if (!item) return !!get().owned[id];
-        // Все предметы каталога бесплатны и сразу в инвентаре.
-        return true;
+        // Only standard appearance is permanent; collectible cosmetics still require ownership.
+        return !!useAuthStore.getState().user?.isAdmin || !!item.stock || !!get().owned[id];
       };
       return {
         owned: {},
@@ -463,31 +538,104 @@ export const useShopStore = create<ShopState>()(
         setOpen: (v) => set({ open: v }),
         tab: 'inventory',
         setTab: (t) => set({ tab: t }),
-        activeRing: 'ring-default',
+        activeRing: '',
         setActiveRing: (id) => {
+          if (id && !get().isOwned(id)) return;
           set({ activeRing: id });
-          try { usersApi.update({ activeRing: id }); } catch {}
+          usersApi.update({ activeRing: id }).catch(console.error);
         },
-        activeSelfCard: 'selfcard-default',
+        activeSelfCard: '',
         setActiveSelfCard: (id) => {
+          if (id && !get().isOwned(id)) return;
           set({ activeSelfCard: id });
-          try { usersApi.update({ activeSelfCard: id }); } catch {}
+          usersApi.update({ activeSelfCard: id }).catch(console.error);
         },
         activeWallpaper: '',
         setActiveWallpaper: (id) => set({ activeWallpaper: id }),
         activeBubble: '',
-        setActiveBubble: (id) => set({ activeBubble: id }),
-        purchase: async (id) => {
-          // Продажи отключены: всё из каталога уже в инвентаре.
-          set(s => ({ owned: { ...s.owned, [id]: true } }));
+        setActiveBubble: (id) => {
+          if (id && !get().isOwned(id)) return;
+          set({ activeBubble: id });
+          usersApi.update({ activeBubble: id }).catch(console.error);
+        },
+        colorModes: {},
+        favoriteIds: [],
+        toggleFavorite: (id) => {
+          const item = SHOP_CATALOG.find(i => i.id === id);
+          if (!item || item.stock) return;
+          set(s => ({ favoriteIds: s.favoriteIds.includes(id)
+            ? s.favoriteIds.filter(favorite => favorite !== id)
+            : s.isOwned(id) ? [...s.favoriteIds, id] : s.favoriteIds }));
+        },
+        setColorMode: (id, mode) => set(s => ({ colorModes: { ...s.colorModes, [id]: mode } })),
+        marketListings: [],
+        listForSale: async (itemId, price) => {
+          if (!Number.isSafeInteger(price) || price < 6 || price > 100000000) throw new Error('Price must be an integer from 6 to 100000000 VP');
+          const account = useAuthStore.getState().user?.id;
+          await marketApi.create(itemId, price);
+          if (account !== useAuthStore.getState().user?.id) return;
+          set(s => ({ activeRing: s.activeRing === itemId ? '' : s.activeRing, activeSelfCard: s.activeSelfCard === itemId ? '' : s.activeSelfCard, activeBubble: s.activeBubble === itemId ? '' : s.activeBubble }));
+          await Promise.all([get().loadWallet(), get().loadMarket()]);
+        },
+        cancelListing: async (id) => {
+          const account = useAuthStore.getState().user?.id;
+          await marketApi.cancel(id);
+          if (account === useAuthStore.getState().user?.id) await Promise.all([get().loadWallet(), get().loadMarket()]);
+        },
+        buyListing: async (id) => {
+          const account = useAuthStore.getState().user?.id;
+          await marketApi.buy(id);
+          if (account === useAuthStore.getState().user?.id) await Promise.all([get().loadWallet(), get().loadMarket()]);
+        },
+        loadMarket: async () => {
+          const account = useAuthStore.getState().user?.id;
+          const { data } = await marketApi.list();
+          if (account === useAuthStore.getState().user?.id) set({ marketListings: data.listings });
+        },
+        purchase: async () => {
+          // Реальные покупки отключены. Выдача выполняется только сервером
+          // или тестовым открытием кейса.
         },
         loadWallet: async () => {
-          // Магазина нет — синхронизировать нечего.
+          const token = localStorage.getItem('vera_token');
+          const { data } = await walletApi.get();
+          if (token !== localStorage.getItem('vera_token')) return;
+          set({ balanceVp: data.balance });
+          get().mergeOwned(data.ownedItems || []);
         },
         setBalance: (n) => set({ balanceVp: n }),
-        mergeOwned: (ids) => set(s => ({
-          owned: { ...s.owned, ...Object.fromEntries(ids.map((id) => [id, true])) },
-        })),
+        // Сервер присылает полный список. Замена важна при входе нового
+        // аккаунта, чтобы локальные предметы другого пользователя не остались.
+        mergeOwned: (ids) => set(s => {
+          const owned = Object.fromEntries(ids.map((id) => [id, true]));
+          const catalogItem = (id: string) => !id || !!SHOP_CATALOG.find(item => item.id === id);
+          return {
+            owned,
+            // Equipment is persisted on the user record separately from the
+            // wallet inventory. Do not erase a valid legacy `r-*` selection
+            // merely because an older server has not copied it to ownedItems.
+            activeRing: catalogItem(s.activeRing) ? s.activeRing : '',
+            activeSelfCard: catalogItem(s.activeSelfCard) ? s.activeSelfCard : '',
+            activeBubble: catalogItem(s.activeBubble) ? s.activeBubble : '',
+            activeWallpaper: owned[s.activeWallpaper] ? s.activeWallpaper : '',
+          };
+        }),
+        resetForAccount: () => set({
+          owned: {},
+          balanceVp: 0,
+          activeRing: '',
+          activeSelfCard: '',
+          activeWallpaper: '',
+          activeBubble: '',
+          colorModes: {},
+          favoriteIds: [],
+          marketListings: [],
+        }),
+        hydrateEquipment: (equipment) => set({
+          activeRing: typeof equipment.activeRing === 'string' ? equipment.activeRing : '',
+          activeSelfCard: typeof equipment.activeSelfCard === 'string' ? equipment.activeSelfCard : '',
+          activeBubble: typeof equipment.activeBubble === 'string' ? equipment.activeBubble : '',
+        }),
         isOwned,
         toggleEnabled: () => set(s => ({ enabled: !s.enabled })),
       };
@@ -500,6 +648,9 @@ export const useShopStore = create<ShopState>()(
         activeBubble: s.activeBubble,
         owned: s.owned,
         balanceVp: s.balanceVp,
+        colorModes: s.colorModes,
+        favoriteIds: s.favoriteIds,
+
       }) }
   )
 );

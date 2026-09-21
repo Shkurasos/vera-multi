@@ -1,9 +1,12 @@
 import { create } from 'zustand';
+import { clampBubble } from '../utils/bubbleSettings';
 import { persist } from 'zustand/middleware';
 import { Message } from '../types';
 import { enableStoreSync } from '../services/storeSyncSimple';
 
 interface ChatPrefsState {
+  clearBubbleSettings: (chatId: string) => void;
+  bubbleSettings: Record<string, { enabled?: boolean; maxWidth?: number; textSize?: number; padding?: number }>;
   // Arrays for JSON serialization
   pinnedIds: string[];
   archivedIds: string[];
@@ -15,6 +18,7 @@ interface ChatPrefsState {
   toggleArchive: (chatId: string) => void;
   toggleMute: (chatId: string) => void;
   setPinnedMessage: (chatId: string, message: Message | null) => void;
+  setBubbleSettings: (chatId: string, settings: ChatPrefsState['bubbleSettings'][string]) => void;
 
   isPinned: (chatId: string) => boolean;
   isArchived: (chatId: string) => boolean;
@@ -28,6 +32,12 @@ export const useChatPrefsStore = create<ChatPrefsState>()(
       archivedIds: [],
       mutedIds: [],
       pinnedMessages: {},
+      bubbleSettings: {},
+      clearBubbleSettings: (chatId) => set(s => {
+        const bubbleSettings = { ...s.bubbleSettings };
+        delete bubbleSettings[chatId];
+        return { bubbleSettings };
+      }),
 
       isPinned: (chatId) => get().pinnedIds.includes(chatId),
       isArchived: (chatId) => get().archivedIds.includes(chatId),
@@ -53,6 +63,13 @@ export const useChatPrefsStore = create<ChatPrefsState>()(
 
       setPinnedMessage: (chatId, message) => set((s) => ({
         pinnedMessages: { ...s.pinnedMessages, [chatId]: message },
+      })),
+      setBubbleSettings: (chatId, settings) => set((s) => ({
+        bubbleSettings: { ...s.bubbleSettings, [chatId]: { ...s.bubbleSettings[chatId], ...settings,
+          ...(settings.maxWidth !== undefined ? { maxWidth: clampBubble('maxWidth', settings.maxWidth) } : {}),
+          ...(settings.textSize !== undefined ? { textSize: clampBubble('textSize', settings.textSize) } : {}),
+          ...(settings.padding !== undefined ? { padding: clampBubble('padding', settings.padding) } : {}),
+        } },
       })),
     }),
     { name: 'vera-chat-prefs' }

@@ -1,15 +1,23 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box, Typography, TextField, Button, List, ListItem, ListItemText,
   Chip, Divider, CircularProgress, Alert,
 } from '@mui/material';
 import { useAuthStore } from '../store/authStore';
 import { adminApi, aiLmmApi } from '../services/botsApi';
+import { adminApi as walletAdminApi } from '../services/api';
 import { ScanResult, ProxyLogEntry, RepeaterEntry } from '../types/bots';
+import ModerationPanel from '../components/ModerationPanel';
 
 export default function AdminToolsPage() {
+  const navigate = useNavigate();
   const { user } = useAuthStore();
   const [scanUrl, setScanUrl] = useState('');
+  const [grantUsername, setGrantUsername] = useState('');
+  const [grantAmount, setGrantAmount] = useState('');
+  const [grantBusy, setGrantBusy] = useState(false);
+  const [grantResult, setGrantResult] = useState<{ error: boolean; text: string } | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scans, setScans] = useState<ScanResult[]>([]);
   const [logs, setLogs] = useState<ProxyLogEntry[]>([]);
@@ -30,14 +38,13 @@ export default function AdminToolsPage() {
   const [searchQ, setSearchQ] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [trainMsg, setTrainMsg] = useState('');
-
-  if (!user || !user.isAdmin) {
-    return (
-      <Box sx={{ p: 4, color: '#fff' }}>
-        <Typography>🔒 Доступ только для администратора.</Typography>
-      </Box>
-    );
-  }
+  const [purgeConfirmation, setPurgeConfirmation] = useState('');
+  const [purgeLoading, setPurgeLoading] = useState(false);
+  const [purgeMessage, setPurgeMessage] = useState('');
+  const [learnUrl, setLearnUrl] = useState('');
+  const [learnLoading, setLearnLoading] = useState(false);
+  const [learnMessage, setLearnMessage] = useState('');
+  const [learnError, setLearnError] = useState('');
 
   const loadAll = async () => {
     try { setScans((await adminApi.getScans()).data || []); } catch {}
@@ -58,9 +65,10 @@ export default function AdminToolsPage() {
   };
 
   useEffect(() => {
+    if (!user?.isAdmin) return;
     loadAll();
     loadLlmHealth();
-  }, []);
+  }, [user?.isAdmin]);
 
   const handleScan = async () => {
     if (!scanUrl.trim()) return;
@@ -80,6 +88,25 @@ export default function AdminToolsPage() {
       await adminApi.analyzeScan(scanId);
       await loadAll();
     } catch {} finally { setAiLoading(false); }
+  };
+
+  const handlePurge = async (kind: 'chats' | 'users') => {
+    const phrase = kind === 'chats' ? 'DELETE_ALL_CHATS' : 'DELETE_ALL_USERS';
+    if (purgeConfirmation !== phrase) {
+      setPurgeMessage(`Для подтверждения введите ${phrase}`);
+      return;
+    }
+    if (!window.confirm(kind === 'chats' ? 'Удалить все чаты и сообщения?' : 'Удалить всех пользователей и их данные?')) return;
+    setPurgeLoading(true);
+    setPurgeMessage('');
+    try {
+      const response = kind === 'chats' ? await adminApi.deleteAllChats() : await adminApi.deleteAllUsers();
+      const counts = response.data?.counts || {};
+      setPurgeMessage(`Готово: пользователей ${counts.users ?? 0}, чатов ${counts.chats ?? 0}, сообщений ${counts.messages ?? 0}, файлов ${counts.files ?? 0}`);
+      setPurgeConfirmation('');
+    } catch (e: any) {
+      setPurgeMessage(e?.response?.data?.message || 'Не удалось выполнить очистку');
+    } finally { setPurgeLoading(false); }
   };
 
   const toggleProxy = async () => {
@@ -135,6 +162,24 @@ export default function AdminToolsPage() {
     }
   };
 
+  const handleLearnUrl = async () => {
+    const url = learnUrl.trim();
+    if (!url) return;
+    setLearnLoading(true);
+    setLearnMessage('');
+    setLearnError('');
+    try {
+      const res = await aiLmmApi.learnUrl(url);
+      const source = res.data?.source;
+      setLearnMessage(`Источник сохранён${source?.title ? `: ${source.title}` : ''}${source?.textLength ? ` (${source.textLength} символов)` : ''}.`);
+      setLearnUrl('');
+    } catch (e: any) {
+      setLearnError(e?.response?.data?.message || e?.message || 'Не удалось загрузить страницу');
+    } finally {
+      setLearnLoading(false);
+    }
+  };
+
   const severityColor = (s: string) => {
     switch (s) {
       case 'critical': return 'error';
@@ -146,9 +191,44 @@ export default function AdminToolsPage() {
   };
 
   const llmOnline = llmHealth?.status === 'ok';
+  if (!user?.isAdmin) return <Box sx={{ p: 4 }}><Typography>🔒 Доступ только для администратора.</Typography></Box>;
 
   return (
     <Box sx={{ p: 3, color: '#fff', maxWidth: 900, mx: 'auto' }}>
+      <ModerationPanel />
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Typography variant="h5">Панель администратора</Typography>
+        <Button variant="outlined" onClick={() => navigate('/')} aria-label="Закрыть панель администратора">Закрыть (X)</Button>
+      </Box>
+      <Box sx={{ bgcolor: 'rgba(180,30,40,0.12)', borderRadius: 3, p: 2, mb: 3, border: '1px solid rgba(255,80,90,0.35)' }}>
+        <Typography variant="h6" sx={{ color: '#ff9a9f' }}>Опасные операции</Typography>
+        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+          Удаление необратимо. Полное удаление пользователей оставляет текущего администратора.
+        </Typography>
+        <TextField fullWidth size="small" label="Фраза подтверждения" value={purgeConfirmation} onChange={(e) => setPurgeConfirmation(e.target.value)} sx={{ mb: 1.5 }} />
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+          <Button color="error" variant="outlined" disabled={purgeLoading} onClick={() => handlePurge('chats')}>Удалить все чаты</Button>
+          <Button color="error" variant="contained" disabled={purgeLoading} onClick={() => handlePurge('users')}>Удалить всех пользователей</Button>
+          {purgeLoading && <CircularProgress size={24} sx={{ mt: 1 }} />}
+        </Box>
+        {purgeMessage && <Alert severity="info" sx={{ mt: 1.5 }}>{purgeMessage}</Alert>}
+      </Box>
+      <Box sx={{ p: 2, mb: 3, borderRadius: 3, border: '1px solid #ffffff22' }}>
+        <Typography variant="h6" sx={{ mb: 2 }}>Выдать ВП по нику</Typography>
+        <TextField fullWidth label="Ник пользователя (@username)" value={grantUsername} onChange={e => setGrantUsername(e.target.value)} sx={{ mb: 2 }} />
+        <TextField fullWidth label="Количество ВП" type="number" inputProps={{ min: 1, max: 1000000, step: 1 }} value={grantAmount} onChange={e => setGrantAmount(e.target.value)} sx={{ mb: 2 }} />
+        <Button variant="contained" disabled={grantBusy || !grantUsername.trim() || !Number.isSafeInteger(Number(grantAmount)) || Number(grantAmount) < 1 || Number(grantAmount) > 1000000} onClick={async () => {
+          setGrantBusy(true); setGrantResult(null);
+          try {
+            const { data } = await walletAdminApi.grantVp(grantUsername, Number(grantAmount));
+            setGrantResult({ error: false, text: `@${data.username}: начислено ${data.amount} ВП. Баланс: ${data.balance} ВП` });
+            setGrantAmount('');
+          } catch (e: any) {
+            setGrantResult({ error: true, text: e?.response?.data?.message || 'Не удалось выдать ВП' });
+          } finally { setGrantBusy(false); }
+        }}>{grantBusy ? 'Начисляем…' : 'Выдать ВП'}</Button>
+        {grantResult && <Alert sx={{ mt: 2 }} severity={grantResult.error ? 'error' : 'success'}>{grantResult.text}</Alert>}
+      </Box>
       <Typography variant="h5" fontWeight={700} sx={{ mb: 1 }}>🛡 Admin Tools</Typography>
       <Typography sx={{ color: 'text.secondary', mb: 3 }}>
         LLM, багбаунти и доступ к ПК. Только для администраторов.
@@ -279,6 +359,28 @@ export default function AdminToolsPage() {
             </Box>
           ))}
         </List>
+      </Box>
+
+      {/* Обучение Vera контекстом сайта */}
+      <Box sx={{ bgcolor: 'rgba(124,92,255,0.10)', borderRadius: 3, p: 2, border: '1px solid rgba(124,92,255,0.28)', mb: 3 }}>
+        <Typography variant="h6" sx={{ mb: 1 }}>📚 Знания Vera из сайта</Typography>
+        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+          Укажите публичную страницу. Сервер загрузит и очистит её текст, после чего будет добавлять его в контекст ответов Vera.
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
+          <TextField
+            fullWidth size="small" type="url" label="URL страницы"
+            placeholder="https://example.com/about"
+            value={learnUrl} onChange={(e) => setLearnUrl(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleLearnUrl(); }}
+            disabled={learnLoading}
+          />
+          <Button variant="contained" onClick={handleLearnUrl} disabled={learnLoading || !learnUrl.trim()}>
+            {learnLoading ? <CircularProgress size={20} color="inherit" /> : 'Загрузить'}
+          </Button>
+        </Box>
+        {learnMessage && <Alert severity="success" sx={{ mt: 2 }}>{learnMessage}</Alert>}
+        {learnError && <Alert severity="error" sx={{ mt: 2 }}>{learnError}</Alert>}
       </Box>
 
       {/* Прокси */}

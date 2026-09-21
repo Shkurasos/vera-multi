@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { Chat, Message } from '../types';
-import { chatsApi, messagesApi } from '../services/api';
+import { chatsApi, messagesApi, aiApi } from '../services/api';
 import { getSocket } from '../services/socket';
 import { peer, isPeerAvailable, PeerChat, PeerMessage } from '../services/peer';
 import { useAuthStore } from './authStore';
@@ -10,6 +10,7 @@ import {
   loadArchivedMessages, saveArchivedMessages, deleteArchivedMessage,
   mergeById,
 } from '../services/localArchive';
+import { registerAccountStore } from '../services/storeSyncSimple';
 
 /* ---------- P2P ↔ UI-модель адаптеры ---------- */
 // UI-типы (Chat/Message) исторически заточены под серверную модель.
@@ -24,6 +25,7 @@ function peerChatToChat(c: PeerChat): Chat {
     name: c.title,
     description: (c as any).description || '',
     avatarUrl: (c as any).avatar || '',
+    pinnedMessageId: c.pinnedMessageId || undefined,
     isPublic: false,
     ownerId,
     members: c.peers.map((pk) => ({
@@ -39,6 +41,9 @@ function peerChatToChat(c: PeerChat): Chat {
 }
 function peerMsgToMsg(m: PeerMessage): Message {
   const att = (m as any).attachment;
+  const attachments = Array.isArray((m as any).attachments)
+    ? (m as any).attachments
+    : att ? [att] : undefined;
   const kind = (m as any).kind || 'text';
   const isSelf = (m as any).self === true;
   const selfUser = useAuthStore.getState().user;
@@ -64,8 +69,10 @@ function peerMsgToMsg(m: PeerMessage): Message {
     sender: sender as any,
     type: kind,
     content: m.text,
-    attachments: att ? [att] : undefined,
+    attachments,
     reactions: (m as any).reactions || undefined,
+    forwardFromId: (m as any).forwardFromId,
+    forwardFromName: (m as any).forwardFromName,
     isEdited: (m as any).edited === true, isPinned: false, isDeleted: (m as any).deleted === true,
     createdAt: new Date(m.ts).toISOString(),
     updatedAt: new Date(m.ts).toISOString(),
@@ -80,6 +87,55 @@ const attachReplyPreview = (message: Message, messages: Record<string, Message[]
   return replyTo ? { ...message, replyTo } : message;
 };
 
+/* ---------- Локальные заглушки сообщений (id `temp-...`) ---------- */
+/** Показывается только когда заглушка ещё не подтверждена сервером. */
+const PENDING_SEND_ERROR = 'Сообщение ещё отправляется — подождите пару секунд';
+
+const isTemporaryId = (id: unknown): boolean => typeof id === 'string' && id.startsWith('temp-');
+
+/** Подтверждённое сервером сообщение для локальной заглушки (если уже пришло). */
+function findConfirmedMessage(messages: Record<string, Message[]>, tempId: string): Message | undefined {
+  for (const list of Object.values(messages || {})) {
+    for (const m of list || []) {
+      if (m && m.id !== tempId && (m as any).clientTempId === tempId) return m;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Идентификатор, по которому можно вызывать серверные действия.
+ * Если сообщение уже подтверждено сервером, возвращаем реальный id — правка и
+ * закрепление работают даже когда в списке осталась локальная заглушка.
+ * null — заглушка действительно ещё не отправлена.
+ */
+function resolveActionableId(messages: Record<string, Message[]>, messageId: string): string | null {
+  if (!isTemporaryId(messageId)) return messageId;
+  return findConfirmedMessage(messages, messageId)?.id || null;
+}
+
+/**
+ * Убирает локальную заглушку, когда пришло подтверждённое сообщение.
+ * Обычно сервер возвращает clientTempId, но старые сборки и P2P-мост могут его
+ * не присылать — тогда подстраховываемся совпадением текста и отправителя.
+ */
+function withoutTemporaryCopy(list: Message[], confirmed: Message, myId?: string): Message[] {
+  const tempId = (confirmed as any).clientTempId as string | undefined;
+  const senderId = (confirmed as any).authorId || confirmed.senderId;
+  let fallbackRemoved = false;
+  return (list || []).filter((m) => {
+    if (!m || m.id === confirmed.id) return true;
+    if (!isTemporaryId(m.id)) return true;
+    if (tempId && m.id === tempId) return false;
+    if (!tempId && !fallbackRemoved && myId && senderId === myId && m.senderId === myId
+      && !!m.content && m.content === confirmed.content) {
+      fallbackRemoved = true;
+      return false;
+    }
+    return true;
+  });
+}
+
 interface ChatState {
   chats: Chat[];
   activeChat: Chat | null;
@@ -92,11 +148,12 @@ interface ChatState {
   setActiveChat: (chat: Chat | null) => void;
   loadMessages: (chatId: string, before?: string) => Promise<void>;
   sendMessage: (chatId: string, content: string, replyToId?: string) => Promise<void>;
+  forwardMessage: (chatId: string, source: Message) => Promise<void>;
   sendMessageWithFile: (chatId: string, attachment: any, replyToId?: string, type?: string) => Promise<void>;
   editMessage: (messageId: string, content: string) => Promise<void>;
   deleteMessage: (messageId: string, chatId: string) => Promise<void>;
-  pinMessage: (chatId: string, messageId: string | null) => void;
-  addReaction: (chatId: string, messageId: string, emoji: string) => void;
+  pinMessage: (chatId: string, messageId: string | null) => Promise<void>;
+  addReaction: (chatId: string, messageId: string, emoji: string) => Promise<void>;
   leaveChat: (chatId: string) => Promise<void>;
   addMessage: (message: Message) => void;
   replaceOrAddMessage: (message: Message) => void;
@@ -111,6 +168,19 @@ interface ChatState {
   setUserOffline: (userId: string) => void;
   clearOnlineUsers: () => void;
   markMessageRead: (chatId: string, messageId: string, userId: string) => void;
+}
+
+const VERA_AI_ID = 'vera-ai';
+function veraAiChat(): Chat {
+  const now = new Date().toISOString();
+  return { id: VERA_AI_ID, type: 'private', name: 'Vera AI', description: 'Локальная нейросеть Ollama', avatarUrl: '', isPublic: false, members: [], unreadCount: 0, createdAt: now, updatedAt: now };
+}
+function withVeraAi(chats: Chat[]): Chat[] {
+  const withoutVera = chats.filter(c => c.id !== VERA_AI_ID);
+  if (!useAuthStore.getState().user?.isAdmin) return withoutVera;
+  const ai = veraAiChat();
+  const existing = chats.find(c => c.id === VERA_AI_ID);
+  return [{ ...ai, ...existing, name: ai.name }, ...withoutVera];
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -153,7 +223,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       try {
         const raw = await peer.listChats();
         const chats = raw.map(peerChatToChat);
-        set({ chats });
+        set({ chats: withVeraAi(chats) });
         saveArchivedChats(chats).catch(() => {});
       } catch (err) { console.error('[peer] loadChats error:', err); }
       return;
@@ -198,7 +268,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // остаются у пользователя, а свежие данные с сервера обновляют локальные.
       const archived = await loadArchivedChats().catch(() => [] as Chat[]);
       const merged = mergeById(archived, normalized);
-      set({ chats: merged });
+      set({ chats: withVeraAi(merged) });
+      normalized.forEach(chat => get().applyPinnedMessage(chat.id, chat.pinnedMessageId || null, chat.pinnedMessage || null));
       saveArchivedChats(normalized).catch(() => {});
     } catch (err) {
       console.error('loadChats error:', err);
@@ -228,6 +299,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   loadMessages: async (chatId, before) => {
+    if (!before && !isPeerAvailable() && chatId !== VERA_AI_ID) {
+      const { useOutboxStore } = await import('./outboxStore');
+      const user = useAuthStore.getState().user;
+      const pending: Message[] = useOutboxStore.getState().items.filter(item => item.chatId === chatId).map(item => ({
+        id: item.clientTempId, chatId, senderId: user?.id, sender: user || undefined,
+        content: item.content, replyToId: item.replyToId, type: 'text' as const,
+        createdAt: item.createdAt, updatedAt: item.createdAt,
+        isEdited: false, isPinned: false, isDeleted: false,
+      }));
+      set(state => ({ messages: { ...state.messages, [chatId]: mergeById(pending, state.messages[chatId] || []) } }));
+    }
     // Показываем архивную историю мгновенно (только для первой загрузки чата).
     if (!before) {
       try {
@@ -238,12 +320,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       } catch {}
     }
 
+    if (chatId === VERA_AI_ID) return;
     // P2P-режим: сообщения хранятся локально в peer/src/store.
     if (isPeerAvailable()) {
       set({ loadingMessages: true });
       try {
         const raw = await peer.listMessages(chatId);
-        const msgs = raw.map(peerMsgToMsg).filter((m) => !m.isDeleted);
+        const pinnedMessageId = get().chats.find((c) => c.id === chatId)?.pinnedMessageId;
+        const msgs = raw.map(peerMsgToMsg).filter((m) => !m.isDeleted).map((m) => ({
+          ...m,
+          isPinned: m.id === pinnedMessageId,
+        }));
         set((state) => ({ messages: { ...state.messages, [chatId]: msgs } }));
         saveArchivedMessages(msgs).catch(() => {});
       } catch (err) { console.error('[peer] loadMessages error:', err); }
@@ -258,13 +345,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // очистке /tmp на Render. Только для первой страницы (без before).
       let merged: Message[];
       if (before) {
-        merged = [...incoming, ...(get().messages[chatId] || [])];
+        merged = mergeById(get().messages[chatId] || [], incoming);
       } else {
         const archived = await loadArchivedMessages(chatId).catch(() => [] as Message[]);
-        merged = mergeById(archived, incoming);
+        merged = mergeById(mergeById(archived, get().messages[chatId] || []), incoming);
       }
       set((state) => ({
-        messages: { ...state.messages, [chatId]: merged },
+        messages: { ...state.messages, [chatId]: merged.filter(m => !merged.some(saved => (saved as any).clientTempId === m.id)) },
       }));
       saveArchivedMessages(incoming).catch(() => {});
       if (!before && get().activeChat?.id === chatId && incoming.length) {
@@ -282,8 +369,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   sendMessage: async (chatId, content, replyToId) => {
     const user = useAuthStore.getState().user;
+    const clientTempId = 'temp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
     const tempMsg: Message = {
-      id: 'temp-' + Date.now(),
+      id: clientTempId,
       chatId,
       senderId: user?.id,
       sender: user || undefined,
@@ -302,6 +390,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
         [chatId]: [...(state.messages[chatId] || []), attachReplyPreview(tempMsg, state.messages)],
       },
     }));
+    // Vera AI is a local chat: persist the user's message immediately so it
+    // cannot disappear when the chat is reopened or the server is unavailable.
+    if (chatId === VERA_AI_ID) {
+      // IndexedDB intentionally skips temporary IDs used by the server outbox.
+      // Vera is local, so give its user message a permanent archive ID now.
+      saveArchivedMessages([{ ...tempMsg, id: `vera-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }]).catch(() => {});
+    }
+
+    if (chatId === VERA_AI_ID) {
+      try {
+        const response = await aiApi.chat(content);
+        const answerText = String(response.data?.answer || '').trim();
+        if (!answerText) throw new Error('Vera AI вернула пустой ответ');
+        const answer: Message = { id: `vera-${Date.now()}`, chatId, senderId: VERA_AI_ID, sender: { id: VERA_AI_ID, username: 'vera-ai', firstName: 'Vera AI', isOnline: true, createdAt: new Date().toISOString() } as any, type: 'text', content: answerText, isEdited: false, isPinned: false, isDeleted: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+        set(state => ({ messages: { ...state.messages, [chatId]: [...(state.messages[chatId] || []), answer] } }));
+        saveArchivedMessages([answer]).catch(() => {});
+      } catch (error: any) {
+        const errorText = error?.response?.data?.message || error?.message || 'Не удалось получить ответ от Vera AI';
+        const failed: Message = { id: `vera-error-${Date.now()}`, chatId, senderId: VERA_AI_ID, sender: { id: VERA_AI_ID, username: 'vera-ai', firstName: 'Vera AI', isOnline: false, createdAt: new Date().toISOString() } as any, type: 'text', content: `Ошибка: ${errorText}`, isEdited: false, isPinned: false, isDeleted: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+        set(state => ({ messages: { ...state.messages, [chatId]: [...(state.messages[chatId] || []), failed] } }));
+        saveArchivedMessages([failed]).catch(() => {});
+      }
+      return;
+    }
 
     try {
       // P2P: адресат — pubkey/nodeId контакта. В direct-чате берём его из
@@ -353,24 +465,56 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         return;
       }
-      const socket = getSocket();
-      if (socket?.connected) {
-        socket.emit('message:send', { chatId, text: content, replyToId });
-      } else {
-        const res = await messagesApi.send(chatId, { text: content, replyToId });
-        set((state) => ({
-          messages: {
-            ...state.messages,
-            [chatId]: (state.messages[chatId] || []).map((m) =>
-              m.id === tempMsg.id ? attachReplyPreview(res.data, state.messages) : m
-            ),
-          },
-        }));
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        const { useOutboxStore } = await import('./outboxStore');
+        useOutboxStore.getState().enqueue({ clientTempId, chatId, content, replyToId });
+        return;
       }
+      const { data } = await messagesApi.send(chatId, { text: content, replyToId, clientTempId });
+      if (!data?.id) throw new Error('Нет подтверждения сохранения');
+      get().replaceOrAddMessage({ ...data, clientTempId });
     } catch (err) {
       console.error('sendMessage error:', err);
-      get().removeMessage(tempMsg.id, chatId);
+      // Не удаляем — оставляем pending, попробуем через outbox.
+      const { useOutboxStore } = await import('./outboxStore');
+      useOutboxStore.getState().enqueue({ clientTempId, chatId, content, replyToId });
+      set((state) => ({
+        messages: {
+          ...state.messages,
+          [chatId]: (state.messages[chatId] || []).map((m) =>
+            m.id === tempMsg.id ? { ...m, status: 'pending' } as any : m
+          ),
+        },
+      }));
     }
+  },
+
+  forwardMessage: async (chatId, source) => {
+    if (source.isDeleted) throw new Error('Удалённое сообщение переслать нельзя');
+    // Если сервер уже подтвердил отправку — пересылаем по реальному id.
+    const sourceId = resolveActionableId(get().messages, source.id);
+    if (!sourceId) throw new Error('Дождитесь отправки исходного сообщения');
+    if (chatId === VERA_AI_ID) throw new Error('Пересылка в Vera AI пока не поддерживается');
+    if (isPeerAvailable()) {
+      // The legacy bridge only transports text. Do not report a local file
+      // copy as a successful delivery to another peer.
+      if (source.attachments?.length || source.poll) {
+        throw new Error('Этот P2P-мост не поддерживает пересылку вложений');
+      }
+      const chat = get().chats.find(c => c.id === chatId);
+      const info = await peer.info();
+      const myPk = info.nostrPk || info.deviceId;
+      const target = chat?.type === 'group' ? chatId : chat?.members.find(m => m.userId !== myPk && m.userId !== info.deviceId)?.userId;
+      if (!target) throw new Error('Не найден получатель пересылки');
+      const name = source.forwardFromName || source.sender?.firstName || source.sender?.username || 'Пользователь';
+      const result = await peer.sendMessage(target, `Переслано от ${name}:\n${source.content || ''}`);
+      if (!result.ok) throw new Error(result.note || 'Не удалось переслать сообщение');
+      await get().loadMessages(chatId);
+      return;
+    }
+    const { data } = await messagesApi.send(chatId, { forwardFromId: sourceId });
+    if (!data?.id) throw new Error('Нет подтверждения пересылки');
+    get().replaceOrAddMessage(data);
   },
 
   sendMessageWithFile: async (chatId, attachment, replyToId, type = 'document') => {
@@ -431,6 +575,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         replyToId,
         attachments: [attachment],
         type,
+        // Тот же контракт, что у текстовых сообщений: сервер вернёт clientTempId,
+        // и локальная заглушка гарантированно заменится подтверждённым сообщением.
+        clientTempId: tempId,
       });
       set((state) => {
         const existing = state.messages[chatId] || [];
@@ -447,13 +594,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (err) {
       console.error('sendMessageWithFile error:', err);
       get().removeMessage(tempId, chatId);
+      throw err;
     }
 
   },
 
   editMessage: async (messageId, content) => {
+    // Заглушку `temp-*` переводим в реальный id, если подтверждение уже пришло.
+    const resolvedId = resolveActionableId(get().messages, messageId);
+    if (!resolvedId) throw new Error(PENDING_SEND_ERROR);
+    messageId = resolvedId;
+    const original = Object.values(get().messages).flat().find(m => m.id === messageId);
     try {
-      let chatId = get().activeChat?.id;
+      let chatId = original?.chatId;
       if (!chatId) {
         const entry = Object.entries(get().messages).find(([, list]) =>
           list.some((m) => m.id === messageId),
@@ -476,9 +629,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       // P2P: сохраняем правку локально через peer store.
       if (chatId && isPeerAvailable()) {
-        try {
-          await peer.updateMessage(chatId, messageId, { text: content, edited: true });
-        } catch (e) { console.error('[peer] editMessage:', e); }
+        await peer.updateMessage(chatId, messageId, { text: content, edited: true });
+        await saveArchivedMessages(get().messages[chatId] || []);
         return;
       }
 
@@ -495,16 +647,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
         });
       }
     } catch (err) {
+      if (original) get().updateMessage(original);
       console.error('editMessage error:', err);
+      throw err;
     }
   },
 
   deleteMessage: async (messageId, chatId) => {
+    const resolvedId = resolveActionableId(get().messages, messageId);
+    if (!resolvedId) throw new Error(PENDING_SEND_ERROR);
+    messageId = resolvedId;
     try {
       if (isPeerAvailable()) {
         // P2P: физически удаляем через peer.updateMessage → пометим deleted=true,
         // и убираем из UI. Полное удаление можно добавить позже отдельным API.
-        try { await peer.updateMessage(chatId, messageId, { deleted: true, text: '' }); } catch {}
+        await peer.updateMessage(chatId, messageId, { deleted: true, text: '' });
         get().removeMessage(messageId, chatId);
         return;
       }
@@ -512,26 +669,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
       get().removeMessage(messageId, chatId);
     } catch (err) {
       console.error('deleteMessage error:', err);
+      throw err;
     }
   },
 
-  pinMessage: (chatId, messageId) => {
-    get().applyPinnedMessage(chatId, messageId);
-
-    const socket = getSocket();
-    if (socket?.connected) {
-      socket.emit('message:pin', { chatId, messageId });
-      return;
+  pinMessage: async (chatId, messageId) => {
+    if (messageId) {
+      // Заглушка `temp-*` → реальный id, если сервер уже подтвердил отправку.
+      const resolvedId = resolveActionableId(get().messages, messageId);
+      if (!resolvedId) throw new Error(PENDING_SEND_ERROR);
+      messageId = resolvedId;
     }
-
-    messagesApi.pin(messageId, chatId)
-      .then((res) => get().applyPinnedMessage(chatId, messageId, res.data))
-      .catch((err) => console.error('pinMessage error:', err));
+    if (isPeerAvailable()) {
+      await peer.updateChat(chatId, { pinnedMessageId: messageId });
+      get().applyPinnedMessage(chatId, messageId);
+    } else {
+      const res = await messagesApi.pin(messageId, chatId);
+      get().applyPinnedMessage(chatId, messageId, res.data);
+    }
   },
 
-  addReaction: (chatId, messageId, emoji) => {
+  addReaction: async (chatId, messageId, emoji) => {
     const user = useAuthStore.getState().user;
     if (!user) return;
+    const resolvedId = resolveActionableId(get().messages, messageId);
+    if (!resolvedId) throw new Error(PENDING_SEND_ERROR);
+    messageId = resolvedId;
+    const original = (get().messages[chatId] || []).find(m => m.id === messageId);
+    try {
 
     set((state) => ({
       messages: {
@@ -565,8 +730,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (isPeerAvailable()) {
       const current = (get().messages[chatId] || []).find((m) => m.id === messageId);
       const reactions = current?.reactions || [];
-      peer.updateMessage(chatId, messageId, { reactions })
-        .catch((err) => console.error('[peer] updateMessage reaction error:', err));
+      await peer.updateMessage(chatId, messageId, { reactions });
+      await saveArchivedMessages(get().messages[chatId] || []);
       return;
     }
 
@@ -574,7 +739,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // только в REST (POST /api/messages/:chatId/reaction), который заодно
     // рассылает io-уведомление остальным участникам. Шлём всегда через HTTP,
     // чтобы реакция пережила reload и не затёрлась серверной копией.
-    messagesApi.addReaction(chatId, messageId, emoji)
+    await messagesApi.addReaction(chatId, messageId, emoji)
       .then((res) => {
         const reactions = res.data?.reactions;
         if (!Array.isArray(reactions)) return;
@@ -586,10 +751,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ),
           },
         }));
-      })
-      .catch((err) => {
-        console.error('addReaction error:', err);
       });
+    await saveArchivedMessages(get().messages[chatId] || []);
+    } catch (err) {
+      if (original) {
+        const current = (get().messages[chatId] || []).find(m => m.id === messageId);
+        if (current) get().updateMessage({ ...current, reactions: original.reactions });
+      }
+      throw err;
+    }
   },
 
   leaveChat: async (chatId) => {
@@ -604,6 +774,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   replaceOrAddMessage: (message) => {
+    saveArchivedMessages([message]).catch(() => {});
     set((state) => {
       const chatMsgs = state.messages[message.chatId] || [];
       const normalizedMessage = attachReplyPreview(message, state.messages);
@@ -613,7 +784,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       let tempIdx = -1;
       if (realIdx < 0) {
         for (let i = chatMsgs.length - 1; i >= 0; i--) {
-          if (chatMsgs[i].id.startsWith('temp-') && chatMsgs[i].senderId === message.senderId) {
+          if (chatMsgs[i].id === (message as any).clientTempId && chatMsgs[i].senderId === ((message as any).authorId || message.senderId)) {
             tempIdx = i;
             break;
           }
@@ -628,10 +799,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const isActive = state.activeChat?.id === message.chatId;
       const safeChats = state.chats.filter(c => c && c.id);
 
+      // Убираем локальную заглушку: сервер подтвердил сообщение реальным id.
+      const cleanMsgs = withoutTemporaryCopy(updatedMsgs, normalizedMessage, useAuthStore.getState().user?.id);
+
       return {
-        messages: { ...state.messages, [message.chatId]: updatedMsgs },
+        messages: { ...state.messages, [message.chatId]: cleanMsgs },
         chats: safeChats.map((c) =>
-          c.id === message.chatId
+          c.id === message.chatId && !(c.type === 'channel' && message.replyToId)
             ? {
                 ...c,
                 lastMessage: normalizedMessage,
@@ -658,16 +832,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const existing = state.messages[message.chatId] || [];
       // Дедуп: если сообщение с таким id уже есть — просто обновляем на месте.
       const dupIdx = existing.findIndex((m) => m.id === message.id);
-      const nextMsgs = dupIdx >= 0
+      const baseMsgs = dupIdx >= 0
         ? existing.map((m, i) => (i === dupIdx ? normalizedMessage : m))
         : [...existing, normalizedMessage];
+      // Сокетное эхо своего сообщения (например, пост канала) должно убрать
+      // локальную заглушку, иначе по ней нельзя будет править/закреплять.
+      const nextMsgs = withoutTemporaryCopy(baseMsgs, normalizedMessage, myId);
       return {
         messages: {
           ...state.messages,
           [message.chatId]: nextMsgs,
         },
         chats: safeChats.map((c) =>
-          c.id === message.chatId
+          c.id === message.chatId && !(c.type === 'channel' && message.replyToId)
             ? {
                 ...c,
                 lastMessage: normalizedMessage,
@@ -696,6 +873,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ),
       },
     }));
+    saveArchivedMessages([message]).catch(() => {});
   },
 
   removeMessage: (messageId, chatId) => {
@@ -718,6 +896,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           : null;
       setPinnedMessage(chatId, pinned || null);
       return {
+        activeChat: state.activeChat?.id === chatId
+          ? { ...state.activeChat, pinnedMessageId: messageId || undefined, pinnedMessage: pinned || undefined }
+          : state.activeChat,
         chats: state.chats.map((c) =>
           c.id === chatId
             ? { ...c, pinnedMessageId: messageId || undefined, pinnedMessage: pinned || undefined }
@@ -733,6 +914,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       };
     });
+    saveArchivedChats(get().chats.filter(c => c.id === chatId)).catch(() => {});
+    saveArchivedMessages(get().messages[chatId] || []).catch(() => {});
   },
 
   setTyping: (chatId, userId, isTyping) => {
@@ -771,6 +954,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!chat || !chat.id) return;
     const normalized = { ...chat, type: chat.type === 'direct' ? 'private' : chat.type } as Chat;
     set((state) => ({
+      activeChat: state.activeChat?.id === normalized.id
+        ? { ...state.activeChat, ...normalized, unreadCount: 0 }
+        : state.activeChat,
       chats: state.chats.some((c) => c?.id === normalized.id)
         ? state.chats.map((c) => {
             if (c?.id !== normalized.id) return c;
@@ -798,6 +984,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 }));
+
+registerAccountStore('chats', useChatStore);
 
 /* ---------- Автоматический синк в IndexedDB-архив ---------- */
 // При любых изменениях messages/chats пишем всё, что добавилось или изменилось,

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Playlist, Track } from '../types';
 import { musicApi } from '../services/api';
+import { registerAccountStore } from '../services/storeSyncSimple';
 
 interface PlaylistState {
   playlists: Playlist[];
@@ -110,3 +111,5 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       .map(pt => pt.track);
   },
 }));
+
+registerAccountStore('playlists', usePlaylistStore);

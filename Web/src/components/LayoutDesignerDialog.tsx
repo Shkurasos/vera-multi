@@ -39,17 +39,18 @@ const PRESETS: { id: string; label: string; layout: Partial<LayoutSettings> }[] 
 const PREVIEW_W = 520;
 const PREVIEW_H = 340;
 const SIDEBAR_PREVIEW_MIN = 60;
-const SIDEBAR_PREVIEW_MAX = 220;
+const SIDEBAR_PREVIEW_MAX = PREVIEW_W / 2;
 const REAL_MIN = 200;
-const REAL_MAX = 520;
 
-function realToPreview(real: number) {
-  const t = (real - REAL_MIN) / (REAL_MAX - REAL_MIN);
+function realToPreview(real: number, realMax: number) {
+  if (realMax <= REAL_MIN) return SIDEBAR_PREVIEW_MAX;
+  const t = (Math.min(Math.max(real, REAL_MIN), realMax) - REAL_MIN) / (realMax - REAL_MIN);
   return SIDEBAR_PREVIEW_MIN + t * (SIDEBAR_PREVIEW_MAX - SIDEBAR_PREVIEW_MIN);
 }
-function previewToReal(preview: number) {
+function previewToReal(preview: number, realMax: number) {
+  if (realMax <= REAL_MIN) return REAL_MIN;
   const t = (preview - SIDEBAR_PREVIEW_MIN) / (SIDEBAR_PREVIEW_MAX - SIDEBAR_PREVIEW_MIN);
-  return Math.round(REAL_MIN + t * (REAL_MAX - REAL_MIN));
+  return Math.round(REAL_MIN + t * (realMax - REAL_MIN));
 }
 
 export default function LayoutDesignerDialog({ open, onClose }: Props) {
@@ -63,6 +64,13 @@ export default function LayoutDesignerDialog({ open, onClose }: Props) {
   const [dragging, setDragging] = useState<null | 'sidebar-resize'>(null);
   const [flashPreset, setFlashPreset] = useState<string | null>(null);
   const [dragSide, setDragSide] = useState<boolean>(false);
+  const [sidebarWidthMax, setSidebarWidthMax] = useState(() => Math.max(REAL_MIN, Math.floor(window.innerWidth / 10) * 5));
+
+  useEffect(() => {
+    const updateSidebarWidthMax = () => setSidebarWidthMax(Math.max(REAL_MIN, Math.floor(window.innerWidth / 10) * 5));
+    window.addEventListener('resize', updateSidebarWidthMax);
+    return () => window.removeEventListener('resize', updateSidebarWidthMax);
+  }, []);
 
   // Снапшот layout на момент открытия — для кнопки «Отменить изменения».
   const initialLayoutRef = useRef<LayoutSettings | null>(null);
@@ -95,8 +103,8 @@ export default function LayoutDesignerDialog({ open, onClose }: Props) {
       ? rect.right - e.clientX
       : e.clientX - rect.left;
     const clamped = Math.min(Math.max(local, SIDEBAR_PREVIEW_MIN), SIDEBAR_PREVIEW_MAX);
-    setLayout('sidebarWidth', previewToReal(clamped));
-  }, [dragging, layout.sidebarSide, setLayout]);
+    setLayout('sidebarWidth', previewToReal(clamped, sidebarWidthMax));
+  }, [dragging, layout.sidebarSide, setLayout, sidebarWidthMax]);
   const onResizeEnd = useCallback(() => setDragging(null), []);
 
   const onSidebarDragStart = useCallback((e: React.PointerEvent) => {
@@ -119,7 +127,7 @@ export default function LayoutDesignerDialog({ open, onClose }: Props) {
     return () => clearTimeout(t);
   }, [flashPreset]);
 
-  const previewSidebarW = realToPreview(layout.sidebarWidth);
+  const previewSidebarW = realToPreview(layout.sidebarWidth, sidebarWidthMax);
   const previewChatX = layout.sidebarSide === 'left' ? previewSidebarW : 0;
   const previewChatW = PREVIEW_W - previewSidebarW;
   const sidebarLeft = layout.sidebarSide === 'left' ? 0 : PREVIEW_W - previewSidebarW;
@@ -305,9 +313,9 @@ export default function LayoutDesignerDialog({ open, onClose }: Props) {
         <Stack spacing={2}>
           <Box>
             <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
-              Ширина панели чатов — {layout.sidebarWidth}px
+              Ширина панели чатов — {Math.min(layout.sidebarWidth, sidebarWidthMax)}px
             </Typography>
-            <Slider min={REAL_MIN} max={REAL_MAX} step={5} value={layout.sidebarWidth}
+            <Slider min={REAL_MIN} max={sidebarWidthMax} step={5} value={Math.min(layout.sidebarWidth, sidebarWidthMax)}
               onChange={(_, v) => setLayout('sidebarWidth', Array.isArray(v) ? v[0] : v)} />
           </Box>
           <Box>

@@ -31,6 +31,7 @@ async function tryRefresh(): Promise<string | null> {
       const csrf = readCookie('vera_csrf');
       const res = await axios.post('/api/auth/refresh', {}, {
         withCredentials: true,
+        timeout: 15000,
         headers: csrf ? { 'X-CSRF-Token': csrf } : {},
       });
       const newToken = (res.data as any)?.accessToken;
@@ -50,7 +51,12 @@ async function tryRefresh(): Promise<string | null> {
 }
 
 api.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    if (res.config.url === '/auth/device' || res.config.url === '/devices/link/accept') {
+      if (typeof res.data?.deviceId === 'string') localStorage.setItem('vera_device_id', res.data.deviceId);
+    }
+    return res;
+  },
   async (err: AxiosError) => {
     const cfg = err.config as AxiosRequestConfig & { _retry?: boolean };
     const url = cfg?.url || '';
@@ -73,8 +79,8 @@ api.interceptors.response.use(
 );
 
 export const authApi = {
-  device: () => api.post('/auth/device', { deviceId: getDeviceId(), deviceName: getDeviceName() }),
-  me: () => api.get('/auth/me'),
+  device: (createAccount = false) => api.post('/auth/device', { deviceId: getDeviceId(), deviceName: getDeviceName(), createAccount }, { timeout: 15000 }),
+  me: () => api.get('/auth/me', { timeout: 15000 }),
   logout: () => api.post('/auth/logout'),
 };
 
@@ -86,7 +92,7 @@ export const authApi = {
 export function getDeviceId(): string {
   let id = localStorage.getItem('vera_device_id');
   if (!id) {
-    id = 'dev_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
+    id = 'dev_' + Array.from(crypto.getRandomValues(new Uint8Array(24)), b => b.toString(16).padStart(2, '0')).join('');
     localStorage.setItem('vera_device_id', id);
   }
   return id;
@@ -118,6 +124,9 @@ export const devicesApi = {
 
 /* ─── ВП-кошелёк / крипто-пополнение (NOWPayments) ─────────────────────── */
 export const walletApi = {
+  cases: () => api.get('/cases'),
+  buyCase: (caseId: string) => api.post('/cases/buy', { caseId }),
+  openCase: (caseId: string) => api.post('/cases/open', { caseId }),
   /** Баланс ВП + купленные товары. */
   get: () => api.get('/wallet'),
   /** Создать инвойс на пополнение (amount — в ВП). */
@@ -128,6 +137,23 @@ export const walletApi = {
   mockPay: (orderId: string) => api.post('/wallet/mock-pay', { orderId }),
   /** Купить платный товар — списание ВП с баланса. */
   buy: (itemId: string) => api.post('/shop/buy', { itemId }),
+};
+
+export interface MarketListing {
+  id: string;
+  itemId: string;
+  sellerId: string;
+  seller: string;
+  price: number;
+  createdAt: number;
+  isMine?: boolean;
+}
+
+export const marketApi = {
+  list: () => api.get<{ listings: MarketListing[] }>('/market'),
+  create: (itemId: string, price: number) => api.post<{ listing: MarketListing; balance: number }>('/market/list', { itemId, price }),
+  cancel: (id: string) => api.post<{ ok: boolean; itemId: string }>(`/market/${id}/cancel`),
+  buy: (id: string) => api.post<{ ok: boolean; balance: number; ownedItems: string[] }>(`/market/${id}/buy`),
 };
 
 export const usersApi = {
@@ -147,13 +173,24 @@ export const usersApi = {
     api.patch('/users/me', { themeId }),
 };
 
+export const adminApi = {
+  grantVp: (username: string, amount: number) => api.post('/admin/wallet/grant', { username, amount }),
+  listIpBans: () => api.get('/admin/ip-bans'),
+  banIp: (ip: string, expiresInMinutes = 0, reason?: string) =>
+    api.post('/admin/ip-bans', { ip, expiresInMinutes, reason }),
+  unbanIp: (ip: string) => api.delete(`/admin/ip-bans/${encodeURIComponent(ip)}`),
+};
+
 export const chatsApi = {
+  searchChannels: (q: string) => api.get('/channels/search', { params: { q } }),
+  joinChannel: (id: string) => api.post(`/channels/${id}/join`),
   getAll: () => api.get('/chats'),
   getById: (id: string) => api.get(`/chats/${id}`),
+  getChannelSkins: (id: string) => api.get<string[]>(`/chats/${id}/skins`),
   createDirect: (targetUserId: string) => api.post('/chats/direct', { targetUserId }),
   createGroup: (name: string, memberIds: string[]) => api.post('/chats/group', { name, memberIds }),
   createChannel: (name: string, description?: string) => api.post('/chats/channel', { name, description }),
-  update: (chatId: string, data: { name?: string; description?: string; avatarUrl?: string }) =>
+  update: (chatId: string, data: { activeRing?: string; activeSelfCard?: string; activeBubble?: string; name?: string; description?: string; avatarUrl?: string; wallpaper?: { type: 'photo' | 'live' | 'stock'; value: string } | null }) =>
     api.patch(`/chats/${chatId}`, data),
   leaveChat: (chatId: string) => api.delete(`/chats/${chatId}/leave`),
   deleteChat: (chatId: string) => api.delete(`/chats/${chatId}`),
@@ -161,16 +198,25 @@ export const chatsApi = {
   pin: (chatId: string, pinned: boolean) => api.patch(`/chats/${chatId}/pin`, { pinned }),
   mute: (chatId: string, muted: boolean) => api.patch(`/chats/${chatId}/mute`, { muted }),
   addMember: (chatId: string, userId: string) => api.post(`/chats/${chatId}/members`, { userId }),
+  setAdmin: (chatId: string, userId: string, data: { role: 'admin' | 'member'; adminTitle: string; permissions: import('../types').ChatMember['permissions'] }) =>
+    api.patch(`/chats/${chatId}/members/${userId}/admin`, data),
   invite: (chatId: string, userId: string) => api.post(`/chats/${chatId}/invite`, { userId }),
   acceptInvite: (token: string) => api.post(`/group-invites/${token}/accept`),
   declineInvite: (token: string) => api.post(`/group-invites/${token}/decline`),
 };
 
+export const aiApi = {
+  chat: (message: string) => api.post<{ answer: string; model: string }>('/ai-lmm/chat', { message }),
+  learnUrl: (url: string) => api.post<{ ok: boolean; url: string; text: string }>('/ai-lmm/learn-url', { url }),
+};
+
 export const messagesApi = {
+  getComments: (chatId: string, postId: string) => api.get(`/messages/${chatId}/comments/${postId}`),
   getMessages: (chatId: string, before?: string, limit?: number) =>
     api.get(`/messages/${chatId}`, { params: { before, limit } }),
-  send: (chatId: string, data: { text?: string; replyToId?: string; attachments?: any[]; type?: string }) =>
+  send: (chatId: string, data: { text?: string; clientTempId?: string; replyToId?: string; commentReplyToId?: string; attachments?: any[]; type?: string; poll?: any; forwardFromId?: string }) =>
     api.post(`/messages/${chatId}/send`, data),
+  votePoll: (messageId: string, optionIds: string[]) => api.post(`/messages/${messageId}/poll-vote`, { optionIds }),
   edit: (id: string, text: string) => api.put(`/messages/${id}`, { text }),
   delete: (id: string) => api.delete(`/messages/${id}`),
   markRead: (id: string, chatId: string) => api.post(`/messages/${id}/read`, { chatId }),
@@ -182,10 +228,24 @@ export const messagesApi = {
     api.post(`/messages/${chatId}/reaction`, { messageId, emoji }),
 };
 
+export const reportsApi = {
+  sharedChats: (targetId: string) => api.get<Array<{ id: string; name: string; type: string }>>(`/reports/chats/${targetId}`),
+  create: (formData: FormData) => api.post<{ id: string }>('/reports', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }),
+  list: () => api.get<any[]>('/admin/reports'),
+  get: (id: string) => api.get<any>(`/admin/reports/${id}`),
+  photo: (id: string) => api.get<Blob>(`/admin/reports/${id}/photo`, { responseType: 'blob' }),
+  messages: (id: string, offset = 0) => api.get<{ messages: any[]; total: number }>(`/admin/reports/${id}/messages`, { params: { offset } }),
+  decide: (id: string, action: string, reason: string, minutes: number) =>
+    api.post<any>(`/admin/reports/${id}/decision`, { action, reason, minutes }),
+};
+
 export const musicApi = {
   getAll: (page?: number, limit?: number) => api.get('/music/my', { params: { page, limit } }),
   search: (q: string) => api.get(`/music/search?q=${encodeURIComponent(q)}`),
   getMy: () => api.get('/music/my'),
+  getTrack: (id: string) => api.get(`/music/${id}`),
   recordPlay: (id: string) => api.post(`/music/${id}/play`),
   upload: (formData: FormData, onProgress?: (p: number) => void) =>
     api.post('/music/upload', formData, {
@@ -258,7 +318,7 @@ export const favoritesApi = {
 };
 
 export const voiceApi = {
-  transcribe: (attachmentId: string) => api.post(`/voice/transcribe/${attachmentId}`),
+  transcribe: (attachmentId: string) => api.post(`/voice/transcribe/${encodeURIComponent(attachmentId)}`, undefined, { timeout: 310000 }),
 };
 
 export const downloadsApi = {

@@ -6,6 +6,7 @@ import {
   LibraryMusic, QueueMusic, Close, DeleteSweep, AutoAwesome,
 } from '@mui/icons-material';
 import { useMusicStore } from '../store/musicStore';
+import { bindMusicPlayback } from '../utils/musicPlayback';
 import { useThemeStore } from '../store/themeStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
 import { usePlaylistStore } from '../store/playlistStore';
@@ -33,6 +34,7 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen }: Props = {}) 
     repeat, shuffle, togglePlay, next, prev,
     setVolume, setProgress, setDuration, toggleRepeat, toggleShuffle,
     playerCollapsed, setPlayerCollapsed, playQueueIndex, removeFromQueue, clearQueue,
+    loadTracks,
   } = useMusicStore();
   const { theme } = useThemeStore();
   const playerPos = useUserSettingsStore((s) => s.layout.playerPos);
@@ -58,21 +60,50 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen }: Props = {}) 
   });
   const playlistViz = getSettings('playlist', currentPlaylist?.id);
   const trackViz = getSettings('track', currentTrack?.id);
-  const activeViz = trackViz.enabled ? trackViz : playlistViz;
+  const configuredViz = trackViz.enabled ? trackViz : playlistViz;
+  const previousTrackIdRef = useRef(currentTrack?.id);
+  const previousVizRef = useRef(configuredViz);
+  const trackChanged = previousTrackIdRef.current !== currentTrack?.id;
+  const activeViz = trackChanged && !configuredViz.enabled && previousVizRef.current.enabled
+    ? previousVizRef.current
+    : configuredViz;
   const activeVizScope = trackViz.enabled || !currentPlaylist ? 'track' : 'playlist';
   const activeVizId = activeVizScope === 'track' ? currentTrack?.id : currentPlaylist?.id;
 
   useEffect(() => {
+    previousTrackIdRef.current = currentTrack?.id;
+    previousVizRef.current = activeViz;
+  }, [currentTrack?.id, activeViz]);
+
+  useEffect(() => {
+    // Библиотека может быть закрыта, но глобальному плееру всё равно нужны треки
+    // для восстановления сохранённого воспроизведения после перезагрузки.
+    loadTracks().catch(() => {});
+  }, [loadTracks]);
+
+  useEffect(() => {
+    const resumeAfterInteraction = () => {
+      const audio = audioRef.current;
+      if (!audio || !useMusicStore.getState().isPlaying) return;
+      audio.play().catch(() => {});
+    };
+    window.addEventListener('pointerdown', resumeAfterInteraction, { once: true });
+    window.addEventListener('keydown', resumeAfterInteraction, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', resumeAfterInteraction);
+      window.removeEventListener('keydown', resumeAfterInteraction);
+    };
+  }, []);
+
+  useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !currentTrack) return;
-    audio.src = resolveAudioUrl(currentTrack.fileUrl);
+    audio.volume = useMusicStore.getState().volume;
+    const unbind = bindMusicPlayback(audio, useMusicStore.getState().progress,
+      () => useMusicStore.getState().isPlaying, setDuration);
     audio.load();
-    const tryPlay = () => {
-      if (useMusicStore.getState().isPlaying) audio.play().catch(() => {});
-    };
-    audio.oncanplay = tryPlay;
-    return () => { audio.oncanplay = null; };
-  }, [currentTrack?.id]);
+    return unbind;
+  }, [currentTrack?.id, currentTrack?.fileUrl, setDuration]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -217,7 +248,6 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen }: Props = {}) 
       ref={audioRef}
       src={currentTrack ? resolveAudioUrl(currentTrack.fileUrl) : ''}
       onTimeUpdate={() => setProgress(audioRef.current?.currentTime || 0)}
-      onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
       onEnded={next}
       style={{ display: 'none' }}
     />

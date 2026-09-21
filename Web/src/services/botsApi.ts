@@ -29,6 +29,8 @@ export const aiApi = {
 };
 
 export const adminApi = {
+  deleteAllChats: () => api.post('/admin/delete-all-chats', { confirmation: 'DELETE_ALL_CHATS' }),
+  deleteAllUsers: () => api.post('/admin/delete-all-users', { confirmation: 'DELETE_ALL_USERS' }),
   scan: (url: string) => api.post('/admin/scan', { url }),
   getScans: () => api.get('/admin/scans'),
   analyzeScan: (scanId: string) => api.post(`/admin/scans/${scanId}/analyze`),
@@ -45,6 +47,7 @@ export const adminApi = {
 export const aiLmmApi = {
   health: () => api.get('/ai-lmm/health'),
   chat: (message: string) => api.post('/ai-lmm/chat', { message }),
+  learnUrl: (url: string) => api.post<{ ok: boolean; source?: { url: string; title?: string; textLength?: number }; message?: string }>('/ai-lmm/learn-url', { url }),
   train: (datasetDir?: string) => api.post('/ai-lmm/train', { datasetDir }),
   extract: (filePath: string) => api.post('/ai-lmm/extract', { filePath }),
   search: (q: string) => api.get('/ai-lmm/search', { params: { q } }),

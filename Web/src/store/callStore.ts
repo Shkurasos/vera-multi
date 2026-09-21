@@ -5,6 +5,7 @@
  */
 import { create } from 'zustand';
 import { getSocket } from '../services/socket';
+import { registerAccountStore } from '../services/storeSyncSimple';
 
 export type CallKind = 'audio' | 'video';
 
@@ -214,3 +215,5 @@ export const useCallStore = create<CallStoreState>((set, get) => ({
   _setLocalStream(s) { set({ localStream: s }); },
   _setLocalScreenStream(s) { set({ localScreenStream: s }); },
 }));
+
+registerAccountStore('calls', useCallStore);

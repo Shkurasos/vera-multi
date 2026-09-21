@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Box, Typography } from '@mui/material';
 import { useThemeStore } from '../store/themeStore';
 
@@ -36,16 +37,17 @@ export default function ContextMenu({ x, y, items, onClose, title }: Props) {
   const [ready, setReady] = useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     // Корректируем позицию, чтобы плашка не выходила за пределы окна
     const el = ref.current;
     if (!el) return;
-    const rect = el.getBoundingClientRect();
+    // Layout dimensions are not affected by the opening scale animation.
+    const width = el.offsetWidth;
+    const height = el.offsetHeight;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    let nx = x, ny = y;
-    if (nx + rect.width + 8 > vw) nx = Math.max(8, vw - rect.width - 8);
-    if (ny + rect.height + 8 > vh) ny = Math.max(8, vh - rect.height - 8);
+    const nx = Math.max(8, Math.min(x, vw - width - 8));
+    const ny = Math.max(8, Math.min(y, vh - height - 8));
     setPos({ x: nx, y: ny });
     setReady(true);
   }, [x, y]);
@@ -56,7 +58,9 @@ export default function ContextMenu({ x, y, items, onClose, title }: Props) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  return (
+  // clientX/clientY use viewport coordinates. A portal prevents transformed
+  // message/list ancestors from becoming the fixed menu's containing block.
+  return createPortal(
     <Box
       onClick={onClose}
       onContextMenu={(e) => { e.preventDefault(); onClose(); }}
@@ -69,6 +73,9 @@ export default function ContextMenu({ x, y, items, onClose, title }: Props) {
           left: pos.x,
           top: pos.y,
           minWidth: 220,
+          maxWidth: 'calc(100vw - 16px)',
+          maxHeight: 'calc(100vh - 16px)',
+          boxSizing: 'border-box',
           bgcolor: theme.bgHeader + 'F2',
           backdropFilter: 'blur(14px) saturate(140%)',
           WebkitBackdropFilter: 'blur(14px) saturate(140%)',
@@ -80,7 +87,7 @@ export default function ContextMenu({ x, y, items, onClose, title }: Props) {
           transform: ready ? 'scale(1)' : 'scale(0.96)',
           transformOrigin: 'top left',
           transition: 'opacity 120ms ease, transform 140ms cubic-bezier(.2,.9,.3,1.2)',
-          overflow: 'hidden',
+          overflowY: 'auto',
         }}>
         {title && (
           <Typography sx={{
@@ -120,6 +127,7 @@ export default function ContextMenu({ x, y, items, onClose, title }: Props) {
           </React.Fragment>
         ))}
       </Box>
-    </Box>
+    </Box>,
+    document.body
   );
 }

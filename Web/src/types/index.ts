@@ -27,10 +27,14 @@ export interface User {
   isAdmin?: boolean;
   /** ID закреплённого плейлиста, отображается на профиле как мини-плеер. */
   pinnedPlaylistId?: string | null;
+  /** ID закреплённого одиночного трека (взаимоисключимо с pinnedPlaylistId). */
+  pinnedTrackId?: string | null;
   /** Активная обводка аватара (id из магазина) — видна другим пользователям. */
   activeRing?: string;
   /** Активная «плашка» своих сообщений (id из магазина). */
   activeSelfCard?: string;
+  /** Активный пузырь сообщений — виден собеседникам. */
+  activeBubble?: string;
 }
 
 export type ReputationVoteValue = 'positive' | 'neutral' | 'negative';
@@ -48,14 +52,19 @@ export interface UserReputationSummary {
 }
 
 export type ChatType = 'private' | 'group' | 'channel' | 'direct' | 'saved';
-export type MessageType = 'text' | 'photo' | 'video' | 'audio' | 'voice' | 'document' | 'sticker' | 'system';
+export type MessageType = 'text' | 'photo' | 'video' | 'audio' | 'voice' | 'document' | 'poll' | 'sticker' | 'system';
 
 export interface Chat {
+  activeRing?: string;
+  activeSelfCard?: string;
+  activeBubble?: string;
   id: string;
   type: ChatType;
   name?: string;
   description?: string;
   avatarUrl?: string;
+  /** Общая обложка чата, сохранённая на сервере. */
+  wallpaper?: { type: 'photo' | 'live' | 'stock'; value: string } | null;
   inviteLink?: string;
   isPublic: boolean;
   createdById?: string;
@@ -72,6 +81,9 @@ export interface Chat {
 }
 
 export interface ChatMember {
+  permissions?: Partial<Record<'changeInfo' | 'inviteMembers' | 'deleteMessages' | 'editMessages' | 'manageAdmins', boolean>>;
+  adminTitle?: string;
+  promotedBy?: string;
   id: string;
   chatId: string;
   userId: string;
@@ -108,17 +120,23 @@ export interface Message {
   senderId?: string;
   sender?: User;
   replyToId?: string;
+  commentReplyToId?: string;
   replyTo?: Message;
   forwardFromId?: string;
   forwardFrom?: Message;
+  /** Имя/автор исходного сообщения для отображения пересылки без загрузки исходного чата. */
+  forwardFromName?: string;
   type: MessageType;
   content?: string;
   attachments?: MessageAttachment[];
   reactions?: MessageReaction[];
+  poll?: { question: string; multiple?: boolean; options: Array<{ id: string; text: string; votes: number; voterIds?: string[] }> };
   isEdited: boolean;
   isPinned: boolean;
   isDeleted: boolean;
   readBy?: string[];
+  /** Локальный статус доставки для UI (только для temp-сообщений в outbox). */
+  status?: 'pending' | 'sending' | 'failed' | 'sent';
   createdAt: string;
   updatedAt: string;
 }

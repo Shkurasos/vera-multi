@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { creatorApi, CustomItem, CustomCategory, CustomSpec } from '../services/api';
+import { registerAccountStore } from '../services/storeSyncSimple';
 
 /**
  * Магазин экипировки кастомных предметов (созданных авторами через «Мастерскую»).
@@ -70,6 +71,8 @@ export const useCustomEquipStore = create<CustomEquipState>()(
     }
   )
 );
+
+registerAccountStore('custom-equip', useCustomEquipStore);
 
 /** Класс CSS-анимации для активного кастома данной категории (или ''). */
 export function equippedAnimClass(category: CustomCategory): string {

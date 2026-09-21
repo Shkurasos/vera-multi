@@ -26,6 +26,7 @@ import { useCustomEquipStore } from '../store/customEquipStore';
 import { useProfileDraftStore } from '../store/profileDraftStore';
 import { specToStyle } from '../utils/customStyle';
 import { buildShopRingSx } from '../utils/rarityStyles';
+import { skinColors } from '../utils/skinColors';
 import { useUserSettingsStore } from '../store/userSettingsStore';
 
 export default function ProfilePage() {
@@ -165,6 +166,7 @@ export default function ProfilePage() {
   const shopActiveRing = useShopStore((s) => s.activeRing);
   const ringItem = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === shopActiveRing);
   const ringVal = ringItem?.value as any;
+  const colorModes = useShopStore(s => s.colorModes);
   const customProfileSpec = useCustomEquipStore((s) => s.equipped.profile ? s.items[s.equipped.profile]?.spec : undefined);
 
   async function openLinkQr() {
@@ -403,12 +405,12 @@ export default function ProfilePage() {
       {/* ── Avatar section ── */}
       <Box sx={{
         display: 'flex', flexDirection: 'column', alignItems: 'center',
-        pt: 0, pb: 3, px: 2, mt: -7,
+        pt: 0, pb: 2, px: 2, mt: { xs: -5, sm: -6 },
       }}>
         <Box sx={{ position: 'relative' }}>
           {uploadingAvatar ? (
             <Box sx={{
-              width: { xs: 90, sm: 110 }, height: { xs: 90, sm: 110 }, borderRadius: '50%',
+              width: { xs: 82, sm: 100 }, height: { xs: 82, sm: 100 }, borderRadius: '50%',
               bgcolor: theme.accent + '40',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
@@ -418,15 +420,15 @@ export default function ProfilePage() {
             <Avatar
               src={user?.avatarUrl || undefined}
               sx={{
-                width: { xs: 90, sm: 110 }, 
-                height: { xs: 90, sm: 110 }, 
-                fontSize: { xs: 32, sm: 40 },
+                width: { xs: 82, sm: 100 },
+                height: { xs: 82, sm: 100 },
+                fontSize: { xs: 30, sm: 36 },
                 bgcolor: theme.accent + '80',
                 border: `4px solid ${theme.accent}`,
                 boxShadow: `0 0 24px ${theme.accent}50`,
                 ...(ringVal ? {
                   // Единый стиль обводки из магазина (с анимациями для gradient/glow/pulse/aurora).
-                  ...buildShopRingSx(ringVal, theme.accent, false, 4),
+                  ...skinColors(buildShopRingSx(ringVal, theme.accent, false, 4), ringItem, theme.accent, !!ringItem && colorModes[ringItem.id] === 'theme'),
                 } : {}),
                 ...(customProfileSpec ? (() => {
                   const st = specToStyle(customProfileSpec);
@@ -466,7 +468,7 @@ export default function ProfilePage() {
             onClick={() => { useShopStore.getState().setTab('inventory'); useShopStore.getState().setOpen(true); }}
             sx={{
               display: 'inline-flex', alignItems: 'center', gap: 1,
-              px: 1.5, py: 0.7, borderRadius: 2.5, cursor: 'pointer',
+              px: 3, py: 0.7, borderRadius: 2.5, cursor: 'pointer',
               bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
               transition: 'border-color .25s, background .25s, transform .25s',
               '&:hover': { borderColor: theme.accent + '66', transform: 'translateY(-1px)' },
@@ -487,7 +489,7 @@ export default function ProfilePage() {
           {user?.isOnline ? '● в сети' : '○ не в сети'}
         </Typography>
         {user?.id && <Box sx={{ mt: 1 }}><ActivityLine userId={user.id} /></Box>}
-        {user?.id && <ProfilePinnedPlaylistBar ownerId={user.id} pinnedPlaylistId={user.pinnedPlaylistId} />}
+        {user?.id && <ProfilePinnedPlaylistBar ownerId={user.id} pinnedPlaylistId={user.pinnedPlaylistId} pinnedTrackId={user.pinnedTrackId} />}
         {customization.showcase && (
           <Box sx={{
             mt: 2, px: 2, py: 1.5, borderRadius: 2,

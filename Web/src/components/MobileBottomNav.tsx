@@ -1,23 +1,21 @@
-import React, { useState, lazy, Suspense } from 'react';
+import React, { useEffect, useState, lazy, Suspense } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
-  Box, IconButton, Tooltip, Dialog, DialogTitle, DialogContent, DialogActions, Button, Badge,
-  useMediaQuery,
+  Box, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, Button, Badge,
 } from '@mui/material';
 import {
   Chat as ChatIcon,
-  Group,
   LibraryMusic,
   AccountCircle,
-  DevicesOther,
+  Palette,
 } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
 import { useChatStore } from '../store/chatStore';
-import { useUserSettingsStore } from '../store/userSettingsStore';
 import MusicLibrary from './MusicLibrary';
-const ThemeMarketplace = lazy(() => import('./ThemeMarketplace').then(m => ({ default: m.ThemeMarketplace })));
 
-const HEIGHT = 68;
+const ThemeEditor = lazy(() => import('./ThemeEditor').then(m => ({ default: m.ThemeEditor })));
+
+const HEIGHT = 70;
 export const MOBILE_NAV = { HEIGHT };
 
 export default function MobileBottomNav() {
@@ -25,89 +23,129 @@ export default function MobileBottomNav() {
   const location = useLocation();
   const { theme } = useThemeStore();
   const unread = useChatStore((s) => s.chats.reduce((acc, c) => acc + (c.unreadCount || 0), 0));
-  const isMobile = useMediaQuery('(max-width: 700px)');
-  const navPos = useUserSettingsStore((s) => s.layout.mobileNavPos);
   const [musicOpen, setMusicOpen] = useState(false);
-  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
+  const [themeEditorOpen, setThemeEditorOpen] = useState(false);
+  const [hiding, setHiding] = useState(false);
 
   const activePath = location.pathname;
-  const isActive = (p: string) => activePath === p;
+  const isChatSection = activePath === '/';
+  const isActive = (path: string) => activePath === path;
 
-  const item = (active: boolean, label: string, onClick: () => void, icon: React.ReactNode, badge?: React.ReactNode) => (
-    <Tooltip title={label} placement="top">
-      <Box sx={{ position: 'relative' }}>
-        <IconButton
-          onClick={onClick}
-          sx={{
-            flex: '0 0 auto',
-            width: 50, height: 50, borderRadius: 16,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: active ? '#fff' : theme.textSec,
-            bgcolor: active ? theme.accent : 'transparent',
-            boxShadow: active ? `0 8px 18px ${theme.accent}55` : 'none',
-            transition: 'transform 220ms cubic-bezier(0.34, 1.3, 0.64, 1), background 220ms ease, color 220ms ease',
-            '&:active': { transform: 'scale(0.9)' },
-          }}
-        >
-          {icon}
-        </IconButton>
-        {badge}
-      </Box>
-    </Tooltip>
+  useEffect(() => {
+    setMusicOpen(false);
+    setThemeEditorOpen(false);
+    setHiding(false);
+  }, [activePath]);
+
+  // В открытом чате нижняя навигация не должна перекрывать переписку.
+  if (activePath.startsWith('/chat/')) return null;
+
+  const hideForOpen = (callback: () => void) => {
+    setHiding(true);
+    window.setTimeout(callback, 220);
+  };
+
+  const openMusic = () => hideForOpen(() => setMusicOpen(true));
+  const closeMusic = () => {
+    setMusicOpen(false);
+    setHiding(false);
+  };
+  const openThemeEditor = () => hideForOpen(() => setThemeEditorOpen(true));
+  const openProfile = () => hideForOpen(() => navigate('/profile'));
+
+  const item = (
+    active: boolean,
+    label: string,
+    onClick: () => void,
+    icon: React.ReactNode,
+    badge?: React.ReactNode,
+  ) => (
+    <Box sx={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'center', position: 'relative' }}>
+      <IconButton
+        aria-label={label}
+        onClick={onClick}
+        sx={{
+          width: '100%', maxWidth: 76, height: 58, borderRadius: 2.5,
+          display: 'flex', flexDirection: 'column', gap: 0.25,
+          color: active ? theme.accent : theme.textSec,
+          bgcolor: active ? `${theme.accent}20` : 'transparent',
+          '&:hover': { bgcolor: `${theme.accent}18` },
+          '& .MuiSvgIcon-root': { fontSize: 25 },
+        }}
+      >
+        {icon}
+        <Box component="span" sx={{ fontSize: 10, lineHeight: 1, whiteSpace: 'nowrap' }}>{label}</Box>
+      </IconButton>
+      {badge}
+    </Box>
   );
 
-  if (!isMobile) return null;
-  // На мобильном внутри открытого чата (как в Telegram) — навигацию прячем,
-  // чтобы диалог был на весь экран; возврат — стрелкой в шапке чата.
-  if (activePath.startsWith('/chat/')) return null;
+  if (!isChatSection) {
+    return (
+      <Box sx={{ display: { xs: 'flex', md: 'none' }, position: 'fixed', left: 12, bottom: 12, zIndex: 1400 }}>
+        <Button
+          aria-label="Вернуться в чаты"
+          startIcon={<ChatIcon />}
+          onClick={() => navigate('/')}
+          sx={{
+            minWidth: 48, height: 48, px: 1.5, color: theme.text, bgcolor: theme.bgSidebar,
+            border: `1px solid ${theme.border}`, boxShadow: '0 8px 24px rgba(0,0,0,.35)',
+          }}
+        >
+          Чаты
+        </Button>
+      </Box>
+    );
+  }
 
   return (
     <>
       <Box
+        component="nav"
+        aria-label="Навигация"
         sx={{
-          position: 'fixed',
-          left: 10, right: 10,
-          ...(navPos === 'top' ? { top: 10 } : { bottom: 10 }),
-          zIndex: 1400,
-          height: HEIGHT,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-around',
-          borderRadius: 20,
-          background: 'linear-gradient(180deg, rgba(30,32,48,0.92), rgba(20,22,36,0.94))',
-          backdropFilter: 'blur(20px) saturate(1.4)',
+          display: { xs: 'flex', md: 'none' },
+          position: 'fixed', left: 8, right: 8,
+          bottom: 'max(8px, env(safe-area-inset-bottom))',
+          minHeight: HEIGHT, px: 1, py: 0.75,
+          zIndex: 1400, alignItems: 'center', justifyContent: 'space-around', gap: 0.5,
+          borderRadius: 3,
+          bgcolor: theme.bgSidebar,
+          backgroundImage: `linear-gradient(180deg, ${theme.bgSidebar}f5, ${theme.bg}f2)`,
+          backdropFilter: 'blur(22px) saturate(1.35)',
           border: `1px solid ${theme.border}`,
-          boxShadow: '0 16px 34px rgba(0,0,0,0.45), 0 4px 12px rgba(0,0,0,0.3)',
-          pb: navPos === 'bottom' ? 'env(safe-area-inset-bottom)' : 0,
-          pt: navPos === 'top' ? 'env(safe-area-inset-top)' : 0,
-          '&::before': {
-            content: '""',
-            position: 'absolute', inset: 0, borderRadius: 20, pointerEvents: 'none',
-            background: `radial-gradient(circle at 12% 0%, ${theme.accent}26 0, transparent 42%), radial-gradient(circle at 90% 100%, rgba(255,79,216,0.16) 0, transparent 40%)`,
-          },
+          boxShadow: '0 -6px 26px rgba(0,0,0,.28), 0 8px 24px rgba(0,0,0,.24)',
+          transform: hiding ? 'translateY(130%)' : 'translateY(0)',
+          opacity: hiding ? 0 : 1,
+          transition: 'transform 220ms ease, opacity 220ms ease',
         }}
       >
-        {item(isActive('/'), 'Чаты', () => navigate('/'), <ChatIcon fontSize="medium" />,
-          unread > 0 ? <Badge badgeContent={unread} color="error" sx={{ position: 'absolute', top: 2, right: 0, '& .MuiBadge-badge': { fontSize: 9, minWidth: 16, height: 16, p: 0 } }} /> : undefined)}
-        {item(isActive('/contacts'), 'Контакты', () => navigate('/contacts'), <Group fontSize="medium" />)}
-        {item(false, 'Музыка', () => setMusicOpen(true), <LibraryMusic fontSize="medium" />)}
-        {item(isActive('/profile'), 'Профиль', () => navigate('/profile'), <AccountCircle fontSize="medium" />)}
-        {item(isActive('/devices'), 'Устройства', () => navigate('/devices'), <DevicesOther fontSize="medium" />)}
+        {item(isActive('/'), 'Чаты', () => navigate('/'), <ChatIcon />, unread > 0 ? (
+          <Badge badgeContent={unread} color="primary" sx={{ position: 'absolute', top: 2, right: 'calc(50% - 32px)' }} />
+        ) : undefined)}
+        {item(musicOpen, 'Музыка', openMusic, <LibraryMusic />)}
+        {item(isActive('/profile'), 'Профиль', openProfile, <AccountCircle />)}
+        {item(themeEditorOpen, 'Темы', openThemeEditor, <Palette />)}
       </Box>
 
-      {/* Музыка и плейлисты */}
-      <Dialog open={musicOpen} onClose={() => setMusicOpen(false)} fullScreen
+      <Dialog open={musicOpen} onClose={closeMusic} fullScreen
         PaperProps={{ sx: { bgcolor: theme.bg, color: theme.text } }}>
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           Музыка и плейлисты
-          <IconButton onClick={() => setMusicOpen(false)} sx={{ color: theme.textSec }}><span style={{ fontSize: 22 }}>✕</span></IconButton>
+          <Button onClick={closeMusic} startIcon={<ChatIcon />} sx={{ color: theme.accent }}>Чаты</Button>
         </DialogTitle>
         <DialogContent sx={{ p: 0 }}><MusicLibrary /></DialogContent>
-        <DialogActions><Button onClick={() => setMusicOpen(false)} sx={{ color: theme.textSec }}>Закрыть</Button></DialogActions>
+        <DialogActions><Button onClick={closeMusic} sx={{ color: theme.textSec }}>Закрыть</Button></DialogActions>
       </Dialog>
 
-      {/* Магазин тем */}
-      <Suspense fallback={null}>{marketplaceOpen && <ThemeMarketplace onClose={() => setMarketplaceOpen(false)} />}</Suspense>
+      <Suspense fallback={null}>
+        {themeEditorOpen && (
+          <ThemeEditor
+            onClose={() => setThemeEditorOpen(false)}
+            onGoChats={() => { setThemeEditorOpen(false); navigate('/'); }}
+          />
+        )}
+      </Suspense>
     </>
   );
 }

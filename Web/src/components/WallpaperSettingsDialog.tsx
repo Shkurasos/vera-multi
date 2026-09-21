@@ -1,15 +1,16 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button, Box, Typography,
   IconButton, Alert,
 } from '@mui/material';
 import { Close, DeleteOutline, UploadFile, Videocam } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
+import { useChatStore } from '../store/chatStore';
 import {
   useChatBgPrefsStore, STOCK_WALLPAPERS,
   CUSTOM_PHOTO_WALLPAPER_ID, CUSTOM_LIVE_WALLPAPER_ID,
 } from '../store/chatBgPrefsStore';
-import { saveLiveBg, clearLiveBg, hasLiveBg } from '../services/chatLiveBgStorage';
+import { saveLiveBg, clearLiveBg, hasLiveBg, getLiveBgBlob } from '../services/chatLiveBgStorage';
 
 interface Props {
   open: boolean;
@@ -53,9 +54,22 @@ function resizeImage(rawUrl: string, maxSide = 1920): Promise<string> {
  */
 export default function WallpaperSettingsDialog({ open, onClose }: Props) {
   const theme = useThemeStore((s) => s.theme);
-  const globalStockWallpaper = useChatBgPrefsStore((s) => s.globalStockWallpaper);
-  const setGlobalStockWallpaper = useChatBgPrefsStore((s) => s.setGlobalStockWallpaper);
-  const userPhotoWallpaper = useChatBgPrefsStore((s) => s.userPhotoWallpaper);
+  const activeChatId = useChatStore((s) => s.activeChat?.id);
+  const chatId = activeChatId;
+  const scope = chatId || 'global';
+  const prefs = useChatBgPrefsStore();
+  const override = chatId ? prefs.perChatOverrides[chatId] : undefined;
+  const globalStockWallpaper = chatId
+    ? (override?.type === 'live' ? CUSTOM_LIVE_WALLPAPER_ID : override?.type === 'photo' ? CUSTOM_PHOTO_WALLPAPER_ID : override?.value || 'none')
+    : prefs.globalStockWallpaper;
+  const userPhotoWallpaper = chatId ? (override?.type === 'photo' ? override.value : null) : prefs.userPhotoWallpaper;
+  const setGlobalStockWallpaper = (value: string) => {
+    if (!chatId) { prefs.setGlobalStockWallpaper(value); return; }
+    if (value === CUSTOM_LIVE_WALLPAPER_ID) prefs.setChatWallpaper(chatId, { type: 'live', value: scope });
+    else if (value === CUSTOM_PHOTO_WALLPAPER_ID) {
+      if (userPhotoWallpaper) prefs.setChatWallpaper(chatId, { type: 'photo', value: userPhotoWallpaper });
+    } else prefs.setChatWallpaper(chatId, { type: 'stock', value });
+  };
   const userPhotoName = useChatBgPrefsStore((s) => s.userPhotoName);
   const setUserPhotoWallpaper = useChatBgPrefsStore((s) => s.setUserPhotoWallpaper);
   const clearUserPhotoWallpaper = useChatBgPrefsStore((s) => s.clearUserPhotoWallpaper);
@@ -66,6 +80,35 @@ export default function WallpaperSettingsDialog({ open, onClose }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [liveExists, setLiveExists] = useState<boolean>(() => hasLiveBg());
+  useEffect(() => { setLiveExists(hasLiveBg(scope)); setErr(null); }, [scope, open]);
+
+  const applyCurrentToGlobal = async () => {
+    if (!activeChatId || busy) return;
+    const wallpaper = prefs.perChatOverrides[activeChatId]
+      || useChatStore.getState().activeChat?.wallpaper
+      || prefs.getChatWallpaper(activeChatId);
+    setBusy(true);
+    setErr(null);
+    try {
+      if (wallpaper?.type === 'live') {
+        const blob = await getLiveBgBlob(wallpaper.value);
+        if (!blob) throw new Error('Видео этого чата не найдено. Загрузите его заново.');
+        await saveLiveBg(blob, 'global');
+        prefs.setGlobalStockWallpaper(CUSTOM_LIVE_WALLPAPER_ID);
+        bumpLiveBg();
+        setLiveExists(true);
+      } else if (wallpaper?.type === 'photo') {
+        prefs.setUserPhotoWallpaper(wallpaper.value, 'Фото чата');
+        prefs.setGlobalStockWallpaper(CUSTOM_PHOTO_WALLPAPER_ID);
+      } else {
+        prefs.setGlobalStockWallpaper(wallpaper?.value || 'none');
+      }
+    } catch (ex: any) {
+      setErr(ex?.message || 'Не удалось применить обои');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const handlePhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -80,8 +123,11 @@ export default function WallpaperSettingsDialog({ open, onClose }: Props) {
       setBusy(true);
       const raw = await readAsDataURL(file);
       const url = await resizeImage(raw, 1920);
-      setUserPhotoWallpaper(url, file.name);
-      setGlobalStockWallpaper(CUSTOM_PHOTO_WALLPAPER_ID);
+      if (chatId) prefs.setChatWallpaper(chatId, { type: 'photo', value: url });
+      else {
+        setUserPhotoWallpaper(url, file.name);
+        setGlobalStockWallpaper(CUSTOM_PHOTO_WALLPAPER_ID);
+      }
     } catch (ex: any) {
       setErr(ex?.message || 'Не удалось загрузить фото');
     } finally {
@@ -100,7 +146,7 @@ export default function WallpaperSettingsDialog({ open, onClose }: Props) {
     }
     try {
       setBusy(true);
-      await saveLiveBg(file);
+      await saveLiveBg(file, scope);
       setLiveExists(true);
       setGlobalStockWallpaper(CUSTOM_LIVE_WALLPAPER_ID);
       bumpLiveBg(); // заставит открытые чаты перезагрузить видео
@@ -112,14 +158,14 @@ export default function WallpaperSettingsDialog({ open, onClose }: Props) {
   };
 
   const handleRemoveLive = async () => {
-    await clearLiveBg();
+    await clearLiveBg(scope);
     setLiveExists(false);
     if (globalStockWallpaper === CUSTOM_LIVE_WALLPAPER_ID) setGlobalStockWallpaper('none');
     bumpLiveBg();
   };
 
   const handleRemovePhoto = () => {
-    clearUserPhotoWallpaper();
+    if (!chatId) clearUserPhotoWallpaper();
     if (globalStockWallpaper === CUSTOM_PHOTO_WALLPAPER_ID) setGlobalStockWallpaper('none');
   };
 return (
@@ -147,15 +193,21 @@ return (
           pb: 2,
         }}
       >
-        🖼️ Глобальные обои для всех чатов
+        {chatId ? '🖼️ Обои этого чата' : '🖼️ Обои для всех чатов'}
         <IconButton onClick={onClose} size="small" sx={{ color: theme.textSec }}>
           <Close />
         </IconButton>
       </DialogTitle>
       <DialogContent sx={{ pb: 2 }}>
         <Typography sx={{ color: theme.textSec, fontSize: 13, mb: 2 }}>
-          Выберите обои, которые будут применяться ко всем чатам по умолчанию.
-          В конкретном чате можно установить свои обои через меню «⋮».
+          {chatId ? 'Фото, видео и стандартные обои сохраняются только для открытого чата.' : 'Общий фон для чатов без индивидуальных обоев. Чтобы настроить один чат, откройте его.'}
+        </Typography>
+        {activeChatId && <Button disabled={busy} onClick={() => void applyCurrentToGlobal()} sx={{ mb: 2 }}>
+          Сделать обои этого чата общими
+        </Button>}
+        <Typography sx={{ color: theme.textSec, fontSize: 12, mb: 2 }}>
+          Выберите обои ниже — они сохранятся сразу.
+          Общий фон используется в чатах без индивидуальных обоев.
         </Typography>
 
         {/* Скрытые input'ы для загрузки файлов */}

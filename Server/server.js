@@ -6,6 +6,7 @@
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const net = require('net');
 
 // SEC: подгружаем Server/.env локально, чтобы не таскать секреты в PowerShell.
 // В проде (Render) переменные приходят из панели — dotenv их не перезаписывает.
@@ -31,6 +32,7 @@ const multer = require(tryResolve('multer'));
 const { v4: uuidv4 } = require(tryResolve('uuid'));
 const cookieParser = require(tryResolve('cookie-parser'));
 const crypto = require('crypto');
+const moderation = require('./moderation');
 
 // ─── paths ────────────────────────────────────────────────────────────────────
 // В проде (Fly/Render) монтируем persistent-volume, путь передаём через env.
@@ -38,6 +40,9 @@ const crypto = require('crypto');
 const DATA_DIR    = process.env.DATA_DIR    || path.join(__dirname, 'data');
 const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
 const DB_FILE     = process.env.DB_FILE     || path.join(DATA_DIR, 'vera.json');
+const OLLAMA_URL = String(process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/+$/, '');
+const OLLAMA_MODEL = String(process.env.OLLAMA_MODEL || 'llama3.2').trim();
+const LLM_SYSTEM_PROMPT = 'Ты локальный русскоязычный ассистент Vera для администратора. Всегда отвечай на русском языке, если пользователь явно не попросил другой язык. Пиши содержательно и не возвращай пустой ответ. Не причиняй вред людям, системам или данным; не помогай с опасными или незаконными действиями. Защищай приватность, не запрашивай и не раскрывай секреты. Будь честен о неопределённости и опирайся на проверяемые знания. Если запрос опасен, откажись и предложи безопасную альтернативу.';
 // SEC: JWT_SECRET обязателен в проде. В деве генерируем эфемерный (токены не переживут рестарт).
 const IS_PROD = process.env.NODE_ENV === 'production';
 const JWT_SECRET = (() => {
@@ -71,16 +76,47 @@ for (const d of [DATA_DIR, UPLOADS_DIR,
 }
 
 // ─── JSON Database ────────────────────────────────────────────────────────────
-let db = { users: [], chats: [], messages: [], tracks: [], chatMembers: [], playlists: [], favorites: [], devices: [], linkInvites: [], callLogs: [], bots: [], aiModels: [], aiSessions: [], walletOrders: [], refreshTokens: [] };
+let db = { users: [], chats: [], messages: [], tracks: [], chatMembers: [], playlists: [], favorites: [], devices: [], linkInvites: [], callLogs: [], bots: [], aiModels: [], aiSessions: [], walletOrders: [], refreshTokens: [], ipBans: [], moderationBans: [], moderationWarnings: [], deletedMessages: [], reports: [], moderationIps: {} };
 if (fs.existsSync(DB_FILE)) {
   try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch {}
 }
 if (!Array.isArray(db.refreshTokens)) db.refreshTokens = [];
+if (!Array.isArray(db.ipBans)) db.ipBans = [];
+if (!Array.isArray(db.moderationBans)) db.moderationBans = [];
+if (!Array.isArray(db.moderationWarnings)) db.moderationWarnings = [];
+if (!Array.isArray(db.deletedMessages)) db.deletedMessages = [];
+if (!Array.isArray(db.reports)) db.reports = [];
+if (!db.moderationIps || typeof db.moderationIps !== 'object' || Array.isArray(db.moderationIps)) db.moderationIps = {};
 if (!Array.isArray(db.customItems)) db.customItems = [];
 if (!db.creatorProfiles || typeof db.creatorProfiles !== 'object') db.creatorProfiles = {};
 if (typeof db.platformRevenueVp !== 'number') db.platformRevenueVp = 0;
 if (!Array.isArray(db.admins)) db.admins = [];
 if (!db.userStores || typeof db.userStores !== 'object') db.userStores = {};
+if (!Array.isArray(db.marketListings)) db.marketListings = [];
+if (Number(db.marketplaceMigrationVersion || 0) < 1) {
+  // The previous local test marketplace created zero-price listings and free
+  // case counters. Preserve opened packs and owned cosmetics, but remove the
+  // test-only inventory/listing state before the real marketplace is enabled.
+  for (const userStores of Object.values(db.userStores)) {
+    const loot = userStores?.loot?.data;
+    if (loot && typeof loot === 'object') {
+      loot.cases = 0;
+      loot.caseCounts = {};
+    }
+    const shop = userStores?.shop?.data;
+    if (shop && typeof shop === 'object' && Array.isArray(shop.marketListings)) {
+      for (const listing of shop.marketListings) {
+        if (listing?.itemId && shop.owned && shop.owned[listing.itemId] === false) {
+          shop.owned[listing.itemId] = true;
+        }
+      }
+      shop.marketListings = [];
+    }
+  }
+  db.marketListings = [];
+  db.marketplaceMigrationVersion = 1;
+  saveDb();
+}
 
 // При старте сервера все пользователи офлайн (сбрасываем stale-статус)
 if (db.users) {
@@ -88,7 +124,9 @@ if (db.users) {
 }
 
 function saveDb() {
-  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+  const temporary = DB_FILE + '.tmp';
+  fs.writeFileSync(temporary, JSON.stringify(db, null, 2));
+  fs.renameSync(temporary, DB_FILE);
 }
 
 function reloadDb() {
@@ -108,6 +146,12 @@ function reloadDb() {
       if (!db.bots) db.bots = [];
       if (!db.aiModels) db.aiModels = [];
       if (!db.aiSessions) db.aiSessions = [];
+      if (!Array.isArray(db.ipBans)) db.ipBans = [];
+      if (!Array.isArray(db.moderationBans)) db.moderationBans = [];
+      if (!Array.isArray(db.moderationWarnings)) db.moderationWarnings = [];
+      if (!Array.isArray(db.deletedMessages)) db.deletedMessages = [];
+      if (!Array.isArray(db.reports)) db.reports = [];
+      if (!db.moderationIps || typeof db.moderationIps !== 'object' || Array.isArray(db.moderationIps)) db.moderationIps = {};
       normalizeAllUsers();
       console.log('[DB] Reloaded from disk. Users:', db.users.length, 'Tracks:', db.tracks.length);
     } catch (e) { console.error('[DB] Reload failed:', e.message); }
@@ -149,6 +193,36 @@ function clientIp(req) {
   if (ip.startsWith('::ffff:')) ip = ip.slice(7);
   return ip;
 }
+function normalizeIp(raw) {
+  let ip = String(raw || '').trim();
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  return net.isIP(ip) ? ip : '';
+}
+function requestIp(req) {
+  return normalizeIp(clientIp(req)) || normalizeIp(req.socket?.remoteAddress) || '';
+}
+function recordModerationIp(userId, ip) {
+  const normalized = normalizeIp(ip);
+  if (!userId || !normalized) return false;
+  db.moderationIps ||= {};
+  const ips = db.moderationIps[userId] ||= [];
+  if (ips.includes(normalized)) return false;
+  ips.push(normalized);
+  if (ips.length > 20) ips.splice(0, ips.length - 20);
+  return true;
+}
+function isIpBanned(ip) {
+  const normalized = normalizeIp(ip);
+  if (!normalized) return false;
+  const now = Date.now();
+  const active = (db.ipBans || []).filter(ban => !ban.expiresAt || Number(ban.expiresAt) > now);
+  if (active.length !== (db.ipBans || []).length) {
+    db.ipBans = active;
+    saveDb();
+  }
+  return active.some((ban) => normalizeIp(ban.ip) === normalized);
+}
+
 function isDevIp(req) {
   if (!DEV_IPS.length) return false;
   const ip = clientIp(req);
@@ -167,7 +241,7 @@ function withDevFlag(req, user) {
 // (редактируется через консоль сервера командой `admin add/del`). Регистр
 // не важен, символ '@' в начале игнорируется.
 const ADMIN_ENV = (() => {
-  const raw = String(process.env.ADMIN_USERNAMES || 'admin1,admin2,admin3');
+  const raw = String(process.env.ADMIN_USERNAMES || 'Vera_koto_a,Vera_koto_b');
   return raw.split(',').map(s => s.trim().replace(/^@+/, '').toLowerCase()).filter(Boolean);
 })();
 function normAdminName(v) { return String(v || '').trim().replace(/^@+/, '').toLowerCase(); }
@@ -204,13 +278,61 @@ function normalizeDeviceId(raw) {
   return s.slice(0, 160) || ('device-' + uuidv4());
 }
 
+// Public device IDs are labels, never credentials. The installation secret
+// survives logout and is sent only in an HttpOnly cookie.
+function moderationBanActive(ban) {
+  return !!ban && (!ban.expiresAt || Number(ban.expiresAt) > Date.now());
+}
+
+// Kept local instead of calling the moderation module from this bootstrap
+// section: device-link.test.js evaluates this section in isolation.
+function moderationBlocked(db, userId, deviceId, hash) {
+  return (db.moderationBans || []).some(ban => moderationBanActive(ban) && (
+    (ban.kind === 'account' && ban.userId === userId) ||
+    (ban.kind === 'device' && ((deviceId && ban.deviceId === deviceId) || (hash && ban.hash === hash)))
+  ));
+}
+
+function resolveInstallation(req, res, allowRevoked = false) {
+  const secret = req.cookies?.vera_installation;
+  if (typeof secret === 'string' && /^[a-f0-9]{64}$/.test(secret)) {
+    const hash = crypto.createHash('sha256').update(secret).digest('hex');
+    const device = (db.devices || []).find(d => d.installationHash === hash);
+    if (moderationBlocked(db, device?.userId, device?.deviceId, hash)) {
+      res.status(403).json({ message: 'Доступ заблокирован', code: 'ACCOUNT_BANNED' }); return null;
+    }
+    if (device) {
+      if (device.revoked && !allowRevoked) { res.status(403).json({ message: 'Устройство отвязано. Создайте новую ссылку привязки на основном устройстве.' }); return null; }
+      return { deviceId: device.deviceId, hash };
+    }
+  }
+  const rawId = req.body?.deviceId;
+  if (typeof rawId !== 'string' || !rawId.trim() || rawId.length > 160) {
+    res.status(400).json({ message: 'Некорректный идентификатор устройства' }); return null;
+  }
+  const deviceId = normalizeDeviceId(rawId);
+  if (moderationBlocked(db, null, deviceId)) { res.status(403).json({ message: 'Устройство заблокировано' }); return null; }
+  const existing = (db.devices || []).find(d => d.deviceId === deviceId);
+  if (existing) {
+    let identity;
+    try { identity = verifyAccessToken(String(req.headers.authorization || '').replace(/^Bearer /, '')); } catch {}
+    if (existing.installationHash || existing.revoked || identity?.deviceId !== deviceId || identity?.userId !== existing.userId) {
+      res.status(403).json({ message: 'Не удалось подтвердить устройство. Используйте сохранённую сессию или новое приглашение.' }); return null;
+    }
+  }
+  const raw = crypto.randomBytes(32).toString('hex');
+  const hash = crypto.createHash('sha256').update(raw).digest('hex');
+  res.cookie('vera_installation', raw, { httpOnly: true, sameSite: 'lax', secure: req.secure || req.headers['x-forwarded-proto'] === 'https', path: '/', maxAge: 400 * 24 * 60 * 60 * 1000 });
+  return { deviceId, hash };
+}
+
 function getDeviceForUser(userId, deviceId) {
   if (!deviceId) return null;
   return (db.devices || []).find(d => d.userId === userId && d.deviceId === deviceId);
 }
 
 function countUserDevices(userId) {
-  return (db.devices || []).filter(d => d.userId === userId).length;
+  return (db.devices || []).filter(d => d.userId === userId && !d.revoked).length;
 }
 
 // Регистрирует устройство входа. Возвращает { ok, device, message }
@@ -261,6 +383,9 @@ function acceptLinkInviteOnServer(invite, newDeviceId, newDeviceName) {
   const cleanId = normalizeDeviceId(newDeviceId);
   const ownerId = invite.userId;
 
+  const sameDevice = getDeviceForUser(ownerId, cleanId);
+  if (sameDevice && !sameDevice.revoked) return { ok: false, message: 'Это устройство уже входит в этот аккаунт. Откройте ссылку на новом устройстве.' };
+
   const other = (db.devices || []).find(d => d.deviceId === cleanId && d.userId !== ownerId);
   if (other) return { ok: false, message: 'Это устройство уже привязано к другому аккаунту.' };
   const count = countUserDevices(ownerId);
@@ -271,6 +396,7 @@ function acceptLinkInviteOnServer(invite, newDeviceId, newDeviceName) {
   const device = {
     id: uuidv4(),
     userId: ownerId,
+    tokenVersion: Number(sameDevice?.tokenVersion || 0) + 1,
     deviceId: cleanId,
     name: (newDeviceName || 'Второе устройство').slice(0, 80),
     isPrimary: count === 0,
@@ -278,6 +404,7 @@ function acceptLinkInviteOnServer(invite, newDeviceId, newDeviceName) {
     createdAt: new Date().toISOString(),
     lastSeenAt: Date.now(),
   };
+  db.devices = db.devices.filter(d => !(d.deviceId === cleanId && d.revoked));
   (db.devices || (db.devices = [])).push(device);
   // Инвайт одноразовый
   db.linkInvites = (db.linkInvites || []).filter(i => i.id !== invite.id);
@@ -315,15 +442,55 @@ try {
   console.warn('[SEC] helmet не установлен — пропускаю security-заголовки. Запустите: npm i helmet (в Server/).');
 }
 // SEC: за прокси Render/Fly — доверяем ровно одному хопу, чтобы req.ip был реальным (для rate-limit).
-app.set('trust proxy', 1);
+// Only trust explicitly configured proxy addresses/subnets, never arbitrary XFF.
+app.set('trust proxy', process.env.TRUST_PROXY ? process.env.TRUST_PROXY.split(',').map(s => s.trim()).filter(Boolean) : false);
 const server = http.createServer(app);
+// SEC/DoS: не держим соединения бесконечно и не позволяем slowloris-запросам
+// занимать worker. Более строгие лимиты для тяжёлых маршрутов задаются ниже.
+server.requestTimeout = Number(process.env.HTTP_REQUEST_TIMEOUT_MS || 120000);
+server.headersTimeout = Number(process.env.HTTP_HEADERS_TIMEOUT_MS || 15000);
+server.keepAliveTimeout = Number(process.env.HTTP_KEEPALIVE_TIMEOUT_MS || 5000);
+server.maxRequestsPerSocket = Number(process.env.HTTP_MAX_REQUESTS_PER_SOCKET || 100);
 
 app.use(cors({ origin: corsOriginFn, credentials: true }));
 app.use(cookieParser());
+// PERF: gzip-сжатие всех ответов. Особенно ускоряет JSON API (список сообщений,
+// синхронизация store), а также раздачу собранного клиента через тот же порт.
+try {
+  const compression = require(tryResolve('compression'));
+  app.use(compression({
+    threshold: 1024,
+    // Не жмём то, что уже сжато (jpeg/png/webp/mp3/mp4/webm/ogg — /uploads).
+    filter: (req, res) => {
+      const type = String(res.getHeader('Content-Type') || '');
+      if (/^(image|audio|video)\//.test(type)) return false;
+      return compression.filter(req, res);
+    },
+  }));
+} catch {
+  console.warn('[PERF] compression не установлен — npm i compression (в Server/).');
+}
 // SEC: лимит тела. Не '1mb', потому что голосовые/файлы отправляются как base64
 // через /api/messages/:chatId/send (data URL). 30mb покрывает длинные ГС и фото.
-app.use(express.json({ limit: '30mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
-app.use(express.urlencoded({ extended: true, limit: '30mb' }));
+// Reject floods before allocating/parsing request bodies (including GET floods).
+app.use(makeRateLimit({ windowMs: 60_000, max: 600 }));
+// Fail closed: synchronous ZIP extraction and external downloaders are not
+// safe public workloads. Enable only after isolating them in a bounded worker.
+app.use(['/api/music/import-zip', '/api/music/import-url'], (_req, res) => {
+  res.status(503).json({ message: 'Импорт временно отключён для защиты сервера' });
+});
+
+// SEC/DoS: Content-Length проверяется до выполнения тяжёлых обработчиков.
+// Chunked-запросы дополнительно ограничиваются parser'ом выше.
+app.use((req, res, next) => {
+  const length = Number(req.headers['content-length']);
+  if (!req.is('multipart/form-data') && Number.isFinite(length) && length > 30 * 1024 * 1024) {
+    return res.status(413).json({ message: 'Тело запроса слишком большое' });
+  }
+  next();
+});
+app.use(express.json({ limit: '30mb', inflate: false, verify: (req, _res, buf) => { req.rawBody = buf; } }));
+app.use(express.urlencoded({ extended: false, limit: '64kb', parameterLimit: 100, inflate: false }));
 
 // SEC: базовые security headers (без внешней зависимости).
 app.use((req, res, next) => {
@@ -334,6 +501,15 @@ app.use((req, res, next) => {
   res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(self), camera=(self)');
   // Кэш API-ответов не хотим — токены/данные пользователей.
   if (req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
+  next();
+});
+
+// SEC: IP-баны проверяются до rate-limit и всех API-маршрутов, включая вход.
+app.use((req, res, next) => {
+  const ip = requestIp(req);
+  if (ip && isIpBanned(ip)) {
+    return res.status(403).json({ message: 'Доступ с этого IP запрещён', code: 'IP_BANNED' });
+  }
   next();
 });
 
@@ -349,6 +525,12 @@ function makeRateLimit({ windowMs, max, key = (req) => req.ip }) {
     const k = key(req);
     const now = Date.now();
     let rec = hits.get(k);
+    // Bound limiter memory even during a distributed flood; never evict live
+    // counters (eviction would allow an attacker to reset their own quota).
+    if (!rec && hits.size >= 10000) {
+      res.setHeader('Retry-After', Math.ceil(windowMs / 1000));
+      return res.status(503).json({ message: 'Сервер перегружен, попробуйте позже' });
+    }
     if (!rec || rec.reset < now) rec = { count: 0, reset: now + windowMs };
     rec.count++;
     hits.set(k, rec);
@@ -381,6 +563,7 @@ app.use(['/api/auth/device', '/api/auth/verify', '/api/auth/send-code', '/api/au
 app.use('/api/users/search', searchLimiter);
 app.use(['/api/messages'], messageLimiter);
 app.use(['/api/files', '/api/users/avatar', '/api/users/me/avatar', '/api/music', '/api/ai/models'], uploadLimiter);
+// ZIP/yt-dlp требуют много RAM, CPU, диска и сетевого трафика.
 // Общий лимитер на все mutating API (fallback).
 app.use((req, res, next) => {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
@@ -390,16 +573,22 @@ app.use((req, res, next) => {
 
 // SEC: /uploads раздаём как attachment + nosniff, чтобы залитый .html/.svg не исполнялся в нашем домене.
 app.use('/uploads', express.static(UPLOADS_DIR, {
+  maxAge: '30d',
+  immutable: true,
+  etag: true,
+  lastModified: true,
   setHeaders: (res, filePath) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    // PERF: файлы в /uploads именуются с уникальным хэшем/timestamp и не
+    // меняются — кэшируем агрессивно на 30 дней. Это резко сокращает объём
+    // трафика (аватарки/фото при повторных заходах не тянутся заново).
+    res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
     const lower = filePath.toLowerCase();
-    // Медиа отдаём inline (нужно для <img>/<audio>/<video>), остальное — attachment.
     const inlineOk = /\.(png|jpe?g|gif|webp|svg|mp3|ogg|wav|m4a|mp4|webm|mov)$/i.test(lower);
     if (!inlineOk) {
       res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
     }
-    // SVG рендерит скрипты в браузере — отдаём как текст.
     if (lower.endsWith('.svg')) res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
   },
 }));
@@ -489,11 +678,13 @@ function verifyAccessToken(token) {
   const payload = jwt.verify(token, JWT_SECRET);
   const user = db.users.find(u => u.id === payload.sub);
   if (!user) throw new Error('user_gone');
+  if (moderation.blocked(db, user.id, payload.deviceId)) throw new Error('ACCOUNT_BANNED');
   const tv = Number(user.tokenVersion || 0);
   if (Number(payload.tv || 0) !== tv) throw new Error('token_revoked');
   if (payload.deviceId) {
     const dev = (db.devices || []).find(d => d.userId === user.id && d.deviceId === payload.deviceId);
-    if (!dev) throw new Error('device_revoked');
+    if (!dev || dev.revoked) throw new Error('device_revoked');
+    if (Number(payload.dv || 0) !== Number(dev.tokenVersion || 0)) throw new Error('device_session_revoked');
   }
   return { userId: user.id, deviceId: payload.deviceId || null };
 }
@@ -507,6 +698,7 @@ function authMiddleware(req, res, next) {
     const { userId, deviceId } = verifyAccessToken(auth.slice(7));
     req.userId = userId;
     req.deviceId = deviceId;
+    if (recordModerationIp(userId, requestIp(req))) saveDb();
     next();
   } catch (e) {
     res.status(401).json({ message: 'Invalid token', reason: e.message });
@@ -519,7 +711,7 @@ function authMiddleware(req, res, next) {
 function issueAccessToken(user, deviceId) {
   if (typeof user.tokenVersion !== 'number') user.tokenVersion = 0;
   return jwt.sign(
-    { sub: user.id, deviceId: deviceId || null, tv: user.tokenVersion },
+    { sub: user.id, deviceId: deviceId || null, tv: user.tokenVersion, dv: Number(getDeviceForUser(user.id, deviceId)?.tokenVersion || 0) },
     JWT_SECRET,
     { expiresIn: '15m' },
   );
@@ -631,6 +823,7 @@ app.post('/api/auth/refresh', csrfCheck, (req, res) => {
     return res.status(401).json({ message: 'Refresh reuse detected', reason: 'reuse' });
   }
   const user = db.users.find(u => u.id === rec.userId);
+  if (moderation.blocked(db, rec.userId, rec.deviceId)) return res.status(403).json({ message: 'Доступ заблокирован', code: 'ACCOUNT_BANNED' });
   if (!user) {
     clearAuthCookies(res);
     return res.status(401).json({ message: 'User not found', reason: 'user_gone' });
@@ -638,7 +831,7 @@ app.post('/api/auth/refresh', csrfCheck, (req, res) => {
   // Устройство должно оставаться привязанным.
   if (rec.deviceId) {
     const dev = (db.devices || []).find(d => d.userId === user.id && d.deviceId === rec.deviceId);
-    if (!dev) {
+    if (!dev || dev.revoked) {
       revokeFamily(rec.familyId, 'device_revoked');
       saveDb();
       clearAuthCookies(res);
@@ -709,31 +902,38 @@ function handleUploadError(err, req, res, next) {
 // (сам первый или добавлен по QR через /devices/link/accept) — возвращаем токен.
 // Если нет — создаём новый аккаунт и делаем это устройство primary.
 app.post('/api/auth/device', (req, res) => {
+  const installation = resolveInstallation(req, res);
+  if (!installation) return;
   const rawDeviceId = req.body?.deviceId;
   const deviceName = (req.body?.deviceName || '').toString().slice(0, 80) || 'Моё устройство';
   if (!rawDeviceId || typeof rawDeviceId !== 'string') {
     return res.status(400).json({ message: 'deviceId обязателен' });
   }
-  const deviceId = normalizeDeviceId(rawDeviceId);
+  const deviceId = installation.deviceId;
 
   // 1) Устройство уже привязано (первое или добавленное по QR) — вход.
   const existingDevice = (db.devices || []).find(d => d.deviceId === deviceId);
   if (existingDevice) {
+    existingDevice.installationHash = installation.hash;
     const user = db.users.find(u => u.id === existingDevice.userId);
     if (!user) return res.status(500).json({ message: 'Аккаунт не найден для устройства' });
     existingDevice.lastSeenAt = Date.now();
     if (deviceName) existingDevice.name = deviceName;
     user.isOnline = true;
     user.lastSeen = new Date().toISOString();
+    recordModerationIp(user.id, requestIp(req));
     saveDb();
     const accessToken = issueAccessToken(user, deviceId);
     const { raw: refreshRaw } = issueRefreshToken(user, deviceId);
     saveDb();
     const csrfToken = setAuthCookies(res, refreshRaw);
-    return res.json({ accessToken, csrfToken, user: withDevFlag(req, user), isNewUser: false });
+    return res.json({ accessToken, csrfToken, deviceId, user: withDevFlag(req, user), isNewUser: false });
   }
 
   // 2) Новое устройство — создаём аккаунт, устройство помечаем primary.
+  if (req.body?.createAccount !== true) {
+    return res.status(409).json({ message: 'Откройте ссылку привязки или создайте новый аккаунт.', reason: 'unregistered_device' });
+  }
   const shortId = deviceId.replace(/[^a-z0-9]/gi, '').slice(-8) || Date.now().toString(36);
   // Гарантируем уникальность username: если base занят — добавляем суффикс.
   const baseName = 'user_' + shortId;
@@ -770,6 +970,7 @@ app.post('/api/auth/device', (req, res) => {
   });
 
   const dev = registerDevice(user.id, deviceId, deviceName);
+  if (dev.ok) dev.device.installationHash = installation.hash;
   if (!dev.ok) {
     // Не должно случаться (счётчик 0), но на всякий случай откатим создание.
     db.users = db.users.filter(u => u.id !== user.id);
@@ -777,12 +978,13 @@ app.post('/api/auth/device', (req, res) => {
     db.chatMembers = db.chatMembers.filter(m => m.chatId !== savedChat.id);
     return res.status(500).json({ message: dev.message || 'Не удалось создать устройство' });
   }
+  recordModerationIp(user.id, requestIp(req));
   saveDb();
   const accessToken = issueAccessToken(user, deviceId);
   const { raw: refreshRaw } = issueRefreshToken(user, deviceId);
   saveDb();
   const csrfToken = setAuthCookies(res, refreshRaw);
-  res.json({ accessToken, csrfToken, user: withDevFlag(req, user), isNewUser: true });
+  res.json({ accessToken, csrfToken, deviceId, user: withDevFlag(req, user), isNewUser: true });
 });
 
 // ─── Устаревшие маршруты удалены: /auth/request-code, /auth/verify,
@@ -1053,7 +1255,173 @@ app.post('/api/admin/grant', (req, res) => {
   res.json({ ok: true, admins: db.admins, env: ADMIN_ENV });
 });
 
+function adminRequest(req) {
+  const me = db.users.find(u => u.id === req.userId);
+  return me && isAdminUser(req, me);
+}
+
+function disconnectBannedIp(ip) {
+  const normalized = normalizeIp(ip);
+  if (!normalized || !io?.sockets?.sockets) return;
+  for (const socket of io.sockets.sockets.values()) {
+    if (normalizeIp(socket.ip) === normalized) socket.disconnect(true);
+  }
+}
+
+function removeUploadFiles() {
+  const preserved = new Set();
+  for (const message of db.deletedMessages || []) {
+    for (const attachment of message.attachments || []) {
+      const rawUrl = String(attachment?.fileUrl || attachment?.url || '');
+      if (!rawUrl.startsWith('/uploads/')) continue;
+      const relative = rawUrl.slice('/uploads/'.length).split(/[?#]/, 1)[0];
+      if (!relative || relative.includes('..')) continue;
+      const normalized = path.normalize(relative);
+      if (/^(music|avatars|files)[\\/][^\\/]+$/.test(normalized)) preserved.add(normalized);
+    }
+  }
+  let removed = 0;
+  const removeTree = (directory, relative = '') => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const childRelative = path.normalize(path.join(relative, entry.name));
+      const target = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        removeTree(target, childRelative);
+        try { if (!fs.readdirSync(target).length) { fs.rmdirSync(target); removed += 1; } } catch {}
+      } else if (!preserved.has(childRelative)) {
+        fs.rmSync(target, { force: true });
+        removed += 1;
+      }
+    }
+  };
+  removeTree(UPLOADS_DIR);
+  for (const entry of fs.readdirSync(UPLOADS_DIR, { withFileTypes: true })) {
+    if (entry.isDirectory() && !['music', 'avatars', 'files'].includes(entry.name)) {
+      try { fs.rmSync(path.join(UPLOADS_DIR, entry.name), { recursive: true, force: true }); removed += 1; } catch {}
+    }
+  }
+  for (const dir of ['music', 'avatars', 'files']) fs.mkdirSync(path.join(UPLOADS_DIR, dir), { recursive: true });
+  return removed;
+}
+
+function requirePurgeConfirmation(req, value) {
+  return String(req.body?.confirmation || '') === value;
+}
+
+// Destructive admin actions require an exact confirmation phrase from the UI/API.
+app.post('/api/admin/delete-all-chats', authMiddleware, (req, res) => {
+  if (!adminRequest(req)) return res.status(403).json({ message: 'Forbidden' });
+  if (!requirePurgeConfirmation(req, 'DELETE_ALL_CHATS')) {
+    return res.status(400).json({ message: 'Введите DELETE_ALL_CHATS для подтверждения' });
+  }
+  const counts = { chats: db.chats.length, messages: db.messages.length, members: db.chatMembers.length };
+  moderation.archive(db, db.messages, req.userId, { uploadsDir: UPLOADS_DIR });
+  db.chats = [];
+  db.messages = [];
+  db.chatMembers = [];
+  db.favorites = [];
+  db.callLogs = [];
+  saveDb();
+  io?.emit('admin:data-cleared', { type: 'chats' });
+  res.json({ ok: true, counts });
+});
+
+app.post('/api/admin/delete-all-users', authMiddleware, (req, res) => {
+  if (!adminRequest(req)) return res.status(403).json({ message: 'Forbidden' });
+  if (!requirePurgeConfirmation(req, 'DELETE_ALL_USERS')) {
+    return res.status(400).json({ message: 'Введите DELETE_ALL_USERS для подтверждения' });
+  }
+  const adminId = req.userId;
+  const keepUser = db.users.find(u => u.id === adminId);
+  const removedUserIds = new Set(db.users.filter(u => u.id !== adminId).map(u => u.id));
+  const counts = { users: removedUserIds.size, chats: db.chats.length, messages: db.messages.length };
+  moderation.archive(db, db.messages, adminId, { uploadsDir: UPLOADS_DIR });
+  db.users = keepUser ? [keepUser] : [];
+  db.chats = [];
+  db.messages = [];
+  db.chatMembers = [];
+  db.tracks = [];
+  db.playlists = [];
+  db.favorites = [];
+  db.devices = keepUser ? db.devices.filter(d => d.userId === adminId) : [];
+  db.linkInvites = [];
+  db.callLogs = [];
+  db.bots = [];
+  db.aiModels = [];
+  db.aiSessions = [];
+  db.walletOrders = [];
+  db.refreshTokens = keepUser ? db.refreshTokens.filter(t => t.userId === adminId) : [];
+  db.customItems = [];
+  db.creatorProfiles = {};
+  db.userStores = keepUser && db.userStores?.[adminId] ? { [adminId]: db.userStores[adminId] } : {};
+  db.userSettings = keepUser && db.userSettings?.[adminId] ? { [adminId]: db.userSettings[adminId] } : {};
+  const removedFiles = removeUploadFiles();
+  saveDb();
+  for (const [userId, sockets] of userSockets.entries()) {
+    if (userId !== adminId) sockets.forEach(socketId => io.sockets.sockets.get(socketId)?.disconnect(true));
+  }
+  res.json({ ok: true, counts: { ...counts, files: removedFiles } });
+});
+
+// IP-ban management. `expiresInMinutes` omitted/0 means permanent.
+app.get('/api/admin/ip-bans', authMiddleware, (req, res) => {
+  if (!adminRequest(req)) return res.status(403).json({ message: 'Forbidden' });
+  const now = Date.now();
+  db.ipBans = (db.ipBans || []).filter(b => !b.expiresAt || Number(b.expiresAt) > now);
+  saveDb();
+  res.json({ bans: db.ipBans });
+});
+
+app.post('/api/admin/ip-bans', authMiddleware, (req, res) => {
+  if (!adminRequest(req)) return res.status(403).json({ message: 'Forbidden' });
+  const ip = normalizeIp(req.body?.ip);
+  if (!ip) return res.status(400).json({ message: 'Укажите корректный IPv4 или IPv6 адрес' });
+  if (ip === requestIp(req)) return res.status(400).json({ message: 'Нельзя заблокировать текущий IP' });
+  const minutes = Number(req.body?.expiresInMinutes || 0);
+  if (!Number.isFinite(minutes) || minutes < 0 || minutes > 525600) {
+    return res.status(400).json({ message: 'Срок должен быть от 0 до 525600 минут' });
+  }
+  const ban = {
+    ip,
+    reason: String(req.body?.reason || '').trim().slice(0, 300) || null,
+    createdAt: new Date().toISOString(),
+    createdBy: req.userId,
+    expiresAt: minutes ? Date.now() + minutes * 60 * 1000 : null,
+  };
+  db.ipBans = (db.ipBans || []).filter(b => normalizeIp(b.ip) !== ip);
+  db.ipBans.push(ban);
+  saveDb();
+  disconnectBannedIp(ip);
+  res.json({ ok: true, ban });
+});
+
+app.delete('/api/admin/ip-bans/:ip', authMiddleware, (req, res) => {
+  if (!adminRequest(req)) return res.status(403).json({ message: 'Forbidden' });
+  const ip = normalizeIp(req.params.ip);
+  if (!ip) return res.status(400).json({ message: 'Некорректный IP' });
+  const before = (db.ipBans || []).length;
+  db.ipBans = (db.ipBans || []).filter(b => normalizeIp(b.ip) !== ip);
+  saveDb();
+  res.json({ ok: true, removed: before !== db.ipBans.length });
+});
+
 // ─── USERS routes ─────────────────────────────────────────────────────────────
+moderation.install({ app, getDb: () => db, saveDb, auth: authMiddleware,
+  isAdmin: req => isAdminUser(req, db.users.find(u => u.id === req.userId)), isAdminUsername, requestIp,
+  notify: (from, to, text, reportId) => {
+    const chat = ensureDirectChat(from, to);
+    const message = { id: uuidv4(), chatId: chat.id, senderId: from, text, content: text,
+      type: 'system', moderationReportId: reportId || null, readBy: [], attachments: [], createdAt: new Date().toISOString() };
+    db.messages.push(message);
+    for (const uid of [from, to]) for (const sid of userSockets.get(uid) || []) {
+      io.to(sid).socketsJoin('chat:' + chat.id);
+      io.to(sid).emit('message:new', { ...message, sender: db.users.find(u => u.id === from) });
+    }
+  },
+  disconnect: (userId, ips) => {
+    for (const socket of io.sockets.sockets.values()) if (socket.userId === userId || ips.includes(socket.ip)) socket.disconnect(true);
+  },
+});
 
 // GET /api/users/search?q=...
 app.get('/api/users/search', authMiddleware, (req, res) => {
@@ -1089,6 +1457,14 @@ app.get('/api/users/search', authMiddleware, (req, res) => {
   res.json(results);
 });
 
+// Publish only equipment IDs, never private account fields.
+function publishEquipment(user) {
+  const equipment = { id: user.id, activeRing: user.activeRing || '',
+    activeSelfCard: user.activeSelfCard || '', activeBubble: user.activeBubble || '' };
+  const rooms = db.chatMembers.filter(m => m.userId === user.id).map(m => 'chat:' + m.chatId);
+  if (rooms.length) io.to(rooms).emit('user:equipment', equipment);
+}
+
 // GET /api/users/:id
 // SEC: возвращаем только публичные поля. phone/email/tokenVersion/etc не отдаём.
 app.get('/api/users/:id', authMiddleware, (req, res) => {
@@ -1106,7 +1482,11 @@ app.get('/api/users/:id', authMiddleware, (req, res) => {
     lastSeen: user.lastSeen,
     themeId: user.themeId,
     createdAt: user.createdAt,
+    activeRing: user.activeRing || '',
+    activeSelfCard: user.activeSelfCard || '',
+    activeBubble: user.activeBubble || '',
     pinnedPlaylistId: user.pinnedPlaylistId || null,
+    pinnedTrackId: user.pinnedTrackId || null,
   };
   // Себе можно вернуть больше (email/phone для настроек).
   if (isSelf) {
@@ -1125,7 +1505,12 @@ app.get('/api/users/:id', authMiddleware, (req, res) => {
 app.patch('/api/users/me', authMiddleware, (req, res) => {
   const user = db.users.find(u => u.id === req.userId);
   if (!user) return res.status(404).json({ message: 'Не найден' });
-  const allowed = ['firstName', 'lastName', 'username', 'bio', 'birthDate', 'country', 'region', 'city', 'themeId', 'chatPhoto', 'pinnedPlaylistId', 'activeRing', 'activeSelfCard'];
+  const allowed = ['firstName', 'lastName', 'username', 'bio', 'birthDate', 'country', 'region', 'city', 'themeId', 'chatPhoto', 'pinnedPlaylistId', 'pinnedTrackId', 'activeRing', 'activeSelfCard', 'activeBubble'];
+  for (const key of ['activeRing', 'activeSelfCard', 'activeBubble']) {
+    if (req.body[key] !== undefined && (typeof req.body[key] !== 'string' || req.body[key].length > 128)) {
+      return res.status(400).json({ message: 'Некорректный ID предмета' });
+    }
+  }
 
   // Валидация username: формат + уникальность (регистронезависимо).
   if (req.body.username !== undefined) {
@@ -1143,7 +1528,32 @@ app.patch('/api/users/me', authMiddleware, (req, res) => {
     if (req.body[k] !== undefined) user[k] = req.body[k];
   }
   saveDb();
-  res.json(user);
+  res.json(withDevFlag(req, user));
+  publishEquipment(user);
+});
+
+// GET /api/users/:id/customization — публичные поля кастомизации профиля
+// (bannerUrl, bannerColor, cardAccent, showcase, aboutMediaUrl и т.п.),
+// чтобы другие пользователи видели «шапку» и витрину собеседника.
+app.get('/api/users/:id/customization', authMiddleware, (req, res) => {
+  if (!db.userStores) db.userStores = {};
+  const store = db.userStores[req.params.id]?.['profile-customization'];
+  const data = store?.data || null;
+  if (!data) return res.json({ data: null });
+  // Отдаём только визуальные поля — не служебные функции/приваты.
+  const pick = (k) => (data[k] !== undefined ? data[k] : undefined);
+  res.json({
+    data: {
+      bannerUrl: pick('bannerUrl') || '',
+      bannerColor: pick('bannerColor') || '',
+      cardAccent: pick('cardAccent') || '',
+      cardOpacity: pick('cardOpacity'),
+      showcase: pick('showcase') || '',
+      activityKind: pick('activityKind'),
+      activityText: pick('activityText') || '',
+      aboutMediaUrl: pick('aboutMediaUrl') || '',
+    },
+  });
 });
 
 // GET /api/users/username-available?u=<name>
@@ -1199,6 +1609,10 @@ app.put('/api/settings', authMiddleware, (req, res) => {
   }
   if (!db.userSettings) db.userSettings = {};
   const clean = JSON.parse(serialized);
+  if (storeName === 'shop') {
+    delete clean.owned;
+    delete clean.balanceVp;
+  }
   clean.__updatedAt = new Date().toISOString();
   db.userSettings[req.userId] = clean;
   saveDb();
@@ -1243,6 +1657,7 @@ app.get('/api/sync/stores/:name', authMiddleware, (req, res) => {
 // PUT /api/sync/stores/:name — сохранить/обновить store
 app.put('/api/sync/stores/:name', authMiddleware, (req, res) => {
   const storeName = req.params.name;
+  if (storeName === 'loot') return res.status(403).json({ message: 'Инвентарь изменяется только сервером' });
   const body = req.body?.data;
   const clientId = req.body?.clientId || null;
 
@@ -1280,6 +1695,16 @@ app.put('/api/sync/stores/:name', authMiddleware, (req, res) => {
     __updatedAt: updatedAt,
     __clientId: clientId,
   };
+  // Store hydration, sales and clearing inventory must update the public outfit too.
+  if (storeName === 'shop') {
+    const user = db.users.find(u => u.id === req.userId);
+    if (user) {
+      for (const key of ['activeRing', 'activeSelfCard', 'activeBubble']) {
+        if (typeof clean[key] === 'string' && clean[key].length <= 128) user[key] = clean[key];
+      }
+      publishEquipment(user);
+    }
+  }
   saveDb();
 
   // Push обновление на все устройства пользователя через WebSocket
@@ -1323,7 +1748,7 @@ app.delete('/api/sync/stores/:name', authMiddleware, (req, res) => {
 
 // GET /api/devices — список устройств текущего пользователя
 app.get('/api/devices', authMiddleware, (req, res) => {
-  const devices = (db.devices || []).filter(d => d.userId === req.userId).map(d => ({
+  const devices = (db.devices || []).filter(d => d.userId === req.userId && !d.revoked).map(d => ({
     id: d.id,
     deviceId: d.deviceId,
     name: d.name,
@@ -1376,17 +1801,27 @@ app.post('/api/devices/link/accept', (req, res) => {
   let parsedToken = t;
   // Могут вставить полную ссылку — вытаскиваем token из query/param
   const m = t.match(/[?&]token=([^&]+)/);
-  if (m) parsedToken = decodeURIComponent(m[1]);
+  try { if (m) parsedToken = decodeURIComponent(m[1]); }
+  catch { return res.status(400).json({ message: 'Некорректная ссылка привязки' }); }
   if (!parsedToken.startsWith('vera-link-')) return res.status(400).json({ message: 'Некорректная ссылка привязки' });
 
   const invite = (db.linkInvites || []).find(i => i.token === parsedToken);
   if (!invite) return res.status(404).json({ message: 'Ссылка привязки не найдена или уже использована' });
 
-  const resAccept = acceptLinkInviteOnServer(invite, deviceId, deviceName);
+  const installation = resolveInstallation(req, res, true);
+  if (!installation) return;
+  const resAccept = acceptLinkInviteOnServer(invite, installation.deviceId, String(deviceName || '').slice(0, 80));
   if (!resAccept.ok) return res.status(403).json({ message: resAccept.message });
+  resAccept.device.installationHash = installation.hash;
   saveDb();
   const owner = db.users.find(u => u.id === invite.userId);
-  res.json({ ok: true, device: resAccept.device, accountUser: owner });
+  if (!owner) return res.status(404).json({ message: 'Аккаунт владельца не найден' });
+  recordModerationIp(owner.id, requestIp(req));
+  const accessToken = issueAccessToken(owner, installation.deviceId);
+  const { raw } = issueRefreshToken(owner, installation.deviceId);
+  saveDb();
+  const csrfToken = setAuthCookies(res, raw);
+  res.json({ ok: true, accessToken, csrfToken, deviceId: installation.deviceId, user: withDevFlag(req, owner) });
 });
 
 // DELETE /api/devices/:id — отвязать устройство
@@ -1397,7 +1832,10 @@ app.delete('/api/devices/:id', authMiddleware, (req, res) => {
   if (target.isPrimary && devices.length === 1) {
     return res.status(400).json({ message: 'Нельзя отвязать единственное устройство аккаунта' });
   }
-  db.devices = db.devices.filter(d => d.id !== target.id);
+  target.revoked = true;
+  for (const token of db.refreshTokens || []) {
+    if (token.deviceId === target.deviceId) token.revokedAt = Date.now();
+  }
   saveDb();
   res.json({ success: true });
 });
@@ -1431,6 +1869,125 @@ const VP_PER_RUB = 2;                    // 1 руб = 2 ВП (1 ВП = 0.5 ру
 const VP_MIN_TOPUP = 50;
 const VP_MAX_TOPUP = 50000;
 const VP_INVOICE_TTL_MS = 30 * 60 * 1000;
+
+// Case prices are intentionally unset until the publisher supplies the price
+// for every case. `null` is different from zero: an unset case cannot be
+// purchased and can never become a free test reward by accident.
+const CASE_PRICES = Object.fromEntries(require('../Web/src/store/cases.json').map(c => [c.id, c.price]));
+const CASE_IDS = new Set(Object.keys(CASE_PRICES));
+const MARKET_MIN_PRICE_VP = 6; // 3 RUB at 1 RUB = 2 VP
+const MARKET_MAX_PRICE_VP = 100000000;
+const MARKET_SELLER_SHARE = 85;
+
+const RARITY_IDS = new Set([
+  'common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'divine',
+  'transcendent', 'absolute', 'exclusive', 'crystal', 'plasma', 'digital',
+  'relic', 'holo', 'mechanic', 'royal', 'anomaly', 'core', 'infinity', 'cult',
+]);
+const MARKET_PACK_KEYS = new Set([
+  'neon', 'glass', 'shadow', 'gradient-sunset', 'gradient-ocean',
+  'gradient-forest', 'minimal', 'rounded', 'sharp', 'retro', 'candy', 'mono',
+  'aurora', 'cyber', 'gradient-lava', 'gradient-ice', 'gradient-gold',
+  'neon-pink', 'holographic',
+  'games-blocks', 'games-plumber', 'games-portal', 'games-bonfire', 'games-dragon',
+  'games-racer', 'games-invader', 'games-dungeon', 'games-mech', 'games-crown',
+  'corp-pass', 'corp-tower', 'corp-network', 'corp-contract', 'corp-director',
+  'corp-terminal', 'corp-briefcase', 'corp-vault', 'corp-satellite', 'corp-citadel',
+  'street-tag', 'street-spray', 'street-stencil', 'street-wildstyle', 'street-mural',
+  'street-sticker', 'street-poster', 'street-skate', 'street-neon', 'street-crown',
+  'culture-book', 'culture-jazz', 'culture-theatre', 'culture-cinema', 'culture-heritage',
+  'culture-ink', 'culture-gallery', 'culture-ballet', 'culture-orchestra', 'culture-observatory',
+  'myths-icarus', 'myths-medusa', 'myths-minotaur', 'myths-fenrir', 'myths-odyssey',
+  'myths-valkyrie', 'myths-phoenix', 'myths-excalibur', 'myths-olympus', 'myths-grail',
+  'nightmare-whisper', 'nightmare-mirror', 'nightmare-doll', 'nightmare-hall',
+  'nightmare-sleepwalker', 'nightmare-mouth', 'nightmare-eyes', 'nightmare-crow',
+  'nightmare-puppet', 'nightmare-abyss',
+  'ashes-ember', 'ashes-cinder', 'ashes-smoke', 'ashes-forge', 'ashes-phoenix',
+  'ashes-charcoal', 'ashes-ruins', 'ashes-volcano', 'ashes-scorch', 'ashes-afterglow',
+]);
+const MARKET_STATIC_SKINS = new Set([
+  'ring-default', 'ring-rainbow', 'ring-glow', 'ring-pulse', 'ring-aurora',
+  'ring-fire', 'ring-ocean', 'ring-holographic', 'ring-lava', 'ring-ice',
+  'selfcard-default', 'selfcard-gradient', 'selfcard-badge', 'selfcard-gold',
+  'selfcard-hologram', 'bubble-neon', 'bubble-glass', 'bubble-shadow',
+  'bubble-gradient-sunset', 'bubble-gradient-ocean', 'bubble-gradient-forest',
+  'bubble-minimal', 'bubble-rounded', 'bubble-sharp', 'bubble-retro',
+  'bubble-candy', 'bubble-mono', 'bubble-aurora', 'bubble-cyber',
+  'bubble-gradient-lava', 'bubble-gradient-ice', 'bubble-gradient-gold',
+  'bubble-neon-pink', 'bubble-holographic',
+]);
+
+function isKnownSkinId(itemId) {
+  if (MARKET_STATIC_SKINS.has(itemId)) return true;
+  const rarity = String(itemId).match(/^(?:ring|selfcard|bubble)-r-(.+)$/)?.[1];
+  if (rarity && RARITY_IDS.has(rarity)) return true;
+  const pack = String(itemId).match(/^(?:ring|selfcard)-pack-(.+)$/)?.[1]
+    || String(itemId).match(/^bubble-(.+)$/)?.[1];
+  return !!pack && MARKET_PACK_KEYS.has(pack);
+}
+
+function emptyCaseInventory() {
+  return Object.fromEntries([...CASE_IDS].map(id => [id, 0]));
+}
+
+function normalizeCaseInventory(value) {
+  const result = emptyCaseInventory();
+  if (!value || typeof value !== 'object') return result;
+  for (const id of CASE_IDS) {
+    const count = Math.floor(Number(value[id]));
+    result[id] = Number.isSafeInteger(count) && count > 0 ? count : 0;
+  }
+  return result;
+}
+
+function activeListingsForSeller(userId) {
+  return (db.marketListings || []).filter(listing => listing.sellerId === userId);
+}
+
+function lockedItemIdsForSeller(userId) {
+  return new Set(activeListingsForSeller(userId).map(listing => listing.itemId));
+}
+
+function accountOwnedSkinIds(user) {
+  const owned = new Set((user?.ownedItems || []).filter(isKnownSkinId));
+  const synced = db.userStores?.[user?.id]?.shop?.data?.owned;
+  if (synced && typeof synced === 'object') {
+    for (const [itemId, value] of Object.entries(synced)) {
+      if (value === true && isKnownSkinId(itemId)) owned.add(itemId);
+    }
+  }
+  for (const itemId of lockedItemIdsForSeller(user?.id)) owned.delete(itemId);
+  return owned;
+}
+
+function setSyncedShopOwnership(userId, itemId, value) {
+  const shop = db.userStores?.[userId]?.shop?.data;
+  if (!shop || typeof shop !== 'object') return;
+  if (!shop.owned || typeof shop.owned !== 'object') shop.owned = {};
+  shop.owned[itemId] = !!value;
+}
+
+function marketListingView(listing, viewerId = null) {
+  const seller = db.users.find(user => user.id === listing.sellerId);
+  return {
+    id: listing.id,
+    itemId: listing.itemId,
+    sellerId: listing.sellerId,
+    seller: seller?.username || 'Пользователь',
+    price: listing.price,
+    createdAt: listing.createdAt,
+    isMine: listing.sellerId === viewerId,
+  };
+}
+
+function marketListingViews(viewerId = null) {
+  return (db.marketListings || []).map(listing => marketListingView(listing, viewerId));
+}
+
+function emitMarketUpdated() {
+  if (typeof io === 'undefined' || !io) return;
+  io.emit('market:updated', { listings: marketListingViews() });
+}
 
 // Серверный каталог цен — копия платных товаров из клиентского SHOP_CATALOG.
 const SHOP_PRICES = {
@@ -1479,6 +2036,14 @@ function ensureWallet(user) {
   if (!user) return user;
   if (typeof user.walletBalance !== 'number') user.walletBalance = 0;
   if (!Array.isArray(user.ownedItems)) user.ownedItems = [];
+  if (!user.caseInventoryMigrated) {
+    const previous = db.userStores?.[user.id];
+    const owned = previous?.shop?.data?.owned || {};
+    user.ownedItems = [...new Set([...user.ownedItems, ...Object.keys(owned).filter(id => owned[id] === true && isKnownSkinId(id))])];
+    user.casePacks = user.casePacks || previous?.loot?.data?.packs || {};
+    user.caseInventoryMigrated = true;
+    saveDb();
+  }
   return user;
 }
 function vpOrderId(order) { return 'vp_' + String(order.id).replace(/-/g, ''); }
@@ -1491,11 +2056,94 @@ function pushWalletEmit(user) {
 }
 
 // Баланс + купленные товары
+app.post('/api/admin/wallet/grant', authMiddleware, (req, res) => {
+  if (!adminRequest(req)) return res.status(403).json({ message: 'Нет прав администратора' });
+  const username = String(req.body?.username || '').trim().replace(/^@+/, '').toLowerCase();
+  const amount = req.body?.amount;
+  if (!username || !Number.isSafeInteger(amount) || amount <= 0 || amount > 1000000) {
+    return res.status(400).json({ message: 'Укажите ник и целое количество ВП от 1 до 1 000 000' });
+  }
+  const matches = db.users.filter(u => String(u.username || '').replace(/^@+/, '').toLowerCase() === username);
+  if (matches.length !== 1) return res.status(matches.length ? 409 : 404).json({ message: matches.length ? 'Ник неоднозначен' : 'Пользователь не найден' });
+  const user = matches[0];
+  const previous = user.walletBalance;
+  const balance = Number.isFinite(previous) ? previous : 0;
+  if (!Number.isSafeInteger(balance + amount)) return res.status(400).json({ message: 'Превышен предел баланса' });
+  user.walletBalance = balance + amount;
+  try { saveDb(); } catch {
+    user.walletBalance = previous;
+    return res.status(500).json({ message: 'Не удалось сохранить начисление' });
+  }
+  pushWalletEmit(user);
+  res.json({ username: user.username, amount, balance: user.walletBalance });
+});
+
 app.get('/api/wallet', authMiddleware, (req, res) => {
   const user = ensureWallet(db.users.find(u => u.id === req.userId));
   if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
   res.json({ balance: user.walletBalance, ownedItems: user.ownedItems });
 });
+
+const CASE_CATALOG = require('./../Web/src/store/cases.json');
+function caseState(user) {
+  return {
+    balance: user.walletBalance, ownedItems: user.ownedItems,
+    caseCounts: normalizeCaseInventory(user.caseCounts),
+    packs: user.casePacks || {}, lastDrop: user.lastCaseDrop || null,
+    prices: CASE_PRICES,
+  };
+}
+app.get('/api/cases', authMiddleware, (req, res) => {
+  const user = ensureWallet(db.users.find(u => u.id === req.userId));
+  res.json(caseState(user));
+});
+for (const action of ['buy', 'open']) {
+  app.post(`/api/cases/${action}`, authMiddleware, (req, res) => {
+    const definition = CASE_CATALOG.find(c => c.id === req.body?.caseId);
+    if (!definition) return res.status(400).json({ message: 'Неизвестный кейс' });
+    const user = ensureWallet(db.users.find(u => u.id === req.userId));
+    const counts = normalizeCaseInventory(user.caseCounts);
+    const price = CASE_PRICES[definition.id];
+    if (action === 'buy' && (!Number.isSafeInteger(price) || price <= 0)) return res.status(409).json({ message: 'Цена кейса ещё не назначена' });
+    if (action === 'buy' && user.walletBalance < price) return res.status(409).json({ message: 'Недостаточно ВП' });
+    if (action === 'open' && counts[definition.id] < 1) return res.status(409).json({ message: 'Нет доступного кейса' });
+    const previous = JSON.parse(JSON.stringify(user));
+    let drop = null;
+    if (action === 'buy') {
+      user.walletBalance -= price;
+      counts[definition.id]++;
+    } else {
+      let roll = crypto.randomInt(definition.rewards.reduce((sum, reward) => sum + reward.weight, 0));
+      const reward = definition.rewards.find(reward => (roll -= reward.weight) < 0);
+      const key = reward.key;
+      drop = `pack-${key}`;
+      const parts = key.startsWith('r-') ? [`ring-${key}`, `selfcard-${key}`, `bubble-${key}`] : [`ring-pack-${key}`, `selfcard-pack-${key}`, `bubble-${key}`];
+      user.ownedItems = [...new Set([...user.ownedItems, ...parts])];
+      user.casePacks = { ...user.casePacks, [drop]: (user.casePacks?.[drop] || 0) + 1 };
+      user.lastCaseDrop = drop;
+      counts[definition.id]--;
+    }
+    user.caseCounts = counts;
+    try { saveDb(); } catch (error) {
+      for (const key of Object.keys(user)) delete user[key];
+      Object.assign(user, previous);
+      return res.status(500).json({ message: 'Не удалось сохранить операцию' });
+    }
+    const state = caseState(user);
+    const sockets = userSockets.get(user.id);
+    if (sockets) sockets.forEach(sid => io.to(sid).emit('cases:updated', state));
+    pushWalletEmit(user);
+    res.json({ ...state, drop });
+  });
+}
+
+const yoomoney = require('./yoomoney');
+// Some isolated VM tests stub require() with the case catalog. Production has
+// the real module; the guard keeps those focused tests independent of payment
+// integration while preserving the normal registration path.
+if (typeof yoomoney?.registerYoomoney === 'function') {
+  yoomoney.registerYoomoney(app, { getDb: () => db, saveDb, authMiddleware, ensureWallet, pushWalletEmit });
+}
 
 // Создать инвойс на пополнение (amount в ВП)
 app.post('/api/wallet/topup', authMiddleware, async (req, res) => {
@@ -1514,7 +2162,7 @@ app.post('/api/wallet/topup', authMiddleware, async (req, res) => {
   };
   db.walletOrders.push(order);
   // чистим старые (старше суток) — мусор не копим
-  db.walletOrders = db.walletOrders.filter(o => Date.now() - (o.createdAt || 0) < 24 * 60 * 60 * 1000);
+  db.walletOrders = db.walletOrders.filter(o => o.provider === 'yoomoney' || Date.now() - (o.createdAt || 0) < 24 * 60 * 60 * 1000);
   saveDb();
 
   // Mock-режим: ключа NOWPAYMENTS ещё нет
@@ -1570,6 +2218,7 @@ app.get('/api/wallet/orders/:orderId', authMiddleware, (req, res) => {
 
 // Webhook от NOWPayments (IPN) — публичный
 app.post('/api/wallet/webhook', (req, res) => {
+  if (!NOWPAYMENTS_IPN_SECRET) return res.sendStatus(503);
   if (NOWPAYMENTS_IPN_SECRET) {
     const sig = req.headers['x-nowpayments-sig'];
     const calc = require('crypto').createHmac('sha512', NOWPAYMENTS_IPN_SECRET).update(req.rawBody || '').digest('hex');
@@ -1577,7 +2226,7 @@ app.post('/api/wallet/webhook', (req, res) => {
   }
   const body = req.body || {};
   const order = (db.walletOrders || []).find(o => vpOrderId(o) === body.order_id);
-  if (!order) return res.json({ ok: true }); // не наш заказ — игнорируем
+  if (!order || order.provider === 'yoomoney') return res.json({ ok: true }); // не наш заказ — игнорируем
   if ((body.payment_status === 'finished' || body.payment_status === 'partially_paid') && order.status !== 'paid') {
     if (order.kind === 'creator-fee') {
       const prof = creatorProfile(order.userId);
@@ -1599,6 +2248,7 @@ app.post('/api/wallet/webhook', (req, res) => {
 
 // МОК-оплата (только без NOWPAYMENTS_API_KEY) — для теста потока пополнения
 app.post('/api/wallet/mock-pay', authMiddleware, (req, res) => {
+  if (process.env.NODE_ENV === 'production' || process.env.WALLET_ALLOW_MOCK !== 'true' || process.env.YOOMONEY_RECEIVER) return res.sendStatus(403);
   if (NOWPAYMENTS_API_KEY) return res.status(400).json({ message: 'Mock-оплата отключена (ключ NOWPAYMENTS задан)' });
   const order = (db.walletOrders || []).find(o => o.id === req.body?.orderId && o.userId === req.userId);
   if (!order) return res.status(404).json({ message: 'Заказ не найден' });
@@ -1619,7 +2269,7 @@ app.post('/api/shop/buy', authMiddleware, (req, res) => {
   const user = ensureWallet(db.users.find(u => u.id === req.userId));
   if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
   if (user.ownedItems.includes(itemId)) return res.json({ ok: true, already: true, balance: user.walletBalance, ownedItems: user.ownedItems });
-  // Бесплатно: dev-IP и админы (admin1, admin2, admin3 и др.) — режим проверки продукта.
+  // Бесплатно: dev-IP и настроенные админы — режим проверки продукта.
   const devFree = isAdminReq(req);
 
   // Кастомные предметы от авторов: id вида "custom:<uuid>"
@@ -1667,6 +2317,78 @@ app.post('/api/shop/buy', authMiddleware, (req, res) => {
 
 
 // ─── CREATOR / CUSTOM SHOP ITEMS ─────────────────────────────────────────────
+// Shared skin marketplace. Listings hold the item in escrow until cancellation or sale.
+app.get('/api/market', authMiddleware, (req, res) => {
+  res.json({ listings: marketListingViews(req.userId) });
+});
+
+function commitMarket(res, mutate) {
+  const before = JSON.stringify(db);
+  try { mutate(); saveDb(); return true; } catch {
+    db = JSON.parse(before);
+    res.status(500).json({ message: 'Не удалось сохранить операцию' });
+    return false;
+  }
+}
+
+app.post('/api/market/list', authMiddleware, (req, res) => {
+  const { itemId, price } = req.body || {};
+  if (!Number.isSafeInteger(price) || price < MARKET_MIN_PRICE_VP || price > MARKET_MAX_PRICE_VP) {
+    return res.status(400).json({ message: 'Цена должна быть целым числом от 6 до 100000000 ВП' });
+  }
+  const user = ensureWallet(db.users.find(u => u.id === req.userId));
+  if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
+  if (!isKnownSkinId(itemId) || !user.ownedItems.includes(itemId) || lockedItemIdsForSeller(user.id).has(itemId)) {
+    return res.status(409).json({ message: 'Предмет недоступен для продажи' });
+  }
+  const listing = { id: uuidv4(), itemId, price, sellerId: user.id, createdAt: Date.now() };
+  if (!commitMarket(res, () => {
+    db.marketListings.push(listing);
+    user.ownedItems = user.ownedItems.filter(id => id !== itemId);
+    setSyncedShopOwnership(user.id, itemId, false);
+    for (const slot of ['activeRing', 'activeSelfCard', 'activeBubble']) {
+      if (user[slot] === itemId) user[slot] = '';
+      const shop = db.userStores?.[user.id]?.shop?.data;
+      if (shop?.[slot] === itemId) shop[slot] = '';
+    }
+  })) return;
+  pushWalletEmit(user);
+  emitMarketUpdated();
+  res.json({ listing: marketListingView(listing, user.id), balance: user.walletBalance });
+});
+
+for (const action of ['cancel', 'buy']) {
+  app.post(`/api/market/:id/${action}`, authMiddleware, (req, res) => {
+    const listing = db.marketListings.find(l => l.id === req.params.id);
+    if (!listing) return res.status(404).json({ message: 'Объявление уже снято или продано' });
+    const user = ensureWallet(db.users.find(u => u.id === req.userId));
+    const seller = ensureWallet(db.users.find(u => u.id === listing.sellerId));
+    if (!user || !seller) return res.status(404).json({ message: 'Пользователь не найден' });
+    if ((action === 'cancel') !== (user.id === seller.id)) return res.status(403).json({ message: 'Операция недоступна' });
+    const share = Math.floor(listing.price * MARKET_SELLER_SHARE / 100);
+    if (action === 'buy' && (user.ownedItems.includes(listing.itemId) || lockedItemIdsForSeller(user.id).has(listing.itemId))) {
+      return res.status(409).json({ message: 'У вас уже есть этот предмет' });
+    }
+    if (action === 'buy' && (!Number.isSafeInteger(listing.price) || listing.price < MARKET_MIN_PRICE_VP || user.walletBalance < listing.price || !Number.isSafeInteger(seller.walletBalance + share))) {
+      return res.status(409).json({ message: 'Недостаточно ВП или недопустимая цена' });
+    }
+    if (!commitMarket(res, () => {
+      db.marketListings = db.marketListings.filter(l => l.id !== listing.id);
+      user.ownedItems = [...new Set([...user.ownedItems, listing.itemId])];
+      setSyncedShopOwnership(user.id, listing.itemId, true);
+      if (action === 'buy') {
+        user.walletBalance -= listing.price;
+        seller.walletBalance += share;
+        db.platformRevenueVp = (db.platformRevenueVp || 0) + listing.price - share;
+      }
+    })) return;
+    pushWalletEmit(user);
+    if (user !== seller) pushWalletEmit(seller);
+    emitMarketUpdated();
+    res.json({ ok: true, itemId: listing.itemId, balance: user.walletBalance, ownedItems: user.ownedItems });
+  });
+}
+
 const CREATOR_FEE_RUB = 200;
 const CUSTOM_CATEGORIES = new Set(['profile', 'selfcard', 'wallpaper', 'bubble']);
 const CUSTOM_MIN_PRICE = 20;
@@ -1919,18 +2641,18 @@ app.get('/api/chats', authMiddleware, (req, res) => {
         id: cm.id,
         chatId: cm.chatId,
         userId: cm.userId,
-        role: cm.role || 'member',
+        role: cm.role || 'member', permissions: cm.permissions, adminTitle: cm.adminTitle, promotedBy: cm.promotedBy,
         joinedAt: cm.joinedAt,
         isMuted: cm.muted || false,
         user: db.users.find(u => u.id === cm.userId) || null,
       }));
     const lastMsg = db.messages
-      .filter(msg => msg.chatId === chat.id)
+      .filter(msg => msg.chatId === chat.id && (chat.type !== 'channel' || !msg.replyToId))
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
     const unreadCount = db.messages.filter(msg =>
       msg.chatId === chat.id && !msg.readBy?.includes(req.userId) && msg.senderId !== req.userId
     ).length;
-    return { ...chat, type: chat.type || 'direct', members, lastMessage: lastMsg, unreadCount };
+    return { ...chat, pinnedMessage: getPinnedMessage(chat), type: chat.type || 'direct', members, lastMessage: lastMsg, unreadCount };
   }).filter(Boolean);
 
   chats.sort((a, b) => {
@@ -1965,7 +2687,7 @@ app.post('/api/chats/direct', authMiddleware, (req, res) => {
   if (existing) {
     const chat = db.chats.find(c => c.id === existing);
     const members = db.chatMembers.filter(m => m.chatId === existing).map(m => ({
-      id: m.id, chatId: m.chatId, userId: m.userId, role: m.role || 'member',
+      id: m.id, chatId: m.chatId, userId: m.userId, role: m.role || 'member', permissions: m.permissions, adminTitle: m.adminTitle, promotedBy: m.promotedBy,
       joinedAt: m.joinedAt, isMuted: m.muted || false,
       user: db.users.find(u => u.id === m.userId) || null,
     }));
@@ -1986,7 +2708,7 @@ app.post('/api/chats/direct', authMiddleware, (req, res) => {
   saveDb();
 
   const members = db.chatMembers.filter(m => m.chatId === chat.id).map(m => ({
-    id: m.id, chatId: m.chatId, userId: m.userId, role: m.role || 'member',
+    id: m.id, chatId: m.chatId, userId: m.userId, role: m.role || 'member', permissions: m.permissions, adminTitle: m.adminTitle, promotedBy: m.promotedBy,
     joinedAt: m.joinedAt, isMuted: false,
     user: db.users.find(u => u.id === m.userId) || null,
   }));
@@ -1998,8 +2720,10 @@ app.post('/api/chats/group', authMiddleware, (req, res) => {
   const { name, memberIds } = req.body;
   const chat = {
     id: uuidv4(),
-    type: 'group',
-    name: name || 'Группа',
+    type: String(name || '').trim().startsWith('!') ? 'channel' : 'group',
+    name: String(name || 'Группа').trim(),
+    ownerId: req.userId,
+    isPublic: String(name || '').trim().startsWith('!'),
     avatarUrl: null,
     createdAt: new Date().toISOString(),
     pinnedMessageId: null,
@@ -2013,7 +2737,7 @@ app.post('/api/chats/group', authMiddleware, (req, res) => {
   saveDb();
   // Возвращаем members с ролями (формат ChatMember)
   const members = db.chatMembers.filter(m => m.chatId === chat.id).map(m => ({
-    id: m.id, chatId: m.chatId, userId: m.userId, role: m.role,
+    id: m.id, chatId: m.chatId, userId: m.userId, role: m.role, permissions: m.permissions, adminTitle: m.adminTitle, promotedBy: m.promotedBy,
     joinedAt: m.joinedAt,
     user: db.users.find(u => u.id === m.userId) || null,
   }));
@@ -2026,7 +2750,9 @@ app.post('/api/chats/channel', authMiddleware, (req, res) => {
   const chat = {
     id: uuidv4(),
     type: 'channel',
-    name: name || 'Канал',
+    name: '!' + String(name || 'Канал').trim().replace(/^!+/, ''),
+    ownerId: req.userId,
+    isPublic: true,
     description: description || '',
     avatarUrl: null,
     createdAt: new Date().toISOString(),
@@ -2071,13 +2797,32 @@ app.patch('/api/chats/:id/mute', authMiddleware, (req, res) => {
 });
 
 // GET /api/chats/:id
+app.get('/api/channels/search', authMiddleware, (req, res) => {
+  const q = String(req.query.q || '').trim().toLowerCase();
+  if (!q.startsWith('!') || q.length < 2) return res.json([]);
+  res.json(db.chats.filter(c => c.type === 'channel' && c.isPublic && c.name.toLowerCase().includes(q))
+    .slice(0, 30).map(c => ({ id: c.id, name: c.name, avatarUrl: c.avatarUrl, description: c.description })));
+});
+
+app.post('/api/channels/:id/join', authMiddleware, (req, res) => {
+  const chat = db.chats.find(c => c.id === req.params.id && c.type === 'channel' && c.isPublic);
+  if (!chat) return res.status(404).json({ message: 'Канал не найден' });
+  if (!db.chatMembers.some(m => m.chatId === chat.id && m.userId === req.userId)) {
+    db.chatMembers.push({ id: uuidv4(), chatId: chat.id, userId: req.userId, role: 'member', joinedAt: new Date().toISOString() });
+    saveDb();
+  }
+  const members = db.chatMembers.filter(m => m.chatId === chat.id).map(m => ({ ...m, user: db.users.find(u => u.id === m.userId) }));
+  io.to(`chat:${chat.id}`).emit('chat:updated', { ...chat, members });
+  res.json({ ...chat, members });
+});
+
 app.get('/api/chats/:id', authMiddleware, (req, res) => {
   const isMember = db.chatMembers.find(m => m.chatId === req.params.id && m.userId === req.userId);
   if (!isMember) return res.status(403).json({ message: 'Нет доступа' });
   const chat = db.chats.find(c => c.id === req.params.id);
   if (!chat) return res.status(404).json({ message: 'Чат не найден' });
   const members = db.chatMembers.filter(m => m.chatId === chat.id).map(m => ({
-    id: m.id, chatId: m.chatId, userId: m.userId, role: m.role || 'member',
+    id: m.id, chatId: m.chatId, userId: m.userId, role: m.role || 'member', permissions: m.permissions, adminTitle: m.adminTitle, promotedBy: m.promotedBy,
     joinedAt: m.joinedAt, isMuted: m.muted || false,
     user: db.users.find(u => u.id === m.userId) || null,
   }));
@@ -2090,7 +2835,58 @@ app.get('/api/chats/:id', authMiddleware, (req, res) => {
   res.json({ ...chat, type: chat.type || 'direct', members, lastMessage: lastMsg, unreadCount });
 });
 
-// PATCH /api/chats/:id  (обновить название/описание/аватар — только owner/admin)
+const ADMIN_RIGHTS = ['changeInfo', 'inviteMembers', 'deleteMessages', 'editMessages', 'manageAdmins'];
+function hasGroupRight(member, right) {
+  return !!member && (member.role === 'owner' || (member.role === 'admin' &&
+    (member.permissions ? member.permissions[right] === true : true)));
+}
+
+app.patch('/api/chats/:id/members/:userId/admin', authMiddleware, (req, res) => {
+  const chat = db.chats.find(c => c.id === req.params.id);
+  if (!chat || !['group', 'channel'].includes(chat.type)) return res.status(404).json({ message: 'Группа не найдена' });
+  const actor = db.chatMembers.find(m => m.chatId === chat.id && m.userId === req.userId);
+  const target = db.chatMembers.find(m => m.chatId === chat.id && m.userId === req.params.userId);
+  if (!hasGroupRight(actor, 'manageAdmins')) return res.status(403).json({ message: 'Нет права назначать администраторов' });
+  if (!target) return res.status(404).json({ message: 'Участник не найден' });
+  if (target.role === 'owner' || target.userId === req.userId ||
+      (actor.role !== 'owner' && target.role === 'admin' && target.promotedBy !== req.userId)) {
+    return res.status(403).json({ message: 'Нельзя изменять этого администратора' });
+  }
+  const { role, permissions, adminTitle } = req.body;
+  if (!['admin', 'member'].includes(role) || typeof adminTitle !== 'string' || adminTitle.trim().length > 32 ||
+      !permissions || typeof permissions !== 'object' || Array.isArray(permissions) ||
+      Object.entries(permissions).some(([key, value]) => !ADMIN_RIGHTS.includes(key) || typeof value !== 'boolean')) {
+    return res.status(400).json({ message: 'Некорректные права или звание (до 32 символов)' });
+  }
+  if (actor.role !== 'owner' && ADMIN_RIGHTS.some(right =>
+    (permissions[right] || (target.role === 'admin' && hasGroupRight(target, right))) && !hasGroupRight(actor, right))) {
+    return res.status(403).json({ message: 'Нельзя управлять правами выше собственных' });
+  }
+  target.role = role;
+  target.permissions = Object.fromEntries(ADMIN_RIGHTS.map(right => [right, role === 'admin' && permissions[right] === true]));
+  target.adminTitle = role === 'admin' ? adminTitle.trim() : '';
+  target.promotedBy = role === 'admin' ? (target.promotedBy || req.userId) : null;
+  saveDb();
+  const members = db.chatMembers.filter(m => m.chatId === chat.id).map(m => ({ ...m, user: db.users.find(u => u.id === m.userId) || null }));
+  io.to(`chat:${chat.id}`).emit('chat:updated', { ...chat, members });
+  res.json({ ...chat, members });
+});
+
+// PATCH /api/chats/:id
+function channelOwnedSkinIds(chat) {
+  const ownerId = chat.ownerId || db.chatMembers.find(m => m.chatId === chat.id && m.role === 'owner')?.userId;
+  const owner = db.users.find(u => u.id === ownerId);
+  return owner ? accountOwnedSkinIds(owner) : new Set();
+}
+
+app.get('/api/chats/:id/skins', authMiddleware, (req, res) => {
+  const chat = db.chats.find(c => c.id === req.params.id && c.type === 'channel');
+  if (!chat) return res.status(404).json({ message: 'Канал не найден' });
+  const member = db.chatMembers.find(m => m.chatId === chat.id && m.userId === req.userId);
+  if (!hasGroupRight(member, 'changeInfo')) return res.status(403).json({ message: 'Нет права изменять оформление канала' });
+  res.json([...channelOwnedSkinIds(chat)]);
+});
+
 app.patch('/api/chats/:id', authMiddleware, (req, res) => {
   const chatId = req.params.id;
   const member = db.chatMembers.find(m => m.chatId === chatId && m.userId === req.userId);
@@ -2099,19 +2895,35 @@ app.patch('/api/chats/:id', authMiddleware, (req, res) => {
   if (!chat) return res.status(404).json({ message: 'Чат не найден' });
 
   // Для групп/каналов — только admin/owner могут редактировать
-  if ((chat.type === 'group' || chat.type === 'channel') && member.role === 'member') {
+  if ((chat.type === 'group' || chat.type === 'channel') && !hasGroupRight(member, 'changeInfo')) {
     return res.status(403).json({ message: 'Только администраторы могут редактировать группу' });
   }
 
-  const { name, description, avatarUrl } = req.body;
-  if (name !== undefined) chat.name = name;
+  const { name, description, avatarUrl, wallpaper } = req.body;
+  for (const key of ['activeRing', 'activeSelfCard', 'activeBubble']) {
+    if (req.body[key] === undefined) continue;
+    const value = req.body[key];
+    if (chat.type !== 'channel' || typeof value !== 'string' ||
+        (value && !channelOwnedSkinIds(chat).has(value))) {
+      return res.status(400).json({ message: 'Выберите скин из инвентаря создателя канала' });
+    }
+  }
+  for (const key of ['activeRing', 'activeSelfCard', 'activeBubble']) {
+    if (req.body[key] !== undefined) chat[key] = req.body[key];
+  }
+  if (name !== undefined) chat.name = chat.type === 'channel' ? '!' + String(name).trim().replace(/^!+/, '') : name;
   if (description !== undefined) chat.description = description;
   if (avatarUrl !== undefined) chat.avatarUrl = avatarUrl;
+  if (wallpaper !== undefined) {
+    if (wallpaper === null) chat.wallpaper = null;
+    else if (wallpaper && ['photo', 'live', 'stock'].includes(wallpaper.type) && typeof wallpaper.value === 'string') chat.wallpaper = wallpaper;
+    else return res.status(400).json({ message: 'Некорректная обложка чата' });
+  }
   saveDb();
 
   // Возвращаем с members (в формате ChatMember с role)
   const members = db.chatMembers.filter(m => m.chatId === chatId).map(m => ({
-    id: m.id, chatId: m.chatId, userId: m.userId, role: m.role,
+    id: m.id, chatId: m.chatId, userId: m.userId, role: m.role, permissions: m.permissions, adminTitle: m.adminTitle, promotedBy: m.promotedBy,
     joinedAt: m.joinedAt,
     user: db.users.find(u => u.id === m.userId) || null,
   }));
@@ -2146,6 +2958,7 @@ app.post('/api/chats/:id/members', authMiddleware, (req, res) => {
     return res.status(403).json({ message: 'Нельзя добавлять участников в этот тип чата' });
   }
   const { userId } = req.body;
+  if (!hasGroupRight(requesterMember, 'inviteMembers')) return res.status(403).json({ message: 'Нет права приглашать участников' });
   if (!userId) return res.status(400).json({ message: 'Укажите userId' });
   const targetUser = db.users.find(u => u.id === userId);
   if (!targetUser) return res.status(404).json({ message: 'Пользователь не найден' });
@@ -2216,6 +3029,7 @@ app.post('/api/chats/:id/invite', authMiddleware, (req, res) => {
   }
   const inviterMember = db.chatMembers.find((m) => m.chatId === groupId && m.userId === req.userId);
   if (!inviterMember) return res.status(403).json({ message: 'Вы не участник группы' });
+  if (!hasGroupRight(inviterMember, 'inviteMembers')) return res.status(403).json({ message: 'Нет права приглашать участников' });
   const inviter = db.users.find((u) => u.id === req.userId);
   const invitee = db.users.find((u) => u.id === inviteeId);
   if (!invitee) return res.status(404).json({ message: 'Пользователь не найден' });
@@ -2295,7 +3109,7 @@ app.post('/api/group-invites/:token/accept', authMiddleware, (req, res) => {
     const ts = userSockets.get(req.userId);
     if (ts) ts.forEach((sid) => io.to(sid).socketsJoin('chat:' + data.groupId));
     const members = db.chatMembers.filter((m) => m.chatId === data.groupId).map((m) => ({
-      id: m.id, chatId: m.chatId, userId: m.userId, role: m.role, joinedAt: m.joinedAt,
+      id: m.id, chatId: m.chatId, userId: m.userId, role: m.role, permissions: m.permissions, adminTitle: m.adminTitle, promotedBy: m.promotedBy, joinedAt: m.joinedAt,
       isMuted: m.muted || false, user: db.users.find((u) => u.id === m.userId) || null,
     }));
     io.to('chat:' + data.groupId).emit('chat:updated', { ...group, members });
@@ -2366,16 +3180,18 @@ app.delete('/api/chats/:id', authMiddleware, (req, res) => {
   // Direct/saved — удалять может любой участник (это их личный чат).
   // Group/channel — только owner/admin.
   const isDirect = chat.type === 'direct' || chat.type === 'saved' || chat.type === 'private';
-  if (!isDirect && member.role !== 'owner' && member.role !== 'admin') {
+  if (!isDirect && member.role !== 'owner') {
     return res.status(403).json({ message: 'Удалять чат может только владелец. Используйте «Покинуть чат».' });
   }
 
   const chatIdx = db.chats.findIndex(c => c.id === chatId);
   if (chatIdx === -1) return res.status(404).json({ message: 'Чат не найден' });
 
-  const removedMessages = db.messages.filter(m => m.chatId === chatId).length;
+  const chatMessages = db.messages.filter(m => m.chatId === chatId);
+  const removedMessages = chatMessages.length;
   const removedMembers  = db.chatMembers.filter(m => m.chatId === chatId).length;
 
+  moderation.archive(db, chatMessages, req.userId, { uploadsDir: UPLOADS_DIR });
   db.messages    = db.messages.filter(m => m.chatId !== chatId);
   db.chatMembers = db.chatMembers.filter(m => m.chatId !== chatId);
   if (db.favorites) db.favorites = db.favorites.filter(f => f.chatId !== chatId);
@@ -2390,22 +3206,59 @@ app.delete('/api/chats/:id', authMiddleware, (req, res) => {
 
 // ─── MESSAGES routes ──────────────────────────────────────────────────────────
 // SEC: лимиты содержимого — используются в POST/PUT/WS.
-const MESSAGE_MAX_LEN = 4096;
+const MESSAGE_MAX_LEN = 10000;
 const EDIT_WINDOW_MS = 48 * 60 * 60 * 1000;
 
+function getPinnedMessage(chat) {
+  const msg = db.messages.find(m => m.chatId === chat.id && m.id === chat.pinnedMessageId && !m.isDeleted);
+  return msg ? { ...msg, content: msg.text || msg.content || '', isPinned: true } : null;
+}
+
+app.post('/api/messages/:id/pin', authMiddleware, (req, res) => {
+  const { chatId, messageId } = req.body || {};
+  const member = db.chatMembers.find(m => m.chatId === chatId && m.userId === req.userId);
+  if (!member) return res.status(403).json({ code: 'CHAT_ACCESS_DENIED', message: 'Нет доступа к чату. Закрепление доступно только его участникам.' });
+  const chat = db.chats.find(c => c.id === chatId);
+  if (!chat) return res.status(404).json({ message: 'Чат не найден' });
+  if (messageId !== null) {
+    if (typeof messageId !== 'string' || !messageId) {
+      return res.status(400).json({ code: 'INVALID_MESSAGE_ID', message: 'Не указано сообщение для закрепления' });
+    }
+    if (!db.messages.some(m => m.id === messageId && m.chatId === chatId && !m.isDeleted)) {
+      return res.status(404).json({
+        code: 'PIN_MESSAGE_UNAVAILABLE',
+        message: 'Нельзя закрепить: сообщение отсутствует на сервере в этом чате. Если оно видно в истории, это может быть локальная архивная копия. Можно отправить его содержимое новым сообщением и закрепить новое.',
+      });
+    }
+  }
+  chat.pinnedMessageId = messageId;
+  saveDb();
+  const pinnedMessage = getPinnedMessage(chat);
+  io.to(`chat:${chatId}`).emit('message:pinned', { chatId, messageId, pinnedMessage });
+  res.json(pinnedMessage);
+});
+
 // GET /api/messages/:chatId
+app.get('/api/messages/:chatId/comments/:postId', authMiddleware, (req, res) => {
+  const { chatId, postId } = req.params;
+  if (!db.chatMembers.some(m => m.chatId === chatId && m.userId === req.userId)) return res.status(403).json({ message: 'Нет доступа' });
+  res.json(db.messages.filter(m => m.chatId === chatId && m.replyToId === postId && !m.isDeleted)
+    .map(m => ({ ...m, sender: messageSender(m) })));
+});
+
 app.get('/api/messages/:chatId', authMiddleware, (req, res) => {
   const isMember = db.chatMembers.find(m => m.chatId === req.params.chatId && m.userId === req.userId);
   if (!isMember) return res.status(403).json({ message: 'Нет доступа' });
 
   const { limit = 50, before } = req.query;
   let msgs = db.messages.filter(m => m.chatId === req.params.chatId);
+  if (db.chats.some(c => c.id === req.params.chatId && c.type === 'channel')) msgs = msgs.filter(m => !m.replyToId);
   if (before) msgs = msgs.filter(m => new Date(m.createdAt) < new Date(before));
   msgs = msgs.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)).slice(-parseInt(limit));
 
   // Normalize fields for client (text→content, url→fileUrl)
   const result = msgs.map(m => {
-    const sender = db.users.find(u => u.id === m.senderId) || null;
+    const sender = messageSender(m);
     const attachments = (m.attachments || []).map(a => ({
       id: a.id || m.id,
       fileUrl: a.url || a.fileUrl || '',
@@ -2420,7 +3273,7 @@ app.get('/api/messages/:chatId', authMiddleware, (req, res) => {
       attachments,
       sender,
       isEdited: !!(m.editedAt),
-      isPinned: false,
+      isPinned: db.chats.find(c => c.id === m.chatId)?.pinnedMessageId === m.id,
       isDeleted: false,
       type: m.type || (attachments.length > 0 ? 'document' : 'text'),
     };
@@ -2429,20 +3282,91 @@ app.get('/api/messages/:chatId', authMiddleware, (req, res) => {
 });
 
 // Общий обработчик отправки сообщения
+function messageSender(message) {
+  const chat = db.chats.find(c => c.id === message.chatId);
+  if (chat?.type === 'channel' && !message.replyToId) {
+    return { id: chat.id, firstName: chat.name, username: chat.name, avatarUrl: chat.avatarUrl,
+      activeRing: chat.activeRing, activeSelfCard: chat.activeSelfCard, activeBubble: chat.activeBubble };
+  }
+  return db.users.find(u => u.id === message.senderId) || null;
+}
+
 function handleSendMessage(chatId, userId, body, res) {
   const isMember = db.chatMembers.find(m => m.chatId === chatId && m.userId === userId);
   if (!isMember) return res.status(403).json({ message: 'Нет доступа' });
 
-  const { text, content, replyToId, attachments, type } = body;
+  let { text, content, replyToId, attachments, type, commentReplyToId, poll, forwardFromId } = body;
+  if (forwardFromId != null && replyToId) return res.status(400).json({ message: 'Пересылка не может быть ответом' });
+  const chat = db.chats.find(c => c.id === chatId);
+  if (chat?.type === 'channel') {
+    if (replyToId) {
+      const post = db.messages.find(m => m.id === replyToId && m.chatId === chatId && !m.replyToId && !m.isDeleted);
+      if (!post) return res.status(400).json({ message: 'Публикация не найдена' });
+      if (commentReplyToId && !db.messages.some(m => m.id === commentReplyToId && m.chatId === chatId && m.replyToId === post.id && !m.isDeleted)) {
+        return res.status(400).json({ message: 'Комментарий для ответа не найден' });
+      }
+    } else if (!['owner', 'admin'].includes(isMember.role)) {
+      return res.status(403).json({ message: 'Публиковать могут только администраторы канала' });
+    }
+  }
+  let forwardedMessage = null;
+  let forwardedMessageName = null;
+  if (forwardFromId !== undefined && forwardFromId !== null) {
+    if (typeof forwardFromId !== 'string' || !forwardFromId.trim()) {
+      return res.status(400).json({ message: 'Некорректный источник пересылки' });
+    }
+    forwardedMessage = db.messages.find(m => m.id === forwardFromId && !m.isDeleted);
+    if (!forwardedMessage) return res.status(404).json({ message: 'Исходное сообщение не найдено' });
+    const sourceMember = db.chatMembers.find(m => m.chatId === forwardedMessage.chatId && m.userId === userId);
+    if (!sourceMember) return res.status(403).json({ message: 'Нет доступа к исходному сообщению' });
+    const sourceChat = db.chats.find(c => c.id === forwardedMessage.chatId);
+    const sourceSender = messageSender(forwardedMessage);
+    forwardedMessageName = sourceChat?.type === 'channel'
+      ? sourceChat.name
+      : [sourceSender?.firstName, sourceSender?.lastName].filter(Boolean).join(' ') || sourceSender?.username || 'Пользователь';
+    content = forwardedMessage.content ?? forwardedMessage.text ?? '';
+    text = content;
+    attachments = forwardedMessage.attachments || [];
+    type = forwardedMessage.type;
+    replyToId = undefined;
+    poll = undefined;
+    // A forwarded poll is a readable snapshot, not a new vote in another chat.
+    if (forwardedMessage.poll) {
+      content = [forwardedMessage.poll.question, ...forwardedMessage.poll.options.map(o => `• ${o.text}`)].join('\n');
+      type = 'text';
+    }
+  }
+  const clientTempId = typeof body.clientTempId === 'string' ? body.clientTempId.slice(0, 160) : null;
+  const existing = clientTempId && db.messages.find(m => m.chatId === chatId && (m.authorId || m.senderId) === userId && m.clientTempId === clientTempId);
+  if (existing) return res.json({ ...existing, sender: messageSender(existing) });
   const msgContent = String(content || text || '');
   if (msgContent.length > MESSAGE_MAX_LEN) {
     return res.status(400).json({ message: 'Сообщение слишком длинное' });
   }
   if (!msgContent && (!attachments || attachments.length === 0)) {
-    return res.status(400).json({ message: 'Пустое сообщение' });
+    if (!poll) return res.status(400).json({ message: 'Пустое сообщение' });
+  }
+  if (type === 'poll' && !poll) return res.status(400).json({ message: 'Укажите данные опроса' });
+  if (poll) {
+    if (chat?.type !== 'channel' || replyToId || !['owner', 'admin'].includes(isMember.role)) {
+      return res.status(403).json({ message: 'Опросы могут создавать только администраторы канала' });
+    }
+    if (typeof poll.question !== 'string' || !poll.question.trim() || !Array.isArray(poll.options) || poll.options.length < 2 || poll.options.length > 10) {
+      return res.status(400).json({ message: 'Опрос должен содержать вопрос и от 2 до 10 вариантов' });
+    }
+    if (poll.question.trim().length > 500 || (poll.multiple !== undefined && typeof poll.multiple !== 'boolean') ||
+        poll.options.some(o => !o || typeof o.text !== 'string' || !o.text.trim() || o.text.trim().length > 200) ||
+        new Set(poll.options.map((o, i) => String(o.id || i + 1))).size !== poll.options.length) {
+      return res.status(400).json({ message: 'Некорректные варианты опроса' });
+    }
   }
   // SEC: не даём клиенту прицепить >20 файлов одним сообщением.
-  const safeAttachments = Array.isArray(attachments) ? attachments.slice(0, 20) : [];
+  // Для пересылки берём вложения из исходного сообщения на сервере. Клиенту
+  // не нужно повторно загружать файл, а подмена чужого URL невозможна.
+  const attachmentsToStore = forwardedMessage
+    ? forwardedMessage.attachments
+    : attachments;
+  const safeAttachments = Array.isArray(attachmentsToStore) ? attachmentsToStore.slice(0, 20) : [];
 
   const normAttachments = safeAttachments.map(a => ({
     id: a.id || uuidv4(),
@@ -2460,8 +3384,13 @@ function handleSendMessage(chatId, userId, body, res) {
     text: msgContent,
     content: msgContent,
     replyToId: replyToId || null,
+    ...(chat?.type === 'channel' && replyToId && commentReplyToId ? { commentReplyToId } : {}),
+    clientTempId,
+    ...(forwardedMessage ? { forwardFromId: forwardedMessage.id, forwardFromName: forwardedMessageName } : {}),
+    ...(chat?.type === 'channel' && !replyToId ? { senderId: chatId, authorId: userId } : {}),
     attachments: normAttachments,
     type: type || (normAttachments.length > 0 ? 'document' : 'text'),
+    ...(poll ? { type: 'poll', poll: { question: poll.question.trim().slice(0, 500), multiple: Boolean(poll.multiple), options: poll.options.map((option, index) => ({ id: String(option.id || index + 1), text: String(option.text || '').trim().slice(0, 200), votes: 0, voterIds: [] })).filter(option => option.text).slice(0, 10) } } : {}),
     readBy: [userId],
     editedAt: null,
     isEdited: false,
@@ -2470,9 +3399,12 @@ function handleSendMessage(chatId, userId, body, res) {
     createdAt: new Date().toISOString(),
   };
   db.messages.push(message);
-  saveDb();
+  try { saveDb(); } catch {
+    db.messages = db.messages.filter(m => m !== message);
+    return res.status(500).json({ message: 'Не удалось сохранить сообщение' });
+  }
 
-  const sender = db.users.find(u => u.id === userId);
+  const sender = messageSender(message);
   const result = { ...message, sender };
 
   io.to(`chat:${chatId}`).emit('message:new', result);
@@ -2489,16 +3421,47 @@ app.post('/api/messages/:chatId/send', authMiddleware, (req, res) => {
   handleSendMessage(req.params.chatId, req.userId, req.body, res);
 });
 
+// POST /api/messages/:id/poll-vote — голосование в опросе канала.
+app.post('/api/messages/:id/poll-vote', authMiddleware, (req, res) => {
+  const msg = db.messages.find(m => m.id === req.params.id && !m.isDeleted);
+  if (!msg || msg.type !== 'poll' || !msg.poll) return res.status(404).json({ message: 'Опрос не найден' });
+  const member = db.chatMembers.find(m => m.chatId === msg.chatId && m.userId === req.userId);
+  if (!member) return res.status(403).json({ message: 'Нет доступа' });
+  if (!db.chats.some(c => c.id === msg.chatId && c.type === 'channel')) return res.status(400).json({ message: 'Опрос доступен только в канале' });
+  const selected = req.body?.optionIds;
+  if (!Array.isArray(selected) || selected.length > msg.poll.options.length || new Set(selected).size !== selected.length ||
+      selected.some(id => typeof id !== 'string' || !msg.poll.options.some(o => o.id === id))) {
+    return res.status(400).json({ message: 'Некорректные варианты ответа' });
+  }
+  if (!selected.length || (!msg.poll.multiple && selected.length > 1)) return res.status(400).json({ message: 'Выберите вариант ответа' });
+  const alreadyVoted = msg.poll.options.some(o => (o.voterIds || []).includes(req.userId));
+  if (alreadyVoted) return res.status(409).json({ message: 'Вы уже голосовали' });
+  const previousPoll = msg.poll;
+  msg.poll = { ...previousPoll, options: previousPoll.options.map(o => ({ ...o, voterIds: [...(o.voterIds || [])] })) };
+  selected.forEach(id => {
+    const option = msg.poll.options.find(o => o.id === id);
+    option.voterIds = option.voterIds || [];
+    option.voterIds.push(req.userId);
+    option.votes = option.voterIds.length;
+  });
+  try { saveDb(); } catch { msg.poll = previousPoll; return res.status(500).json({ message: 'Не удалось сохранить голос' }); }
+  const result = { ...msg, sender: messageSender(msg) };
+  io.to(`chat:${msg.chatId}`).emit('message:edited', result);
+  res.json(result);
+});
+
 
 // PUT /api/messages/:id  (edit)
 // SEC: только автор, окно 48ч, длина ≤ 4096.
 app.put('/api/messages/:id', authMiddleware, (req, res) => {
   const msg = db.messages.find(m => m.id === req.params.id);
   if (!msg) return res.status(404).json({ message: 'Не найдено' });
-  if (msg.senderId !== req.userId) return res.status(403).json({ message: 'Нет прав' });
+  const member = db.chatMembers.find(m => m.chatId === msg.chatId && m.userId === req.userId);
+  const canModerate = hasGroupRight(member, 'editMessages');
+  if (!member || (msg.senderId !== req.userId && !canModerate)) return res.status(403).json({ message: 'Нет прав' });
   if (msg.isDeleted) return res.status(400).json({ message: 'Сообщение удалено' });
   const age = Date.now() - new Date(msg.createdAt).getTime();
-  if (age > EDIT_WINDOW_MS) return res.status(403).json({ message: 'Окно редактирования истекло' });
+  if (!canModerate && age > EDIT_WINDOW_MS) return res.status(403).json({ message: 'Окно редактирования истекло' });
   const text = String(req.body?.text ?? '');
   if (text.length > MESSAGE_MAX_LEN) return res.status(400).json({ message: 'Сообщение слишком длинное' });
   msg.text = text;
@@ -2506,7 +3469,7 @@ app.put('/api/messages/:id', authMiddleware, (req, res) => {
   msg.editedAt = new Date().toISOString();
   msg.isEdited = true;
   saveDb();
-  const sender = db.users.find(u => u.id === msg.senderId) || null;
+  const sender = messageSender(msg);
   // Нормализуем так же, как в GET /api/messages/:chatId (клиент читает content)
   const result = {
     ...msg,
@@ -2521,9 +3484,22 @@ app.put('/api/messages/:id', authMiddleware, (req, res) => {
 app.delete('/api/messages/:id', authMiddleware, (req, res) => {
   const idx = db.messages.findIndex(m => m.id === req.params.id);
   if (idx === -1) return res.status(404).json({ message: 'Не найдено' });
-  if (db.messages[idx].senderId !== req.userId) return res.status(403).json({ message: 'Нет прав' });
+  const membership = db.chatMembers.find(m => m.chatId === db.messages[idx].chatId && m.userId === req.userId);
+  if (!membership || (db.messages[idx].senderId !== req.userId && !hasGroupRight(membership, 'deleteMessages'))) return res.status(403).json({ message: 'Нет прав' });
   const msg = db.messages[idx];
+  moderation.archive(db, [msg], req.userId, { uploadsDir: UPLOADS_DIR });
   db.messages.splice(idx, 1);
+  const chat = db.chats.find(c => c.id === msg.chatId);
+  if (chat?.pinnedMessageId === msg.id) {
+    chat.pinnedMessageId = null;
+    io.to(`chat:${msg.chatId}`).emit('message:pinned', { chatId: msg.chatId, messageId: null, pinnedMessage: null });
+  }
+  if (chat?.type === 'channel' && !msg.replyToId) {
+    const comments = db.messages.filter(m => m.chatId === chat.id && m.replyToId === msg.id);
+    moderation.archive(db, comments, req.userId, { uploadsDir: UPLOADS_DIR });
+    db.messages = db.messages.filter(m => !comments.includes(m));
+    comments.forEach(m => io.to(`chat:${chat.id}`).emit('message:deleted', { id: m.id, chatId: chat.id }));
+  }
   saveDb();
   io.to(`chat:${msg.chatId}`).emit('message:deleted', { id: msg.id, chatId: msg.chatId });
   res.json({ success: true });
@@ -2581,20 +3557,40 @@ app.post('/api/files/upload', authMiddleware, uploadFile.single('file'), (req, r
 // POST /api/files/upload-base64  — сохранить base64-картинку как файл
 app.post('/api/files/upload-base64', authMiddleware, (req, res) => {
   const { data, fileName, mimeType } = req.body;
-  if (!data) return res.status(400).json({ message: 'Нет данных' });
-  // data должен быть строкой base64 (без префикса data:...)
-  const base64 = data.replace(/^data:[^;]+;base64,/, '');
+  if (typeof data !== 'string' || data.length > 8 * 1024 * 1024) {
+    return res.status(400).json({ message: 'Некорректные или слишком большие данные' });
+  }
+
+  // Принимаем только безопасные растровые изображения. MIME от клиента сам по
+  // себе не является доказательством типа файла, поэтому проверяем и сигнатуру.
+  const match = data.match(/^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=\s]+)$/i);
+  if (!match) return res.status(400).json({ message: 'Разрешены только PNG, JPEG, GIF и WebP' });
+  const actualMime = match[1].toLowerCase();
+  const base64 = match[2].replace(/\s/g, '');
+  if (!base64 || base64.length % 4 === 1 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
+    return res.status(400).json({ message: 'Некорректная base64-строка' });
+  }
   const buf = Buffer.from(base64, 'base64');
-  const ext = (mimeType || 'image/jpeg').split('/')[1]?.replace('jpeg','jpg') || 'jpg';
+  if (!buf.length || buf.length > 5 * 1024 * 1024) {
+    return res.status(413).json({ message: 'Изображение слишком большое' });
+  }
+  const isPng = actualMime === 'image/png' && buf.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
+  const isJpeg = actualMime === 'image/jpeg' && buf[0] === 0xff && buf[1] === 0xd8 && buf[buf.length - 2] === 0xff && buf[buf.length - 1] === 0xd9;
+  const isGif = actualMime === 'image/gif' && (buf.subarray(0, 6).toString() === 'GIF87a' || buf.subarray(0, 6).toString() === 'GIF89a');
+  const isWebp = actualMime === 'image/webp' && buf.subarray(0, 4).toString() === 'RIFF' && buf.subarray(8, 12).toString() === 'WEBP';
+  if (!(isPng || isJpeg || isGif || isWebp)) {
+    return res.status(400).json({ message: 'Содержимое файла не соответствует типу изображения' });
+  }
+  const ext = actualMime === 'image/jpeg' ? 'jpg' : actualMime.split('/')[1];
   const filename = uuidv4() + '.' + ext;
-  const subfolder = (mimeType || '').startsWith('image') ? 'avatars' : 'files';
+  const subfolder = 'avatars';
   const dest = path.join(UPLOADS_DIR, subfolder, filename);
   fs.writeFileSync(dest, buf);
   res.json({
     url: `/uploads/${subfolder}/${filename}`,
     originalName: fileName || filename,
     size: buf.length,
-    mimeType: mimeType || 'image/jpeg',
+    mimeType: actualMime,
   });
 });
 
@@ -2625,6 +3621,14 @@ app.get('/api/music/search', authMiddleware, (req, res) => {
 app.get('/api/music/my', authMiddleware, (req, res) => {
   const tracks = db.tracks.filter(t => t.uploadedById === req.userId);
   res.json(tracks);
+});
+
+// GET /api/music/:id  — получить один трек (для отображения закреплённого трека на профиле).
+app.get('/api/music/:id', authMiddleware, (req, res) => {
+  const track = db.tracks.find(t => t.id === req.params.id);
+  if (!track) return res.status(404).json({ message: 'Трек не найден' });
+  const uploadedBy = db.users.find(u => u.id === track.uploadedById) || null;
+  res.json({ ...track, uploadedBy });
 });
 
 // POST /api/music/upload
@@ -2694,66 +3698,11 @@ app.delete('/api/music/:id', authMiddleware, (req, res) => {
 });
 
 // ─── MUSIC: import from URL / import ZIP / playlist zip ─────────────────────
-const AdmZip = require('adm-zip');
+
 const archiver = require('archiver');
 const { spawn } = require('child_process');
 
-// Multer в память для zip-архивов (до 500 МБ).
-const uploadZipMem = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 500 * 1024 * 1024 },
-});
-
-const AUDIO_EXT_RE = /\.(mp3|wav|ogg|flac|aac|m4a|opus)$/i;
-
-// POST /api/music/import-zip — массовый импорт mp3 из ZIP.
-app.post('/api/music/import-zip', authMiddleware, uploadZipMem.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ message: 'Файл не загружен' });
-  if (!(req.file.originalname || '').toLowerCase().endsWith('.zip')) {
-    return res.status(400).json({ message: 'Ожидается .zip' });
-  }
-  let zip;
-  try { zip = new AdmZip(req.file.buffer); }
-  catch { return res.status(400).json({ message: 'Битый архив' }); }
-
-  const musicDir = path.join(UPLOADS_DIR, 'music');
-  if (!fs.existsSync(musicDir)) fs.mkdirSync(musicDir, { recursive: true });
-
-  const created = [];
-  const skipped = [];
-  for (const entry of zip.getEntries()) {
-    if (entry.isDirectory) continue;
-    const base = path.basename(entry.entryName || entry.name || '');
-    if (!base || base.startsWith('.') || (entry.entryName || '').startsWith('__MACOSX')) continue;
-    if (!AUDIO_EXT_RE.test(base)) { skipped.push(base); continue; }
-    if (entry.header && entry.header.size > 50 * 1024 * 1024) { skipped.push(base + ' (>50MB)'); continue; }
-    const ext = path.extname(base);
-    const filename = `zip_${Date.now()}_${uuidv4().slice(0, 8)}${ext}`;
-    try { fs.writeFileSync(path.join(musicDir, filename), entry.getData()); }
-    catch { skipped.push(base + ' (io)'); continue; }
-    const track = {
-      id: uuidv4(),
-      title: base.replace(/\.[^.]+$/, ''),
-      artist: 'Неизвестный',
-      album: null,
-      duration: 0,
-      fileUrl: `/uploads/music/${filename}`,
-      coverUrl: null,
-      uploadedById: req.userId,
-      playsCount: 0,
-      createdAt: new Date().toISOString(),
-    };
-    db.tracks.push(track);
-    created.push(track);
-  }
-  saveDb();
-  const uploadedBy = db.users.find(u => u.id === req.userId) || null;
-  res.json({
-    imported: created.length,
-    skipped,
-    tracks: created.map(t => ({ ...t, uploadedBy })),
-  });
-});
+// ZIP import is rejected by the early middleware; no archive parser is loaded.
 
 // POST /api/music/import-url — скачать аудио по ссылке через yt-dlp.
 // Требует yt-dlp и ffmpeg в PATH. Лимит — 6 минут.
@@ -3230,18 +4179,52 @@ app.post('/api/ai/theme', authMiddleware, async (req, res) => {
   }
   res.json({ ok: true, theme, cost: devFree ? 0 : AI_THEME_COST_VP, balance: user.walletBalance });
 });
-app.get('/api/ai-lmm/health', authMiddleware, (req, res) => {
-  res.json({ status: 'ok', engine: 'lmm-simple' });
+app.get('/api/ai-lmm/health', authMiddleware, async (req, res) => {
+  if (!isAdminReq(req)) return res.status(403).json({ message: 'Только для администратора' });
+  try {
+    const r = await fetch(`${OLLAMA_URL}/api/tags`);
+    if (!r.ok) throw new Error(`Ollama HTTP ${r.status}`);
+    const data = await r.json();
+    res.json({ status: 'ok', engine: 'ollama', model: OLLAMA_MODEL, model_loaded: (data.models || []).some(m => String(m.name || '').split(':')[0] === OLLAMA_MODEL.split(':')[0]) });
+  } catch (e) { res.json({ status: 'offline', engine: 'ollama', model: OLLAMA_MODEL, error: e.message }); }
 });
-app.post('/api/ai-lmm/chat', authMiddleware, (req, res) => {
-  const text = String(req.body?.message || '');
-  res.json({ reply: `[LMM] Эхо: ${text.slice(0, 100)}` });
+app.post('/api/ai-lmm/chat', authMiddleware, async (req, res) => {
+  if (!isAdminReq(req)) return res.status(403).json({ message: 'Только для администратора' });
+  const text = String(req.body?.message || '').trim().slice(0, 8000);
+  if (!text) return res.status(400).json({ message: 'Введите сообщение' });
+  try {
+    const knowledge = (db.aiKnowledge || []).map(k => `Источник: ${k.url}\n${k.text}`).join('\n\n').slice(0, 100000);
+    const systemPrompt = knowledge ? `${LLM_SYSTEM_PROMPT}\n\nДополнительные материалы администратора:\n${knowledge}` : LLM_SYSTEM_PROMPT;
+    const r = await fetch(`${OLLAMA_URL}/api/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: OLLAMA_MODEL, stream: false, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: text }] }) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || `Ollama HTTP ${r.status}`);
+    const answer = String(data.message?.content || '').trim();
+    if (!answer) throw new Error('Ollama вернула пустой ответ');
+    res.json({ answer, model: OLLAMA_MODEL });
+  } catch (e) { res.status(503).json({ message: `Локальная LLM недоступна: ${e.message}` }); }
 });
 
-// Voice: транскрибация (заглушка, сохранение состояния)
-app.post('/api/voice/transcribe/:attachmentId', authMiddleware, (req, res) => {
-  res.json({ text: '', status: 'unavailable', message: 'Распознавание речи доступно в версии с ai-engine' });
+app.post('/api/ai-lmm/learn-url', authMiddleware, async (req, res) => {
+  if (!isAdminReq(req)) return res.status(403).json({ message: 'Только для администратора' });
+  let parsed;
+  try { parsed = new URL(String(req.body?.url || '').trim()); } catch { return res.status(400).json({ message: 'Укажите корректную ссылку' }); }
+  if (!['http:', 'https:'].includes(parsed.protocol)) return res.status(400).json({ message: 'Разрешены только http и https' });
+  if (['localhost', '127.0.0.1', '0.0.0.0'].includes(parsed.hostname) || parsed.hostname.endsWith('.local')) return res.status(400).json({ message: 'Локальные адреса запрещены' });
+  try {
+    const r = await fetch(parsed.href, { signal: AbortSignal.timeout(10000), headers: { 'User-Agent': 'Vera-AI-Learning/1.0' } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const html = (await r.text()).slice(0, 200000);
+    const text = html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 50000);
+    if (!Array.isArray(db.aiKnowledge)) db.aiKnowledge = [];
+    db.aiKnowledge = [...db.aiKnowledge.filter(k => k.url !== parsed.href), { url: parsed.href, text, updatedAt: new Date().toISOString() }].slice(-20);
+    saveDb();
+    res.json({ ok: true, url: parsed.href, text });
+  } catch (e) { res.status(502).json({ message: `Не удалось прочитать сайт: ${e.message}` }); }
 });
+
+// Local Whisper; access is checked before reading an attachment from disk.
+app.post('/api/voice/transcribe/:attachmentId', authMiddleware,
+  require('./transcription').createTranscriptionHandler({ getDb: () => db, uploadsDir: UPLOADS_DIR }));
 
 // ─── PROFILE COMMENTS (Steam-style стена) ────────────────────────────────────
 // Хранятся на сервере, чтобы владелец профиля видел записи от других.
@@ -3365,9 +4348,20 @@ app.delete('/api/favorites/:chatId', authMiddleware, (req, res) => {
 // ─── Socket.io ────────────────────────────────────────────────────────────────
 const io = new IOServer(server, {
   cors: { origin: corsOriginFn, credentials: true },
+  // Keep signalling/messages bounded; large files must use HTTP upload.
+  maxHttpBufferSize: Number(process.env.WS_MAX_BUFFER_BYTES || 12 * 1024 * 1024),
 });
 
 const userSockets = new Map(); // userId -> Set<socketId>
+const socketIpCounts = new Map();
+const socketIpHits = new Map();
+const wsEventHits = new Map();
+setInterval(() => {
+  const cutoff = Date.now() - 60_000;
+  for (const [ip, hits] of socketIpHits) if (!hits.length || hits[hits.length - 1] < cutoff) socketIpHits.delete(ip);
+  for (const [id, rec] of wsEventHits) if (rec.reset <= Date.now()) wsEventHits.delete(id);
+  for (const [id, hits] of wsSendHits) if (!hits.length || hits[hits.length - 1] < cutoff) wsSendHits.delete(id);
+}, 60_000).unref();
 // SEC: per-user WS message rate-limit state.
 const wsSendHits = new Map();
 // ─── Discord-style voice rooms (in-memory) ─────────────────────────────────
@@ -3379,6 +4373,22 @@ function publicPeerState(_uid, st) {
     kind: st.kind, mic: !!st.mic, cam: !!st.cam, screen: !!st.screen, deaf: !!st.deaf,
     joinedAt: st.joinedAt,
   };
+}
+
+// Socket.IO bypasses Express' request middleware, so resolve its client IP
+// against the same explicitly configured proxy trust function as HTTP.
+function socketRequestIp(request) {
+  const direct = normalizeIp(request?.socket?.remoteAddress);
+  const forwarded = String(request?.headers?.['x-forwarded-for'] || '')
+    .split(',').map(normalizeIp).filter(Boolean);
+  if (!direct || !forwarded.length) return direct;
+  const trustProxy = app.get('trust proxy fn');
+  if (typeof trustProxy !== 'function' || !trustProxy(direct, 0)) return direct;
+  const chain = [direct, ...forwarded.reverse()];
+  for (let index = 0; index < chain.length - 1; index += 1) {
+    if (!trustProxy(chain[index], index)) return chain[index];
+  }
+  return chain[chain.length - 1] || direct;
 }
 
 function doLeaveRoom(chatId, userId, _socketId) {
@@ -3404,12 +4414,25 @@ function leaveAllCallRooms(userId, _socketId) {
   }
 }
 io.use((socket, next) => {
+  // Engine.IO requests are not Express requests. Use the transport peer
+  // address here; trusting an arbitrary X-Forwarded-For would bypass limits.
+  socket.ip = socketRequestIp(socket.request);
+  if (socket.ip && isIpBanned(socket.ip)) return next(new Error('IP_BANNED'));
+  const now = Date.now();
+  if (!socketIpHits.has(socket.ip) && socketIpHits.size >= 10000) return next(new Error('SERVER_BUSY'));
+  const hits = socketIpHits.get(socket.ip) || [];
+  while (hits.length && hits[0] < now - 60_000) hits.shift();
+  if (hits.length >= 30) return next(new Error('RATE_LIMITED'));
+  hits.push(now);
+  socketIpHits.set(socket.ip, hits);
+  if ((socketIpCounts.get(socket.ip) || 0) >= 20) return next(new Error('TOO_MANY_CONNECTIONS'));
   const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(' ')[1];
   if (!token) return next(new Error('Unauthorized'));
   try {
     const { userId, deviceId } = verifyAccessToken(token);
     socket.userId = userId;
     socket.deviceId = deviceId;
+    if (recordModerationIp(userId, socket.ip)) saveDb();
     next();
   } catch (e) {
     next(new Error('Invalid token: ' + e.message));
@@ -3418,6 +4441,22 @@ io.use((socket, next) => {
 
 io.on('connection', (socket) => {
   const userId = socket.userId;
+  if ((userSockets.get(userId)?.size || 0) >= 8 || (socketIpCounts.get(socket.ip) || 0) >= 20) {
+    socket.disconnect(true);
+    return;
+  }
+  socket.use((_packet, next) => {
+    const now = Date.now();
+    let rec = wsEventHits.get(userId);
+    if (!rec || rec.reset <= now) {
+      if (!rec && wsEventHits.size >= 10000) { socket.disconnect(true); return; }
+      rec = { count: 0, reset: now + 60_000 };
+      wsEventHits.set(userId, rec);
+    }
+    if (++rec.count > 600) { socket.disconnect(true); return; }
+    next();
+  });
+  socketIpCounts.set(socket.ip, (socketIpCounts.get(socket.ip) || 0) + 1);
   console.log(`✅ Подключился: ${userId} (${socket.id})`);
 
   // Track socket
@@ -3442,8 +4481,41 @@ io.on('connection', (socket) => {
     socket.leave(`chat:${chatId}`);
   });
 
+  socket.on('chat:settings_offer', (data) => {
+    const { chatId, settings } = data || {};
+    const isMember = db.chatMembers.find(m => m.chatId === chatId && m.userId === userId);
+    if (!isMember || !settings || typeof settings !== 'object') return;
+    let size;
+    try { size = Buffer.byteLength(JSON.stringify(settings), 'utf8'); } catch { return; }
+    if (size > 512 * 1024) return;
+    socket.to(`chat:${chatId}`).emit('chat:settings_offer', {
+      chatId,
+      settings,
+      senderId: userId,
+      sender: db.users.find(u => u.id === userId) || null,
+    });
+  });
+
+  socket.on('chat:settings_offer_response', (data) => {
+    const { chatId, accepted, senderId } = data || {};
+    const isMember = db.chatMembers.find(m => m.chatId === chatId && m.userId === userId);
+    if (!isMember || !senderId) return;
+    const targetSockets = userSockets.get(senderId);
+    if (!targetSockets) return;
+    targetSockets.forEach(sid => {
+      io.to(sid).emit('chat:settings_offer_response', { chatId, accepted: !!accepted, userId });
+    });
+  });
+
   // Send message via socket
   socket.on('message:send', async (data, callback) => {
+    if (db.chats.some(c => c.id === data?.chatId && c.type === 'channel')) {
+      let status = 200;
+      return handleSendMessage(data.chatId, userId, data, {
+        status(code) { status = code; return this; },
+        json(value) { if (callback) callback(status >= 400 ? { error: value.message } : value); },
+      });
+    }
     const { chatId, text, content, replyToId, attachments, type } = data || {};
     const isMember = db.chatMembers.find(m => m.chatId === chatId && m.userId === userId);
     if (!isMember) return callback && callback({ error: 'Нет доступа' });
@@ -3749,6 +4821,8 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    const count = (socketIpCounts.get(socket.ip) || 1) - 1;
+    if (count > 0) socketIpCounts.set(socket.ip, count); else socketIpCounts.delete(socket.ip);
     // Автовыход из всех голосовых комнат (см. ниже блок callRooms)
     try { leaveAllCallRooms(userId, socket.id); } catch {}
     const sockets = userSockets.get(userId);
@@ -3824,8 +4898,10 @@ rl.on('line', (line) => {
       const chatIdx = db.chats.findIndex(c => c.id === chatId || c.id.startsWith(chatId));
       if (chatIdx === -1) { console.log(`Чат "${chatId}" не найден`); break; }
       const chat = db.chats[chatIdx];
-      const msgCount = db.messages.filter(m => m.chatId === chat.id).length;
+      const chatMessages = db.messages.filter(m => m.chatId === chat.id);
+      const msgCount = chatMessages.length;
       const memberCount = db.chatMembers.filter(m => m.chatId === chat.id).length;
+      moderation.archive(db, chatMessages, 'console', { uploadsDir: UPLOADS_DIR });
       db.messages    = db.messages.filter(m => m.chatId !== chat.id);
       db.chatMembers = db.chatMembers.filter(m => m.chatId !== chat.id);
       if (db.favorites) db.favorites = db.favorites.filter(f => f.chatId !== chat.id);

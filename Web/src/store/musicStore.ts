@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import { Track } from '../types';
 import { musicApi } from '../services/api';
 import { peer, isPeerAvailable } from './../services/peer';
+import { registerAccountStore } from '../services/storeSyncSimple';
 
 type RepeatMode = 'none' | 'one' | 'all';
 
@@ -19,10 +20,12 @@ interface MusicState {
   shuffle: boolean;
   isVisible: boolean;
   playerCollapsed: boolean;
+  playbackTrackId: string | null;
 
   loadTracks: () => Promise<void>;
   search: (q: string) => Promise<void>;
   play: (track: Track, queue?: Track[]) => void;
+  playShuffled: (tracks: Track[]) => void;
   togglePlay: () => void;
   next: () => void;
   prev: () => void;
@@ -59,6 +62,7 @@ export const useMusicStore = create<MusicState>()(
   shuffle: false,
   isVisible: true,
   playerCollapsed: false,
+  playbackTrackId: null,
 
   loadTracks: async () => {
     // P2P: локальная mediaLibrary из peer/src/store.js.
@@ -76,7 +80,8 @@ export const useMusicStore = create<MusicState>()(
           playsCount: m.playsCount || 0,
           createdAt: m.addedAt ? new Date(m.addedAt).toISOString() : new Date().toISOString(),
         }));
-        set({ tracks });
+        const savedTrack = tracks.find((track) => track.id === get().playbackTrackId);
+        set({ tracks, currentTrack: savedTrack || null, queue: savedTrack ? [savedTrack] : [], currentIndex: savedTrack ? 0 : -1 });
         return;
       } catch (e) { console.warn('[peer] listMedia failed:', e); }
       set({ tracks: [] });
@@ -84,7 +89,8 @@ export const useMusicStore = create<MusicState>()(
     }
     const res = await musicApi.getMy();
     const tracks = Array.isArray(res.data) ? res.data : (res.data.tracks || []);
-    set({ tracks });
+    const savedTrack = tracks.find((track) => track.id === get().playbackTrackId);
+    set({ tracks, currentTrack: savedTrack || null, queue: savedTrack ? [savedTrack] : [], currentIndex: savedTrack ? 0 : -1 });
   },
 
   search: async (q) => {
@@ -110,10 +116,16 @@ export const useMusicStore = create<MusicState>()(
   play: (track, queue) => {
     const q = queue || get().queue;
     const idx = q.findIndex((t) => t.id === track.id);
-    set({ currentTrack: track, queue: q, currentIndex: idx, isPlaying: true, progress: 0 });
+    set({ currentTrack: track, playbackTrackId: track.id, queue: q, currentIndex: idx, isPlaying: true, progress: 0 });
     // Счётчик воспроизведений — только в серверном режиме. В P2P можно
     // локально накручивать в mediaLibrary; оставим на будущее.
     if (!isPeerAvailable()) musicApi.recordPlay(track.id).catch(() => {});
+  },
+
+  playShuffled: (tracks) => {
+    if (!tracks.length) return;
+    set({ shuffle: true, repeat: get().repeat === 'one' ? 'none' : get().repeat });
+    get().play(tracks[Math.floor(Math.random() * tracks.length)], [...tracks]);
   },
 
   togglePlay: () => set((s) => ({ isPlaying: !s.isPlaying })),
@@ -127,7 +139,11 @@ export const useMusicStore = create<MusicState>()(
     if (!queue.length) return;
     let idx: number;
     if (shuffle) {
-      idx = Math.floor(Math.random() * queue.length);
+      const candidates = queue.map((track, index) => ({ track, index }))
+        .filter(({ track }) => track.id !== currentTrack?.id);
+      idx = candidates.length
+        ? candidates[Math.floor(Math.random() * candidates.length)].index
+        : 0;
     } else {
       idx = currentIndex + 1;
       if (idx >= queue.length) {
@@ -135,7 +151,7 @@ export const useMusicStore = create<MusicState>()(
         else return set({ isPlaying: false });
       }
     }
-    set({ currentTrack: queue[idx], currentIndex: idx, isPlaying: true, progress: 0 });
+      set({ currentTrack: queue[idx], playbackTrackId: queue[idx].id, currentIndex: idx, isPlaying: true, progress: 0 });
     musicApi.recordPlay(queue[idx].id).catch(() => {});
   },
 
@@ -143,7 +159,7 @@ export const useMusicStore = create<MusicState>()(
     const { queue, currentIndex, progress } = get();
     if (progress > 3) return set({ progress: 0 });
     const idx = Math.max(0, currentIndex - 1);
-    set({ currentTrack: queue[idx], currentIndex: idx, isPlaying: true, progress: 0 });
+    set({ currentTrack: queue[idx], playbackTrackId: queue[idx].id, currentIndex: idx, isPlaying: true, progress: 0 });
   },
 
   setVolume: (volume) => set({ volume }),
@@ -163,7 +179,7 @@ export const useMusicStore = create<MusicState>()(
     const { queue } = get();
     const track = queue[index];
     if (!track) return;
-    set({ currentTrack: track, currentIndex: index, isPlaying: true, progress: 0 });
+    set({ currentTrack: track, playbackTrackId: track.id, currentIndex: index, isPlaying: true, progress: 0 });
     musicApi.recordPlay(track.id).catch(() => {});
   },
 
@@ -288,6 +304,7 @@ export const useMusicStore = create<MusicState>()(
         tracks,
         queue,
         currentTrack: removedCurrent ? null : s.currentTrack,
+        playbackTrackId: removedCurrent ? null : s.playbackTrackId,
         currentIndex: removedCurrent ? -1 : queue.findIndex((t) => t.id === s.currentTrack?.id),
         isPlaying: removedCurrent ? false : s.isPlaying,
       };
@@ -324,7 +341,12 @@ export const useMusicStore = create<MusicState>()(
         repeat: s.repeat,
         shuffle: s.shuffle,
         playerCollapsed: s.playerCollapsed,
+        playbackTrackId: s.playbackTrackId,
+        progress: s.progress,
+        isPlaying: s.isPlaying,
       }),
     }
   )
 );
+
+registerAccountStore('music', useMusicStore);

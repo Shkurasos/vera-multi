@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { Box, Typography, Paper, Button, Stack, Alert, CircularProgress, Chip } from '@mui/material';
 import { Download as DownloadIcon } from '@mui/icons-material';
 import { downloadsApi } from '../services/api';
+import PwaInstall from '../components/PwaInstall';
 
 type Platform = 'win' | 'mac' | 'linux' | 'other';
 interface DownloadFile { platform: Platform; filename: string; size: number; url: string; }
 
 function detectPlatform(): Platform {
   const ua = navigator.userAgent || '';
+  if (/Android|iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1)) return 'other';
   if (/Windows/i.test(ua)) return 'win';
   if (/Mac OS X|Macintosh/i.test(ua)) return 'mac';
   if (/Linux|X11/i.test(ua)) return 'linux';
@@ -49,12 +51,13 @@ export default function DownloadPage() {
       <Box sx={{ maxWidth: 720, mx: 'auto' }}>
         <Typography variant="h4" fontWeight={800} mb={1}
           sx={{ background: 'linear-gradient(135deg, #C084FC, #7C6AF7)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-          Скачать Vera Desktop
+          Установить VERA
         </Typography>
         <Typography variant="body2" color="text.secondary" mb={3}>
           Десктоп-приложение синхронизируется с веб-версией и работает как второе устройство аккаунта.
         </Typography>
 
+        <PwaInstall />
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         {files === null && !error && (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>

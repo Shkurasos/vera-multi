@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import BubbleSettingsControls from './BubbleSettingsControls';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button, Typography, Box,
   List, ListItemButton, ListItemIcon, ListItemText, Divider, Slider, Switch,
@@ -8,7 +9,7 @@ import {
 import {
   Link as LinkIcon, DevicesOther, ChevronRight, ExpandMore, AutoAwesome,
   Brightness6, TextFields, Language, DataUsage, Notifications, Security, Lock, Public,
-  ViewSidebar, RestartAlt, Storefront, Palette, Wallpaper, VolumeUp,
+  ViewSidebar, RestartAlt, Storefront, Palette, Wallpaper, VolumeUp, Download,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useThemeStore } from '../store/themeStore';
@@ -24,6 +25,7 @@ import LayoutDesignerDialog from './LayoutDesignerDialog';
 import { useShopStore } from '../store/shopStore';
 import { useUiPrefsStore, ICON_PACKS, UI_STYLES, IconPack, UiStyle } from '../store/uiPrefsStore';
 import { useAnimStore, ANIM_GROUPS } from '../store/animStore';
+import { useAuthStore } from '../store/authStore';
 
 
 const SCOPE_LABELS: Record<PrivacyScope, string> = {
@@ -37,11 +39,21 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
   const [designerOpen, setDesignerOpen] = useState(false);
   const [wallpaperOpen, setWallpaperOpen] = useState(false);
   const [soundOpen, setSoundOpen] = useState(false);
+  const [sidebarWidthMax, setSidebarWidthMax] = useState(() => Math.max(200, Math.floor(window.innerWidth / 10) * 5));
   const shopSetOpen = useShopStore((x) => x.setOpen);
   const s = useUserSettingsStore();
   const { iconPack, uiStyle, setIconPack, setUiStyle } = useUiPrefsStore();
   const { enabled: animEnabled, set: setAnim, setAll: setAllAnims } = useAnimStore();
+  const currentUser = useAuthStore((state) => state.user);
+  const isAdmin = Boolean(currentUser?.isAdmin);
   const allAnimsOn = ANIM_GROUPS.every((g) => animEnabled[g.key]);
+  const effectiveSidebarWidth = Math.min(s.layout.sidebarWidth, sidebarWidthMax);
+
+  useEffect(() => {
+    const updateSidebarWidthMax = () => setSidebarWidthMax(Math.max(200, Math.floor(window.innerWidth / 10) * 5));
+    window.addEventListener('resize', updateSidebarWidthMax);
+    return () => window.removeEventListener('resize', updateSidebarWidthMax);
+  }, []);
 
 
   const [pwd1, setPwd1] = useState('');
@@ -73,6 +85,14 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
         <DialogTitle sx={{ fontWeight: 700 }}>Настройки</DialogTitle>
         <DialogContent dividers sx={{ bgcolor: theme.bgChat, p: 0 }}>
           <List sx={{ py: 0 }}>
+            <ListItemButton onClick={() => { onClose(); navigate('/download'); }} sx={{ py: 1.5 }}>
+              <ListItemIcon sx={{ color: theme.accent, minWidth: 40 }}><Download /></ListItemIcon>
+              <ListItemText primary="Скачать приложение" secondary="Vera Desktop — доступные установщики"
+                primaryTypographyProps={{ sx: { color: theme.text, fontWeight: 600 } }}
+                secondaryTypographyProps={{ sx: { color: theme.textSec, fontSize: 12 } }} />
+              <ChevronRight sx={{ color: theme.textSec }} />
+            </ListItemButton>
+            <Divider sx={{ borderColor: theme.border }} />
             <ListItemButton onClick={() => setInviteOpen(true)} sx={{ py: 1.5 }}>
               <ListItemIcon sx={{ color: theme.accent, minWidth: 40 }}><LinkIcon /></ListItemIcon>
               <ListItemText primary="Моя ссылка для приглашения" secondary="Поделиться контактом или добавить друга"
@@ -107,6 +127,30 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
           </List>
 
           <Box sx={{ p: 2 }}>
+            {isAdmin && <Accordion sx={sectionSx} disableGutters>
+              <AccordionSummary expandIcon={<ExpandMore sx={{ color: theme.textSec }} />}>
+                <AutoAwesome sx={{ mr: 1, color: theme.accent }} />
+                <Typography sx={{ fontWeight: 600 }}>Панель администратора</Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 1.5 }}>
+                  Управление визуальными функциями на этом компьютере.
+                </Typography>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                  <Typography sx={{ color: theme.text, fontWeight: 600 }}>Все эффекты</Typography>
+                  <Switch checked={allAnimsOn} onChange={(_, checked) => setAllAnims(checked)} />
+                </Stack>
+                {ANIM_GROUPS.map((group) => (
+                  <Stack key={group.key} direction="row" justifyContent="space-between" alignItems="center" sx={{ py: 0.5 }}>
+                    <Box sx={{ minWidth: 0, pr: 1 }}>
+                      <Typography sx={{ color: theme.text, fontSize: 14 }}>{group.label}</Typography>
+                      <Typography sx={{ color: theme.textSec, fontSize: 11 }}>{group.desc}</Typography>
+                    </Box>
+                    <Switch checked={!!animEnabled[group.key]} onChange={(_, checked) => setAnim(group.key, checked)} />
+                  </Stack>
+                ))}
+              </AccordionDetails>
+            </Accordion>}
             <Accordion sx={sectionSx} disableGutters>
               <AccordionSummary expandIcon={<ExpandMore sx={{ color: theme.textSec }} />}>
                 <Palette sx={{ mr: 1, color: theme.accent }} />
@@ -226,10 +270,12 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
                   onChange={(_, v) => s.set('textScale', Array.isArray(v) ? v[0] : v)}
                   valueLabelDisplay="auto" valueLabelFormat={(v) => `${Math.round(v * 100)}%`} />
                 <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <TextFields fontSize="small" /> Глобальный шрифт
+                  <TextFields fontSize="small" /> Шрифт всего приложения
                 </Typography>
                 <Select fullWidth size="small" value={s.globalFontFamily}
                   onChange={(e) => s.set('globalFontFamily', e.target.value)}
+                  inputProps={{ 'aria-label': 'Шрифт всего приложения' }}
+                  MenuProps={{ PaperProps: { 'data-font-preview': true } as React.HTMLAttributes<HTMLDivElement> }}
                   sx={{ fontFamily: s.globalFontFamily }}>
                   <MenuItem value="inherit" sx={{ fontFamily: 'inherit' }}>По умолчанию</MenuItem>
                   <MenuItem value="'Inter', sans-serif" sx={{ fontFamily: "'Inter', sans-serif" }}>Inter</MenuItem>
@@ -241,7 +287,7 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
                   <MenuItem value="'Comic Sans MS', cursive" sx={{ fontFamily: "'Comic Sans MS', cursive" }}>Comic Sans</MenuItem>
                 </Select>
                 <Alert severity="info" sx={{ mt: 1, fontSize: 12 }}>
-                  Этот шрифт применится ко всему приложению. Шрифты для отдельных чатов настраиваются в их параметрах.
+                  Меняет весь текст: кнопки, меню, заголовки, настройки и сообщения. Применяется сразу и сохраняется. Выбранный шрифт имеет приоритет над шрифтами чатов; «По умолчанию» возвращает индивидуальные настройки.
                 </Alert>
                 <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
                   <Language fontSize="small" /> Язык интерфейса
@@ -288,9 +334,9 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
 
                   <Box>
                     <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
-                      Ширина панели чатов — {s.layout.sidebarWidth}px
+                      Ширина панели чатов — {effectiveSidebarWidth}px
                     </Typography>
-                    <Slider min={200} max={520} step={5} value={s.layout.sidebarWidth}
+                    <Slider min={200} max={sidebarWidthMax} step={5} value={Math.min(s.layout.sidebarWidth, sidebarWidthMax)}
                       onChange={(_, v) => s.setLayout('sidebarWidth', Array.isArray(v) ? v[0] : v)} />
                   </Box>
 
@@ -351,6 +397,40 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
                     </Typography>
                     <Slider min={0} max={28} step={1} value={s.layout.radius}
                       onChange={(_, v) => s.setLayout('radius', Array.isArray(v) ? v[0] : v)} />
+                  </Box>
+
+                  <Box>
+                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
+                      Скругление пузырей сообщений — {s.layout.bubbleRadius}px
+                    </Typography>
+                    <Slider min={4} max={30} step={1} value={s.layout.bubbleRadius}
+                      onChange={(_, v) => s.setLayout('bubbleRadius', Array.isArray(v) ? v[0] : v)} />
+                    <Typography sx={{ fontSize: 11, color: theme.textSec }}>
+                      Маленькие значения выглядят строже, большие — мягче и дружелюбнее.
+                    </Typography>
+                  </Box>
+
+                  <Box>
+                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
+                      Пузыри сообщений по умолчанию для всех чатов
+                    </Typography>
+                    <BubbleSettingsControls value={{ enabled: s.layout.bubbleEnabled ?? true, maxWidth: s.layout.messageMaxWidth, textSize: s.layout.bubbleTextSize ?? 15, padding: s.layout.bubblePadding ?? 6 }} onChange={patch => {
+                      if (patch.enabled !== undefined) s.setLayout('bubbleEnabled', patch.enabled);
+                      if (patch.maxWidth !== undefined) s.setLayout('messageMaxWidth', patch.maxWidth);
+                      if (patch.textSize !== undefined) s.setLayout('bubbleTextSize', patch.textSize);
+                      if (patch.padding !== undefined) s.setLayout('bubblePadding', patch.padding);
+                    }} />
+                    <Typography sx={{ fontSize: 11, color: theme.textSec }}>
+                      Применяются к чатам без собственных настроек. Для отдельного чата: ⋮ → Настройки отображения.
+                    </Typography>
+                  </Box>
+
+                  <Box>
+                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
+                      Ширина боковой панели — {effectiveSidebarWidth}px
+                    </Typography>
+                    <Slider min={200} max={sidebarWidthMax} step={5} value={Math.min(s.layout.sidebarWidth, sidebarWidthMax)}
+                      onChange={(_, v) => s.setLayout('sidebarWidth', Array.isArray(v) ? v[0] : v)} />
                   </Box>
 
                   <RowToggle label="Показывать вкладки (Диалоги / Архив / Группы)"

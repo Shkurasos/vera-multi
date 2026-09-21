@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { Box, Typography, TextField, Button, InputAdornment, IconButton } from '@mui/material';
 import { ContentCopy } from '@mui/icons-material';
-import { useThemeStore, CUSTOM_THEME_ID_START, Theme, themeToLink, themeFromLink } from '../store/themeStore';
+import { useThemeStore, THEMES, CUSTOM_THEME_ID_START, Theme, themeToLink, themeFromLink } from '../store/themeStore';
 import { aiApi } from '../services/botsApi';
 import { useShopStore } from '../store/shopStore';
 
@@ -27,6 +27,37 @@ export const PATTERN_LIST: { id: string; label: string; fn: (c: string) => strin
   { id: 'moons',      label: 'Луны',         fn: c => svgUrl('<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'32\' height=\'32\'><path d=\'M20,16 A8,8 0 1,1 16,8 A6,6 0 1,0 20,16 Z\' fill=\'' + c + '\' opacity=\'0.4\'/></svg>') },
   { id: 'leaves',     label: 'Листья',       fn: c => svgUrl('<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'40\' height=\'40\'><path d=\'M5,35 Q20,5 35,5 Q35,20 20,30 Q12,35 5,35 Z\' fill=\'none\' stroke=\'' + c + '\' stroke-width=\'0.8\'/></svg>') },
 ];
+
+function randomMixedPattern(ids: string[], color: string) {
+  const patterns = ids.map(id => PATTERN_LIST.find(p => p.id === id)).filter(Boolean) as typeof PATTERN_LIST;
+  if (!patterns.length) return '';
+  const size = 150 + Math.floor(Math.random() * 90);
+  const cols = 3 + Math.floor(Math.random() * 2);
+  const rows = 3 + Math.floor(Math.random() * 2);
+  const cellW = size / cols, cellH = size / rows;
+  const shapes = Array.from({ length: cols * rows }, (_, i) => {
+    const p = patterns[i % patterns.length];
+    const raw = decodeURIComponent(p.fn(color)).replace(/^url\("data:image\/svg\+xml,|"\)$/g, '');
+    const inner = raw.replace(/<svg[^>]*>|<\/svg>/g, '');
+    const x = (i % cols) * cellW + cellW / 2 + (Math.random() - 0.5) * cellW * 0.35;
+    const y = Math.floor(i / cols) * cellH + cellH / 2 + (Math.random() - 0.5) * cellH * 0.35;
+    const angle = Math.floor(Math.random() * 360);
+    const scale = 0.28 + Math.random() * 0.32;
+    return `<g transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${angle}) scale(${scale}) translate(-20 -20)" opacity="${(0.35 + Math.random() * 0.35).toFixed(2)}">${inner}</g>`;
+  }).join('');
+  return svgUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}">${shapes}</svg>`);
+}
+
+function patternBackgroundSize(pattern?: string, min = 860, max = 1400): string | undefined {
+  if (!pattern) return undefined;
+  const layers = Math.max(1, (pattern.match(/url\(/g) || []).length);
+  const low = Math.max(200, Math.min(min, max));
+  const high = Math.max(low, Math.max(min, max));
+  return Array.from({ length: layers }, (_, index) => {
+    const size = layers === 1 ? high : low + ((high - low) * index) / (layers - 1);
+    return `${size}px ${size}px`;
+  }).join(', ');
+}
 
 interface ColorFieldProps {
   label: string;
@@ -65,10 +96,12 @@ function makeId() {
 
 interface Props {
   onClose: () => void;
+  onGoChats?: () => void;
   initialTheme?: Theme;
+  onApply?: (theme: Theme) => void;
 }
 
-export function ThemeEditor({ onClose, initialTheme }: Props) {
+export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply }: Props) {
   const { theme, customThemes, saveCustomTheme, deleteCustomTheme, setTheme, themeId } = useThemeStore();
 
   const [draft, setDraft] = useState<Theme>(() => {
@@ -80,6 +113,8 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
       id: makeId(),
       name: 'Моя тема',
       chatPattern: '',
+      chatPatternSizeMin: 860,
+      chatPatternSizeMax: 1400,
       bubbleOwnGradient: theme.bubbleOwnGradient || '',
       bubbleOwnShadow: theme.bubbleOwnShadow || '',
       bubbleOtherShadow: theme.bubbleOtherShadow || '',
@@ -91,6 +126,7 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
 
   const [patternId, setPatternId] = useState('none');
   const [patternColor, setPatternColor] = useState('#7c6af7');
+  const [patternIds, setPatternIds] = useState<string[]>([]);
   const [themeLink, setThemeLink] = useState('');
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
@@ -126,10 +162,19 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
     setPatternId(pid);
     setPatternColor(color);
   }, []);
+  const togglePattern = (id: string) => {
+    const next = patternIds.includes(id) ? patternIds.filter(x => x !== id) : [...patternIds, id];
+    setPatternIds(next);
+    setDraft(d => ({ ...d, chatPattern: randomMixedPattern(next, patternColor) || undefined }));
+  };
 
   const handleSave = () => {
-    saveCustomTheme(draft);
-    setTheme(draft.id);
+    if (onApply) {
+      onApply(draft);
+    } else {
+      saveCustomTheme(draft);
+      setTheme(draft.id);
+    }
     onClose();
   };
 
@@ -163,6 +208,7 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
     background: draft.bgChat || draft.bg,
     backgroundImage: draft.chatPattern || undefined,
     backgroundRepeat: 'repeat',
+    backgroundSize: patternBackgroundSize(draft.chatPattern, draft.chatPatternSizeMin, draft.chatPatternSizeMax),
     borderRadius: 8, padding: '10px 12px', minHeight: 110,
     display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6,
   };
@@ -176,7 +222,7 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
   const previewOther: React.CSSProperties = {
     alignSelf: 'flex-start', maxWidth: '72%',
     background: draft.bgBubbleOther,
-    color: draft.text,
+    color: draft.bubbleOtherText || draft.text,
     boxShadow: draft.bubbleOtherShadow || undefined,
     borderRadius: '14px 14px 14px 4px', padding: '6px 12px', fontSize: 13,
   };
@@ -188,14 +234,14 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
   };
   const modal: React.CSSProperties = {
     background: theme.bgSidebar, color: theme.text,
-    borderRadius: 16, width: '100%', maxWidth: 740, maxHeight: '92vh',
-    overflowY: 'auto', padding: 22, boxSizing: 'border-box',
+    borderRadius: 12, width: '100%', maxWidth: 820, maxHeight: '92vh',
+    overflowY: 'auto', padding: 18, boxSizing: 'border-box',
     border: '1px solid ' + theme.border,
     boxShadow: '0 24px 60px rgba(0,0,0,0.6)',
   };
   const sectionLabel: React.CSSProperties = {
     fontSize: 11, opacity: 0.55, textTransform: 'uppercase',
-    letterSpacing: '0.06em', marginBottom: 6, marginTop: 12,
+    letterSpacing: '0.06em', marginBottom: 8, marginTop: 16, fontWeight: 700,
   };
   const inputStyle: React.CSSProperties = {
     width: '100%', padding: '5px 9px', borderRadius: 7,
@@ -212,14 +258,22 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
         {/* Шапка */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
           <h2 style={{ margin: 0, fontSize: 17 }}>🎨 Редактор темы</h2>
-          <button
-            onClick={onClose}
-            style={{ background: 'none', border: 'none', color: theme.text, fontSize: 22, cursor: 'pointer', opacity: 0.6, lineHeight: 1 }}
-          >×</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {onGoChats && (
+              <button
+                onClick={onGoChats}
+                style={{ background: 'none', border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.accent, padding: '6px 10px', cursor: 'pointer', fontSize: 13 }}
+              >Чаты</button>
+            )}
+            <button
+              onClick={onClose}
+              style={{ background: 'none', border: 'none', color: theme.text, fontSize: 22, cursor: 'pointer', opacity: 0.6, lineHeight: 1 }}
+            >×</button>
+          </div>
         </div>
 
          {/* Мои сохранённые темы */}
-         {customThemes.length > 0 && (
+         {!onApply && customThemes.length > 0 && (
            <div style={{ marginBottom: 14 }}>
              <div style={sectionLabel}>Мои темы</div>
              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -243,6 +297,30 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
              </div>
            </div>
          )}
+
+         {/* Встроенные темы — их можно сразу установить */}
+         <div style={{ marginBottom: 14 }}>
+           <div style={sectionLabel}>Встроенные темы</div>
+           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+             {THEMES.map(bt => (
+               <button
+                 key={bt.id}
+                onClick={() => { if (!onApply) setTheme(bt.id); handleLoad(bt); }}
+                 title="Установить тему"
+                 style={{
+                   display: 'inline-flex', alignItems: 'center', gap: 5,
+                   background: themeId === bt.id ? theme.accent + '28' : theme.bgHover,
+                   border: '1px solid ' + (themeId === bt.id ? theme.accent : theme.border),
+                   borderRadius: 8, padding: '5px 10px', fontSize: 13,
+                   color: theme.text, cursor: 'pointer',
+                 }}
+               >
+                 <span style={{ width: 10, height: 10, borderRadius: '50%', background: bt.accent }} />
+                 {bt.name}
+               </button>
+             ))}
+           </div>
+         </div>
 
          {/* Импорт/экспорт темы */}
          <div style={{ marginBottom: 14 }}>
@@ -312,7 +390,7 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
         </div>
 
         {/* Основная сетка */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18, alignItems: 'start' }}>
 
           {/* Левая колонка */}
           <div>
@@ -336,6 +414,7 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
               onChange={v => setDraft(d => ({ ...d, bgBubbleOwn: v, bubbleOwnGradient: '' }))} />
             <ColorField label="Чужой пузырь"         value={draft.bgBubbleOther} onChange={v => upd('bgBubbleOther', v)} />
             <ColorField label="Текст своего пузыря"  value={draft.bubbleOwnText || '#ffffff'} onChange={v => upd('bubbleOwnText', v)} />
+            <ColorField label="Текст чужого пузыря"  value={draft.bubbleOtherText || draft.text} onChange={v => upd('bubbleOtherText', v)} />
 
             <div style={{ ...sectionLabel, marginTop: 12 }}>Градиент своего пузыря (CSS)</div>
             <input
@@ -350,19 +429,20 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
           <div>
             <div style={sectionLabel}>Паттерн фона чата</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
-              {PATTERN_LIST.map(p => (
-                <button
+              {PATTERN_LIST.filter(p => p.id !== 'none').map(p => (
+                <label
                   key={p.id}
-                  onClick={() => applyPattern(p.id, patternColor)}
+                  onClick={() => togglePattern(p.id)}
                   style={{
                     ...patternBtnBase,
-                    background: patternId === p.id ? theme.accent : theme.bgHover,
-                    color: patternId === p.id ? '#fff' : theme.text,
-                    borderColor: patternId === p.id ? theme.accent : theme.border,
+                    background: patternIds.includes(p.id) ? theme.accent : theme.bgHover,
+                    color: patternIds.includes(p.id) ? '#fff' : theme.text,
+                    borderColor: patternIds.includes(p.id) ? theme.accent : theme.border,
                   }}
-                >{p.label}</button>
+                ><input type="checkbox" checked={patternIds.includes(p.id)} readOnly /> {p.label}</label>
               ))}
             </div>
+            <Button size="small" variant="outlined" onClick={() => setDraft(d => ({ ...d, chatPattern: randomMixedPattern(patternIds, patternColor) || undefined }))} sx={{ textTransform: 'none', color: theme.accent }}>🎲 Перемешать рисунки</Button>
 
             {patternId !== 'none' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
@@ -370,12 +450,39 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
                 <input
                   type="color"
                   value={patternColor}
-                  onChange={e => { applyPattern(patternId, e.target.value); }}
+                  onChange={e => { setPatternColor(e.target.value); setDraft(d => ({ ...d, chatPattern: randomMixedPattern(patternIds, e.target.value) || undefined })); }}
                   style={{ width: 34, height: 26, padding: 0, border: 'none', borderRadius: 4, cursor: 'pointer' }}
                 />
                 <span style={{ fontSize: 11, fontFamily: 'monospace', opacity: 0.7 }}>{patternColor}</span>
               </div>
             )}
+
+            <div style={{ marginBottom: 12, marginTop: 10 }}>
+              <div style={{ ...sectionLabel, marginBottom: 6 }}>Размер паттерна</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <TextField
+                  size="small"
+                  type="number"
+                  label="От, px"
+                  value={draft.chatPatternSizeMin ?? 860}
+                  onChange={e => setDraft(d => ({ ...d, chatPatternSizeMin: Math.max(200, Number(e.target.value) || 200) }))}
+                  inputProps={{ min: 200, max: 4000, step: 20 }}
+                  sx={{ width: 120 }}
+                />
+                <TextField
+                  size="small"
+                  type="number"
+                  label="До, px"
+                  value={draft.chatPatternSizeMax ?? 1400}
+                  onChange={e => setDraft(d => ({ ...d, chatPatternSizeMax: Math.max(200, Number(e.target.value) || 200) }))}
+                  inputProps={{ min: 200, max: 4000, step: 20 }}
+                  sx={{ width: 120 }}
+                />
+              </div>
+              <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4 }}>
+                Для нескольких рисунков размеры распределяются между этими значениями
+              </div>
+            </div>
 
             <div style={{ marginBottom: 12, marginTop: 10 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
@@ -403,8 +510,33 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
                 <span style={{ color: theme.text }}>Отключить фоновое свечение</span>
               </label>
               <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4, marginLeft: 24 }}>
-                Убирает фиолетово-розовые градиенты за всеми слоями
+                Убирает мягкое мятное свечение за всеми слоями
               </div>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 13, marginBottom: 8, color: theme.text }}>Фоновое свечение</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: 12 }}>Цвет</span>
+                <input
+                  type="color"
+                  value={draft.backgroundGlowColor || '#8FE3CF'}
+                  onChange={e => setDraft(d => ({ ...d, backgroundGlowColor: e.target.value }))}
+                  style={{ width: 34, height: 26, padding: 0, border: 'none', borderRadius: 4, cursor: 'pointer' }}
+                />
+                <span style={{ fontSize: 11, fontFamily: 'monospace', opacity: 0.7 }}>{draft.backgroundGlowColor || '#8FE3CF'}</span>
+              </div>
+              <div style={{ fontSize: 12, marginBottom: 6, color: theme.textSec }}>
+                Интенсивность: {Math.round((draft.backgroundGlowIntensity ?? 0.18) * 100)}%
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={Math.round((draft.backgroundGlowIntensity ?? 0.18) * 100)}
+                onChange={e => setDraft(d => ({ ...d, backgroundGlowIntensity: parseInt(e.target.value, 10) / 100 }))}
+                style={{ width: '100%', cursor: 'pointer' }}
+              />
             </div>
 
             <div style={{ marginBottom: 16 }}>
@@ -466,6 +598,7 @@ export function ThemeEditor({ onClose, initialTheme }: Props) {
                   position: 'absolute', inset: 0,
                   backgroundImage: draft.chatPattern,
                   backgroundRepeat: 'repeat',
+                  backgroundSize: patternBackgroundSize(draft.chatPattern, draft.chatPatternSizeMin, draft.chatPatternSizeMax),
                   zIndex: 1,
                 }} />
               )}

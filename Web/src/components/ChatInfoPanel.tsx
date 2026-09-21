@@ -1,19 +1,23 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Box, Avatar, Typography, IconButton, TextField, Button,
-  Divider, List, ListItem, ListItemAvatar, ListItemText,
-  CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions,
+  Divider, List, ListItem, ListItemAvatar, ListItemText, Menu, MenuItem,
+  CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions, Tabs, Tab, Checkbox, FormControlLabel,
 } from '@mui/material';
 import {
   ChevronRight, Edit, Check, CameraAlt, ExitToApp, PersonAdd, Search, Close,
+  Image as ImageIcon, Videocam, AudioFile, AttachFile, Download,
 } from '@mui/icons-material';
-import { Chat, User } from '../types';
+import { Chat, User, Message, MessageAttachment } from '../types';
 import { useAuthStore } from '../store/authStore';
 import { useChatStore } from '../store/chatStore';
 import { useThemeStore } from '../store/themeStore';
-import { chatsApi, filesApi, usersApi } from '../services/api';
+import { chatsApi, filesApi, usersApi, messagesApi } from '../services/api';
 import { peer, isPeerAvailable } from '../services/peer';
 import { useNavigate } from 'react-router-dom';
+import { ChatMember } from '../types';
+import { GROUP_RIGHTS, GroupRight, hasGroupRight } from '../services/groupPermissions';
+import { SHOP_CATALOG } from '../store/shopStore';
 
 function getInitials(name: string): string {
   if (!name) return '?';
@@ -28,7 +32,9 @@ interface Props {
 
 export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
   const { user } = useAuthStore();
-  const { loadChats, updateChatList, onlineUsers, chats } = useChatStore();
+  const [channelSkins, setChannelSkins] = useState<{ chatId: string; ids: string[] } | null>(null);
+  const [skinError, setSkinError] = useState('');
+  const { loadChats, updateChatList, onlineUsers, chats, messages } = useChatStore();
   const { theme } = useThemeStore();
   const navigate = useNavigate();
 
@@ -37,6 +43,24 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
   const [newName, setNewName] = useState(chat?.name || '');
   const [newDesc, setNewDesc] = useState(chat?.description || '');
   const [saving, setSaving] = useState(false);
+  const [adminTarget, setAdminTarget] = useState<ChatMember | null>(null);
+  const [adminTitle, setAdminTitle] = useState('');
+  const [adminRights, setAdminRights] = useState<ChatMember['permissions']>({});
+  const [adminError, setAdminError] = useState('');
+  const [adminSaving, setAdminSaving] = useState(false);
+  const [memberMenu, setMemberMenu] = useState<{ userId: string; x: number; y: number } | null>(null);
+  const memberHold = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const memberTouch = useRef<{ x: number; y: number } | null>(null);
+  const suppressMemberClick = useRef(false);
+  const cancelMemberHold = () => {
+    if (memberHold.current) clearTimeout(memberHold.current);
+    memberHold.current = null;
+  };
+  useEffect(() => {
+    setMemberMenu(null);
+    setAdminTarget(null);
+    return cancelMemberHold;
+  }, [chat.id]);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
@@ -47,6 +71,71 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
   const [searchLoading, setSearchLoading] = useState(false);
   const [addingUserId, setAddingUserId] = useState<string | null>(null);
   const [addError, setAddError] = useState('');
+  const [mediaTab, setMediaTab] = useState(0);
+  const [mediaLoading, setMediaLoading] = useState(false);
+  const [mediaMessages, setMediaMessages] = useState<Message[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadMediaHistory() {
+      setMediaLoading(true);
+      try {
+        const collected: Message[] = [];
+        if (isPeerAvailable()) {
+          collected.push(...(messages[chat.id] || []));
+        } else {
+          let before: string | undefined;
+          for (;;) {
+            const res = await messagesApi.getMessages(chat.id, before, 100);
+            const pageMessages = Array.isArray(res.data) ? res.data : [];
+            collected.push(...pageMessages);
+            if (pageMessages.length < 100) break;
+            const oldest = pageMessages[0]?.createdAt;
+            if (!oldest || oldest === before) break;
+            before = oldest;
+          }
+          // Keep locally archived messages too, including files uploaded while offline.
+          collected.push(...(messages[chat.id] || []));
+        }
+        const unique = new Map<string, Message>();
+        collected.forEach((message) => {
+          if (message?.id) unique.set(message.id, message);
+        });
+        if (!cancelled) setMediaMessages(Array.from(unique.values()));
+      } catch {
+        if (!cancelled) setMediaMessages(messages[chat.id] || []);
+      } finally {
+        if (!cancelled) setMediaLoading(false);
+      }
+    }
+    loadMediaHistory();
+    return () => { cancelled = true; };
+  }, [chat.id, messages[chat.id]?.length]);
+
+  const mediaItems = useMemo(() => {
+    const unique = new Map<string, MessageAttachment>();
+    mediaMessages.forEach((message) => (message.attachments || []).forEach((attachment: MessageAttachment) => {
+      if (attachment.fileUrl && attachment.mimeType !== 'application/x-vera-group-invite') {
+        unique.set(attachment.id || `${message.id}:${attachment.fileUrl}`, attachment);
+      }
+    }));
+    return Array.from(unique.values());
+  }, [mediaMessages]);
+
+  const mediaGroups = useMemo(() => [
+    mediaItems.filter((item) => item.mimeType?.startsWith('image/')),
+    mediaItems.filter((item) => item.mimeType?.startsWith('video/')),
+    mediaItems.filter((item) => !item.mimeType?.startsWith('image/') && !item.mimeType?.startsWith('video/') && !item.mimeType?.startsWith('audio/')),
+    mediaItems.filter((item) => item.mimeType?.startsWith('audio/')),
+  ], [mediaItems]);
+
+  const resolveMediaUrl = (url: string) => /^https?:|^data:|^blob:/i.test(url) ? url : `${window.location.origin}${url.startsWith('/') ? '' : '/'}${url}`;
+  const formatFileSize = (size?: number) => {
+    if (!size) return '';
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   async function searchUsers(q: string) {
     setSearchQ(q);
@@ -94,8 +183,43 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
   if (!chat) return null;
 
   const isGroup = chat.type === 'group' || chat.type === 'channel';
-  const myRole = chat.members?.find(m => m.userId === user?.id)?.role;
-  const canEdit = isGroup && (myRole === 'owner' || myRole === 'admin');
+  const myMember = chat.members?.find(m => m.userId === user?.id);
+  const canEdit = isGroup && hasGroupRight(myMember, 'changeInfo');
+  useEffect(() => {
+    if (chat.type !== 'channel' || !canEdit) return;
+    let cancelled = false;
+    setChannelSkins(null);
+    setSkinError('');
+    chatsApi.getChannelSkins(chat.id).then(res => {
+      if (!cancelled) setChannelSkins({ chatId: chat.id, ids: res.data });
+    }).catch(() => {
+      if (!cancelled) setSkinError('Не удалось загрузить скины создателя канала');
+    });
+    return () => { cancelled = true; };
+  }, [chat.id, chat.type, canEdit]);
+  const canManageAdmins = isGroup && !isPeerAvailable() && hasGroupRight(myMember, 'manageAdmins');
+  const canManageMember = (member: ChatMember) => canManageAdmins && member.role !== 'owner' &&
+    member.userId !== user?.id && (myMember?.role === 'owner' || member.role !== 'admin' || member.promotedBy === user?.id);
+  const openAdmin = (member: ChatMember) => {
+    if (!canManageMember(member)) return;
+    setAdminTarget(member);
+    setAdminTitle(member.adminTitle || '');
+    setAdminError('');
+    setAdminRights(Object.fromEntries((Object.keys(GROUP_RIGHTS) as GroupRight[]).map(right =>
+      [right, member.role === 'admin' && hasGroupRight(member, right)])));
+  };
+  const selectedMember = chat.members?.find(m => m.userId === memberMenu?.userId);
+  async function saveAdmin(role: 'admin' | 'member') {
+    if (!adminTarget) return;
+    setAdminSaving(true); setAdminError('');
+    try {
+      const result = await chatsApi.setAdmin(chat.id, adminTarget.userId, { role, adminTitle, permissions: adminRights });
+      updateChatList(result.data);
+      setAdminTarget(null);
+    } catch (err: any) {
+      setAdminError(err.response?.data?.message || 'Не удалось сохранить права');
+    } finally { setAdminSaving(false); }
+  }
 
   const otherMember = chat.type === 'private'
     ? chat.members?.find(m => m.userId !== user?.id)
@@ -207,15 +331,20 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
 
   return (
     <Box sx={{
-      width: 300, height: '100%',
+      width: { xs: '100%', md: 300 },
+      height: { xs: '100dvh', md: '100%' },
       bgcolor: theme.bgHeader,
-      borderLeft: `1px solid ${theme.border}`,
+      borderLeft: { xs: 'none', md: `1px solid ${theme.border}` },
       display: 'flex', flexDirection: 'column',
       overflow: 'hidden',
+      position: { xs: 'fixed', md: 'relative' },
+      inset: { xs: 0, md: 'auto' },
+      zIndex: { xs: 1200, md: 'auto' },
+      paddingTop: { xs: 'env(safe-area-inset-top)', md: 0 },
     }}>
       {/* Header */}
       <Box sx={{
-        display: 'flex', alignItems: 'center', px: 2, py: 1.5,
+        display: 'flex', alignItems: 'center', px: { xs: 1, md: 2 }, py: { xs: 0.75, md: 1.5 },
         borderBottom: `1px solid ${theme.border}`,
         flexShrink: 0,
       }}>
@@ -224,7 +353,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
         </Typography>
         <IconButton size="small" onClick={onClose}
           sx={{ color: theme.textSec, '&:hover': { color: theme.text } }}>
-          <ChevronRight sx={{ fontSize: 24 }} />
+          <ChevronRight sx={{ fontSize: 24, transform: { xs: 'rotate(180deg)', md: 'none' } }} />
         </IconButton>
       </Box>
 
@@ -324,6 +453,25 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
           </Typography>
         </Box>
 
+        {chat.type === 'channel' && canEdit && <Box sx={{ p: 2 }}>
+          <Typography fontWeight={600}>Скины канала</Typography>
+          <Typography variant="caption">Доступны только скины из инвентаря создателя канала</Typography>
+          {([
+            ['activeRing', 'avatarRing', 'Обводка аватара'],
+            ['activeSelfCard', 'selfCard', 'Плашка сообщений'],
+            ['activeBubble', 'bubbleStyle', 'Пузырь сообщений'],
+          ] as const).map(([key, applyKey, label]) => <TextField key={key} select fullWidth margin="dense" label={label}
+            disabled={channelSkins?.chatId !== chat.id}
+            value={channelSkins?.chatId === chat.id && channelSkins.ids.includes(chat[key] || '') ? chat[key] : ''} onChange={async e => {
+              setSkinError('');
+              try { const res = await chatsApi.update(chat.id, { [key]: e.target.value }); updateChatList(res.data); }
+              catch (error: any) { setSkinError(error.response?.data?.message || 'Не удалось применить скин'); }
+            }}>
+            <MenuItem value="">Без скина</MenuItem>
+            {SHOP_CATALOG.filter(i => i.applyKey === applyKey && channelSkins?.chatId === chat.id && channelSkins.ids.includes(i.id)).map(i => <MenuItem key={i.id} value={i.id}>{i.name}</MenuItem>)}
+          </TextField>)}
+          {skinError && <Typography color="error">{skinError}</Typography>}
+        </Box>}
         <Divider sx={{ borderColor: theme.border }} />
 
         {/* Description (groups) */}
@@ -405,6 +553,62 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
           </Box>
         )}
 
+        {/* All attachments shared in this chat */}
+        <Divider sx={{ borderColor: theme.border }} />
+        <Box sx={{ px: 1.5, pt: 1.5, pb: 1 }}>
+          <Typography sx={{
+            px: 0.5, fontSize: 11, color: theme.textSec,
+            textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: 600,
+          }}>
+            Медиа и файлы
+          </Typography>
+          <Tabs
+            value={mediaTab}
+            onChange={(_, value) => setMediaTab(value)}
+            variant="scrollable"
+            scrollButtons={false}
+            sx={{
+              minHeight: 38,
+              '& .MuiTabs-indicator': { bgcolor: theme.accent },
+              '& .MuiTab-root': { minWidth: 0, minHeight: 38, px: 1, color: theme.textSec, fontSize: 11, textTransform: 'none' },
+              '& .Mui-selected': { color: `${theme.accent} !important` },
+            }}
+          >
+            <Tab icon={<ImageIcon sx={{ fontSize: 17 }} />} iconPosition="start" label={`Фото ${mediaGroups[0].length || ''}`} />
+            <Tab icon={<Videocam sx={{ fontSize: 17 }} />} iconPosition="start" label={`Видео ${mediaGroups[1].length || ''}`} />
+            <Tab icon={<AttachFile sx={{ fontSize: 17 }} />} iconPosition="start" label={`Файлы ${mediaGroups[2].length || ''}`} />
+            <Tab icon={<AudioFile sx={{ fontSize: 17 }} />} iconPosition="start" label={`Звуки ${mediaGroups[3].length || ''}`} />
+          </Tabs>
+          {mediaLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}><CircularProgress size={22} sx={{ color: theme.accent }} /></Box>
+          ) : mediaGroups[mediaTab].length === 0 ? (
+            <Typography sx={{ color: theme.textSec, fontSize: 13, textAlign: 'center', py: 2 }}>
+              Здесь пока ничего нет
+            </Typography>
+          ) : (
+            <Box sx={{ display: mediaTab === 0 ? 'grid' : 'flex', gridTemplateColumns: mediaTab === 0 ? 'repeat(3, minmax(0, 1fr))' : undefined, flexDirection: mediaTab === 0 ? undefined : 'column', gap: 0.75, mt: 0.5 }}>
+              {mediaGroups[mediaTab].map((item) => {
+                const url = resolveMediaUrl(item.fileUrl);
+                const name = item.fileName || 'Вложение';
+                if (mediaTab === 0) {
+                  return <Box key={item.id} component="a" href={url} target="_blank" rel="noreferrer" sx={{ display: 'block', aspectRatio: '1', overflow: 'hidden', borderRadius: 1.5, bgcolor: theme.bgHover }}>
+                    <Box component="img" src={resolveMediaUrl(item.thumbnailUrl || item.fileUrl)} alt={name} sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                  </Box>;
+                }
+                if (mediaTab === 1) {
+                  return <Box key={item.id} sx={{ bgcolor: theme.bgHover, borderRadius: 1.5, p: 0.75 }}><Box component="video" src={url} controls preload="metadata" sx={{ width: '100%', maxHeight: 150, display: 'block' }} /></Box>;
+                }
+                if (mediaTab === 3) {
+                  return <Box key={item.id} sx={{ bgcolor: theme.bgHover, borderRadius: 1.5, px: 1, py: 0.75 }}><Typography noWrap sx={{ color: theme.text, fontSize: 12, mb: 0.5 }}>{name}</Typography><Box component="audio" src={url} controls preload="metadata" sx={{ width: '100%', height: 34 }} /></Box>;
+                }
+                return <Box key={item.id} component="a" href={url} target="_blank" rel="noreferrer" download={name} sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1.5, bgcolor: theme.bgHover, color: theme.text, textDecoration: 'none', '&:hover': { bgcolor: theme.accent + '18' } }}>
+                  <AttachFile sx={{ fontSize: 19, color: theme.accent }} /><Box sx={{ flex: 1, minWidth: 0 }}><Typography noWrap sx={{ fontSize: 13 }}>{name}</Typography><Typography noWrap sx={{ color: theme.textSec, fontSize: 11 }}>{[item.mimeType, formatFileSize(item.fileSize)].filter(Boolean).join(' • ')}</Typography></Box><Download sx={{ fontSize: 18, color: theme.textSec }} />
+                </Box>;
+              })}
+            </Box>
+          )}
+        </Box>
+
         {/* Members list (groups) */}
         {isGroup && chat.members && chat.members.length > 0 && (
           <>
@@ -425,10 +629,42 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
                 return (
                   <ListItem
                     key={m.id}
-                    onClick={() => onViewProfile?.(u.id)}
+                    onClick={(e) => {
+                      if (suppressMemberClick.current) { e.preventDefault(); e.stopPropagation(); suppressMemberClick.current = false; return; }
+                      cancelMemberHold();
+                      if (canManageMember(m)) {
+                        setMemberMenu({ userId: m.userId, x: e.clientX, y: e.clientY });
+                      } else {
+                        onViewProfile?.(u.id);
+                      }
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      cancelMemberHold();
+                      setMemberMenu({ userId: m.userId, x: e.clientX, y: e.clientY });
+                    }}
+                    onTouchStart={(e) => {
+                      cancelMemberHold();
+                      suppressMemberClick.current = false;
+                      if (e.touches.length !== 1) return;
+                      const { clientX: x, clientY: y } = e.touches[0];
+                      memberTouch.current = { x, y };
+                      memberHold.current = setTimeout(() => {
+                        suppressMemberClick.current = true;
+                        setMemberMenu({ userId: m.userId, x, y });
+                      }, 500);
+                    }}
+                    onTouchMove={(e) => {
+                      const start = memberTouch.current;
+                      const touch = e.touches[0];
+                      if (!start || !touch || Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 10) cancelMemberHold();
+                    }}
+                    onTouchEnd={cancelMemberHold}
+                    onTouchCancel={cancelMemberHold}
                     sx={{
                       px: 2, py: 0.9,
                       cursor: 'pointer',
+                      userSelect: 'none', WebkitTouchCallout: 'none',
                       '&:hover': { bgcolor: theme.bgHover },
                       transition: 'background 0.12s',
                     }}
@@ -456,12 +692,17 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
                       secondary={
                         <Typography sx={{ fontSize: 12, color: theme.textSec }}>
                           {m.role === 'owner' ? '👑 Владелец'
-                            : m.role === 'admin' ? '⚡ Администратор'
+                            : m.role === 'admin' ? `⚡ ${m.adminTitle || 'Администратор'}`
                             : onlineUsers.has(u.id) ? '● в сети' : ''}
                         </Typography>
                       }
                     />
-                    {canEdit && u.id !== user?.id && u.id !== chat.ownerId && (
+                    {canManageMember(m) && (
+                      <Button size="small" onClick={(e) => {
+                        e.stopPropagation(); openAdmin(m);
+                      }}>Права</Button>
+                    )}
+                    {isPeerAvailable() && canEdit && u.id !== user?.id && u.id !== chat.ownerId && (
                       <IconButton
                         size="small"
                         onClick={(e) => { e.stopPropagation(); kickMember(u.id); }}
@@ -492,6 +733,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
                   '&:hover': { bgcolor: theme.accent + '14' },
                 }}
                 onClick={() => { setAddMemberOpen(true); setSearchQ(''); setSearchResults([]); setAddError(''); }}
+                disabled={!isPeerAvailable() && !hasGroupRight(myMember, 'inviteMembers')}
               >
                 Добавить участника
               </Button>
@@ -519,7 +761,44 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
         )}
       </Box>
 
+      <Menu open={!!memberMenu && !!selectedMember} onClose={() => setMemberMenu(null)}
+        anchorReference="anchorPosition" anchorPosition={memberMenu ? { top: memberMenu.y, left: memberMenu.x } : undefined}
+        PaperProps={{ sx: { bgcolor: theme.bgHeader, color: theme.text } }}>
+        <MenuItem onClick={() => { if (selectedMember) onViewProfile?.(selectedMember.userId); setMemberMenu(null); }}>Открыть профиль</MenuItem>
+        {selectedMember && canManageMember(selectedMember) && (
+          <MenuItem onClick={() => { openAdmin(selectedMember); setMemberMenu(null); }}>
+            {selectedMember.role === 'admin' ? 'Изменить права и звание' : 'Назначить администратором'}
+          </MenuItem>
+        )}
+        {selectedMember?.role === 'admin' && canManageMember(selectedMember) && (
+          <MenuItem sx={{ color: 'error.main' }} onClick={() => { openAdmin(selectedMember); setMemberMenu(null); }}>Снять администратора…</MenuItem>
+        )}
+      </Menu>
+
       {/* Add member dialog */}
+      <Dialog open={!!adminTarget} onClose={() => { if (!adminSaving) setAdminTarget(null); }} fullWidth maxWidth="xs"
+        PaperProps={{ sx: { bgcolor: theme.bgHeader, color: theme.text } }}>
+        <DialogTitle>Права администратора</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ mb: 2 }}>{adminTarget?.user?.firstName || adminTarget?.user?.username}</Typography>
+          <TextField fullWidth label="Звание" placeholder="Например: Модератор" value={adminTitle}
+            onChange={e => setAdminTitle(e.target.value)} inputProps={{ maxLength: 32 }} disabled={adminSaving}
+            helperText="Своё название должности, до 32 символов" sx={{ mb: 2 }} />
+          {(Object.keys(GROUP_RIGHTS) as GroupRight[]).map(right => (
+            <FormControlLabel key={right} sx={{ display: 'flex' }} label={GROUP_RIGHTS[right]}
+              control={<Checkbox checked={adminRights?.[right] === true}
+                disabled={adminSaving || !hasGroupRight(myMember, right)}
+                onChange={(_, checked) => setAdminRights(prev => ({ ...prev, [right]: checked }))} />} />
+          ))}
+          <Typography variant="body2" sx={{ mt: 1 }}>Можно выдавать только свои права. Назначенные администраторы управляют только своими назначениями.</Typography>
+          {adminError && <Typography color="error" role="alert">{adminError}</Typography>}
+        </DialogContent>
+        <DialogActions sx={{ flexWrap: 'wrap' }}>
+          {adminTarget?.role === 'admin' && <Button color="error" disabled={adminSaving} onClick={() => void saveAdmin('member')}>Снять администратора</Button>}
+          <Button disabled={adminSaving} onClick={() => setAdminTarget(null)}>Отмена</Button>
+          <Button disabled={adminSaving} onClick={() => void saveAdmin('admin')}>Сохранить</Button>
+        </DialogActions>
+      </Dialog>
       <Dialog
         open={addMemberOpen}
         onClose={() => setAddMemberOpen(false)}

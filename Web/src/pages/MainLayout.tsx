@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
 import { Box, useMediaQuery } from '@mui/material';
 import { useChatStore } from '../store/chatStore';
@@ -16,7 +16,6 @@ import { useActiveWallpaperSpec, isLightColor } from '../hooks/useActiveWallpape
 // Реальные высоты плеера — синхронизированы с MusicPlayer.tsx
 const PLAYER_EXPANDED = 60;
 const PLAYER_COLLAPSED = 32;
-const NAV_HEIGHT = 78; // место под нижней панелью на мобильном
 
 export default function MainLayout() {
   const { loadChats } = useChatStore();
@@ -39,6 +38,27 @@ export default function MainLayout() {
   }, [layout.density, layout.radius, layout.bubbleRadius, layout.mobileNavPos]);
 
   const onChatList = location.pathname === '/';
+  const [viewport, setViewport] = useState<{ height: number; top: number } | null>(null);
+
+  // Клавиатура меняет visualViewport, даже когда высота страницы остаётся прежней.
+  // Размер чата зависит от видимой области, а не от текста или фокуса поля.
+  useEffect(() => {
+    const visibleViewport = window.visualViewport;
+    if (!isMobile || onChatList || !visibleViewport) {
+      setViewport(null);
+      return;
+    }
+    const updateViewport = () => {
+      setViewport({ height: visibleViewport.height, top: visibleViewport.offsetTop });
+    };
+    updateViewport();
+    visibleViewport.addEventListener('resize', updateViewport);
+    visibleViewport.addEventListener('scroll', updateViewport);
+    return () => {
+      visibleViewport.removeEventListener('resize', updateViewport);
+      visibleViewport.removeEventListener('scroll', updateViewport);
+    };
+  }, [isMobile, onChatList]);
 
   // Полноэкранные обои (категория «wallpaper» магазина / кастомные авторов).
   const wallpaperSpec = useActiveWallpaperSpec();
@@ -49,20 +69,23 @@ export default function MainLayout() {
   if (currentTrack) {
     const size = playerCollapsed ? PLAYER_COLLAPSED : PLAYER_EXPANDED;
     if (layout.playerPos === 'top') topPad = `${size}px`;
-    else bottomPad = `${size}px`;
+    else bottomPad = `calc(${bottomPad} + ${size}px)`;
   }
 
   const bg = {
     display: 'flex',
     flexDirection: (layout.sidebarSide === 'top' || layout.sidebarSide === 'bottom') ? 'column' as const : 'row' as const,
-    height: '100dvh',
+    height: '100%',
+    minHeight: 0,
+    minWidth: 0,
+    width: '100%',
     maxHeight: '100dvh',
     overflow: 'hidden',
     bgcolor: '#000',
     background: theme.disableBackgroundGlow ? theme.bg : `
-      radial-gradient(circle at 8% 0%, ${theme.accent}24 0, transparent 32%),
-      radial-gradient(circle at 88% 16%, rgba(255,79,216,0.16) 0, transparent 34%),
-      radial-gradient(circle at 50% 120%, rgba(124,92,255,0.18) 0, transparent 36%),
+      radial-gradient(circle at 8% 0%, ${theme.backgroundGlowColor || '#8FE3CF'}${Math.round((theme.backgroundGlowIntensity ?? 0.18) * 0.75 * 255).toString(16).padStart(2, '0')} 0, transparent 32%),
+      radial-gradient(circle at 88% 16%, ${theme.backgroundGlowColor || '#8FE3CF'}${Math.round((theme.backgroundGlowIntensity ?? 0.18) * 0.9 * 255).toString(16).padStart(2, '0')} 0, transparent 34%),
+      radial-gradient(circle at 50% 120%, ${theme.backgroundGlowColor || '#8FE3CF'}${Math.round((theme.backgroundGlowIntensity ?? 0.18) * 255).toString(16).padStart(2, '0')} 0, transparent 36%),
       ${theme.bg}
     `,
     pt: topPad,
@@ -89,15 +112,18 @@ export default function MainLayout() {
   if (isMobile) {
     if (onChatList) {
       return (
-        <Box sx={bg}>
+        <Box sx={{ ...bg, height: '100dvh', minHeight: 0 }}>
           <Sidebar open mobile onToggle={() => {}} />
         </Box>
       );
     }
     // Открытый чат — фуллскрин, без нижней навигации (как в Telegram).
     return (
-      <Box sx={bg}>
-        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0, position: 'relative', zIndex: 1 }}>
+      <Box sx={{ ...bg, ...(viewport ? {
+        position: 'fixed', left: 0, right: 0, top: viewport.top,
+        height: viewport.height, maxHeight: viewport.height,
+      } : {}) }}>
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0, height: '100%', position: 'relative', zIndex: 1 }}>
           <Box sx={{ flex: 1, overflow: 'hidden', minHeight: 0, height: '100%' }}>
             <Routes>
               <Route path="/chat/:id" element={<ChatWindow />} />
@@ -119,6 +145,7 @@ export default function MainLayout() {
       flexDirection: 'column',
       overflow: 'hidden',
       minHeight: 0,
+      minWidth: 0,
       position: 'relative',
       zIndex: 1,
     }}>
@@ -157,7 +184,7 @@ export default function MainLayout() {
           <ChatWallpaper spec={wallpaperSpec} isLight={!theme.bg.startsWith('#0') && theme.bg !== '#000000'} />
         </Box>
       )}
-      <Box sx={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: (layout.sidebarSide === 'top' || layout.sidebarSide === 'bottom') ? 'column' : 'row', flex: 1, height: '100%' }}>
+      <Box sx={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: (layout.sidebarSide === 'top' || layout.sidebarSide === 'bottom') ? 'column' : 'row', flex: 1, minWidth: 0, minHeight: 0, width: '100%', height: '100%' }}>
         {layout.sidebarSide === 'left' && (<>{sidebar}{mainArea}</>)}
         {layout.sidebarSide === 'right' && (<>{mainArea}{sidebar}</>)}
         {layout.sidebarSide === 'top' && (<>{sidebar}{mainArea}</>)}

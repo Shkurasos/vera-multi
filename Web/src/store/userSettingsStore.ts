@@ -1,5 +1,7 @@
 import { create } from 'zustand';
+import { clampBubble } from '../utils/bubbleSettings';
 import { persist } from 'zustand/middleware';
+import { registerAccountStore } from '../services/storeSyncSimple';
 
 /**
  * Глобальные пользовательские настройки: внешний вид (яркость, масштаб),
@@ -21,7 +23,7 @@ export type MessageAlign = 'auto' | 'left' | 'right';
 
 export interface LayoutSettings {
   sidebarSide: SidePos;        // left | right
-  sidebarWidth: number;        // 200..520
+  sidebarWidth: number;        // 72px..50% ширины окна
   mobileNavPos: VertPos;       // bottom | top (нижняя навигация на мобильном)
   playerPos: VertPos;          // bottom | top (место развёрнутого плеера)
   chatHeaderPos: VertPos;      // top | bottom (шапка чата)
@@ -32,6 +34,9 @@ export interface LayoutSettings {
   bubbleRadius: number;        // 4..28 радиус пузырьков сообщений
   messageMaxWidth: number;     // 35..95 максимальная ширина сообщений (% от ширины чата)
   messageAlign: MessageAlign;  // auto | left | right сторона сообщений
+  bubbleEnabled: boolean;
+  bubbleTextSize: number;
+  bubblePadding: number;
   showAvatarsInList: boolean;  // аватары в списке чатов
   showTabs: boolean;           // вкладки Диалоги/Архив/Группы
 }
@@ -49,6 +54,9 @@ export const defaultLayout: LayoutSettings = {
   bubbleRadius: 14,
   messageMaxWidth: 72,
   messageAlign: 'auto',
+  bubbleEnabled: true,
+  bubbleTextSize: 15,
+  bubblePadding: 6,
   showAvatarsInList: true,
   showTabs: true,
 };
@@ -143,11 +151,14 @@ export const useUserSettingsStore = create<UserSettingsState>()(
     (set, get) => ({
       ...initial,
       set: (key, value) => set({ [key]: value } as any),
-      setLayout: (key, value) => set({ layout: { ...get().layout, [key]: value } } as any),
+      setLayout: (key, value) => set({ layout: { ...get().layout, [key]:
+        key === 'messageMaxWidth' ? clampBubble('maxWidth', Number(value)) :
+        key === 'bubbleTextSize' ? clampBubble('textSize', Number(value)) :
+        key === 'bubblePadding' ? clampBubble('padding', Number(value)) : value } } as any),
       resetLayout: () => set({ layout: { ...defaultLayout } } as any),
       reset: () => set({ ...initial } as any),
     }),
-    { name: 'vera-user-settings', version: 2, migrate: (persisted: any) => {
+    { name: 'vera-user-settings', version: 3, migrate: (persisted: any) => {
         if (!persisted) return persisted;
         // v2: добавлены chatOuterMargin и bubbleRadius; merge с defaultLayout на всякий случай
         persisted.layout = { ...defaultLayout, ...(persisted.layout || {}) };
@@ -155,6 +166,8 @@ export const useUserSettingsStore = create<UserSettingsState>()(
       } }
   )
 );
+
+registerAccountStore('user-settings', useUserSettingsStore);
 
 /** SHA-256 → hex. Используется для хранения пароля app-lock. */
 export async function hashPassword(pwd: string): Promise<string> {
@@ -185,6 +198,10 @@ const SYNC_KEYS: (keyof UserSettingsState)[] = [
 
 const LOCAL_UPDATED_KEY = 'vera-settings-updated-at';
 const CLIENT_ID_KEY = 'vera-settings-client-id';
+let activeSettingsAccountId: string | null = null;
+let settingsGeneration = 0;
+let settingsSocket: { off?: (event: string, handler?: (...args: any[]) => void) => void } | null = null;
+let settingsSocketHandler: ((payload: any) => void) | null = null;
 
 function getClientId(): string {
   let id = localStorage.getItem(CLIENT_ID_KEY);
@@ -202,7 +219,25 @@ function snapshotForSync(s: UserSettingsState) {
   return out;
 }
 
-function applyServerSnapshot(settings: any) {
+function settingsAccountFromStorage(): string | null {
+  try {
+    const raw = localStorage.getItem('vera_user');
+    const user = raw ? JSON.parse(raw) : null;
+    return typeof user?.id === 'string' ? user.id : null;
+  } catch {
+    return null;
+  }
+}
+
+function settingsRequestIsCurrent(accountId: string, generation: number, token: string): boolean {
+  return activeSettingsAccountId === accountId
+    && settingsGeneration === generation
+    && localStorage.getItem('vera_token') === token
+    && settingsAccountFromStorage() === accountId;
+}
+
+function applyServerSnapshot(settings: any, accountId: string, generation: number, token: string) {
+  if (!settingsRequestIsCurrent(accountId, generation, token)) return;
   const clean: any = {};
   for (const k of SYNC_KEYS) {
     if (settings[k] !== undefined) clean[k] = settings[k];
@@ -221,70 +256,110 @@ let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let syncStarted = false;
 let hydrating = false;
 
-async function apiFetch(path: string, init: RequestInit = {}) {
-  const token = localStorage.getItem('vera_token');
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
+async function apiFetch(path: string, token: string, init: RequestInit = {}) {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`,
+  };
   Object.assign(headers, init.headers || {});
   return fetch(`/api${path}`, { ...init, headers });
 }
 
 export async function hydrateSettingsFromServer(): Promise<void> {
+  const accountId = activeSettingsAccountId || settingsAccountFromStorage();
+  const token = localStorage.getItem('vera_token');
+  const generation = settingsGeneration;
+  if (!accountId || !token || !settingsRequestIsCurrent(accountId, generation, token)) return;
   try {
-    const r = await apiFetch('/settings');
-    if (!r.ok) return;
+    const r = await apiFetch('/settings', token);
+    if (!r.ok || !settingsRequestIsCurrent(accountId, generation, token)) return;
     const { settings } = await r.json();
-    if (!settings || typeof settings !== 'object') return;
+    if (!settings || typeof settings !== 'object' || !settingsRequestIsCurrent(accountId, generation, token)) return;
     const localAt = localStorage.getItem(LOCAL_UPDATED_KEY);
     const serverAt = settings.__updatedAt || null;
     // Если локально уже есть более свежая версия — не перезаписываем, а
     // pushнём её на сервер при первом же изменении (autoSync подхватит).
     if (localAt && serverAt && localAt >= serverAt) return;
-    applyServerSnapshot(settings);
+    applyServerSnapshot(settings, accountId, generation, token);
   } catch {
     /* offline / не залогинен — ок */
   }
 }
 
-export function startSettingsAutoSync(): void {
-  if (syncStarted) return;
-  syncStarted = true;
+export function prepareSettingsForAccount(accountId: string, accountChanged: boolean): void {
+  if (activeSettingsAccountId === accountId && !accountChanged) return;
+  activeSettingsAccountId = accountId;
+  settingsGeneration += 1;
+  if (syncTimer) clearTimeout(syncTimer);
+  syncTimer = null;
+  if (accountChanged) localStorage.removeItem(LOCAL_UPDATED_KEY);
+}
 
-  useUserSettingsStore.subscribe((state, prev) => {
+export function disableSettingsSync(): void {
+  settingsGeneration += 1;
+  activeSettingsAccountId = null;
+  if (syncTimer) clearTimeout(syncTimer);
+  syncTimer = null;
+  if (settingsSocket && settingsSocketHandler) settingsSocket.off?.('settings:updated', settingsSocketHandler);
+  settingsSocket = null;
+  settingsSocketHandler = null;
+}
+
+export function startSettingsAutoSync(accountId?: string): void {
+  if (accountId) prepareSettingsForAccount(accountId, false);
+  if (!syncStarted) useUserSettingsStore.subscribe((state, prev) => {
     if (hydrating) return;
     let changed = false;
     for (const k of SYNC_KEYS) {
       if ((state as any)[k] !== (prev as any)[k]) { changed = true; break; }
     }
-    if (!changed) return;
+    if (!changed || !activeSettingsAccountId) return;
     if (syncTimer) clearTimeout(syncTimer);
+    const requestAccountId = activeSettingsAccountId;
+    const requestGeneration = settingsGeneration;
+    const requestToken = localStorage.getItem('vera_token');
+    if (!requestToken) return;
     syncTimer = setTimeout(async () => {
+      syncTimer = null;
+      if (!settingsRequestIsCurrent(requestAccountId, requestGeneration, requestToken)) return;
       const snapshot = snapshotForSync(useUserSettingsStore.getState());
       try {
-        const r = await apiFetch('/settings', {
+        const r = await apiFetch('/settings', requestToken, {
           method: 'PUT',
           body: JSON.stringify({ settings: snapshot }),
         });
-        if (r.ok) {
+        if (r.ok && settingsRequestIsCurrent(requestAccountId, requestGeneration, requestToken)) {
           const { updatedAt } = await r.json();
-          if (updatedAt) localStorage.setItem(LOCAL_UPDATED_KEY, updatedAt);
+          if (updatedAt && settingsRequestIsCurrent(requestAccountId, requestGeneration, requestToken)) {
+            localStorage.setItem(LOCAL_UPDATED_KEY, updatedAt);
+          }
         }
       } catch { /* оффлайн — persist уже сохранил локально */ }
     }, 800);
   });
 
+  syncStarted = true;
   // Живой пуш с других устройств.
   import('../services/socket').then(({ getSocket }) => {
     try {
       const s = getSocket?.();
       if (!s) return;
-      s.on('settings:updated', (payload: any) => {
+      if (settingsSocket === s) return;
+      if (settingsSocket && settingsSocketHandler) settingsSocket.off?.('settings:updated', settingsSocketHandler);
+       const handler = (payload: any) => {
+         const accountId = activeSettingsAccountId;
+         const token = localStorage.getItem('vera_token');
+         const generation = settingsGeneration;
+         if (!accountId || !token || !settingsRequestIsCurrent(accountId, generation, token)) return;
         const settings = payload?.settings;
         if (!settings) return;
         // Своё эхо — игнорируем.
         if (settings.__clientId && settings.__clientId === getClientId()) return;
-        applyServerSnapshot(settings);
-      });
+         applyServerSnapshot(settings, accountId, generation, token);
+       };
+       s.on('settings:updated', handler);
+       settingsSocket = s;
+       settingsSocketHandler = handler;
     } catch { /* сокет ещё не готов — ок, hydrate возьмёт при следующем логине */ }
   }).catch(() => {});
 }

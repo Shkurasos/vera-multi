@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Typography, TextField, List, ListItem, ListItemAvatar, Avatar, ListItemText, IconButton, Tabs, Tab, CircularProgress, Menu, MenuItem, Snackbar, Dialog, DialogTitle, DialogContent, DialogActions, Button, Stack } from '@mui/material';
-import { GraphicEq, Pause, MusicNote, Search, PlaylistAdd, Edit, Delete, UploadFile, Link as LinkIcon, FolderZip } from '@mui/icons-material';
+import { GraphicEq, Pause, MusicNote, Search, PlaylistAdd, Edit, Delete, UploadFile, Link as LinkIcon, FolderZip, Shuffle } from '@mui/icons-material';
 import { useMusicStore } from '../store/musicStore';
 import { usePlaylistStore } from '../store/playlistStore';
 import { useThemeStore } from '../store/themeStore';
@@ -14,7 +14,7 @@ function formatDuration(s: number): string {
 }
 
 export default function MusicLibrary() {
-  const { tracks, currentTrack, isPlaying, loadTracks, search, play, togglePlay, uploadTrack, updateTrack, deleteTrack, importUrl, importZip } = useMusicStore();
+  const { tracks, currentTrack, isPlaying, loadTracks, search, play, playShuffled, togglePlay, uploadTrack, updateTrack, deleteTrack, importUrl, importZip } = useMusicStore();
   const { playlists, load: loadPlaylists, addTrack, create } = usePlaylistStore();
   const { theme } = useThemeStore();
   const [tab, setTab] = useState(0);
@@ -32,6 +32,8 @@ export default function MusicLibrary() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadCurrent, setUploadCurrent] = useState(0);
+  const [uploadTotal, setUploadTotal] = useState(0);
   const [urlOpen, setUrlOpen] = useState(false);
   const [urlValue, setUrlValue] = useState('');
   const [urlBusy, setUrlBusy] = useState(false);
@@ -100,28 +102,47 @@ export default function MusicLibrary() {
     audio.src = url;
   });
 
-  const handleUploadFile = async (file?: File | null) => {
-    if (!file || uploading) return;
-    if (!file.type.startsWith('audio/') && !/\.(mp3|wav|ogg|flac|aac|m4a|opus|webm)$/i.test(file.name)) {
-      setSnack('Выбери аудиофайл');
+  const handleUploadFiles = async (selectedFiles?: FileList | null) => {
+    if (!selectedFiles || uploading) return;
+    const files = Array.from(selectedFiles);
+    const audioFiles = files.filter((file) =>
+      file.type.startsWith('audio/') || /\.(mp3|wav|ogg|flac|aac|m4a|opus|webm)$/i.test(file.name),
+    );
+    if (!audioFiles.length) {
+      setSnack('Выберите аудиофайлы');
       return;
     }
-    const fd = new FormData();
-    fd.append('file', file);
-    fd.append('title', file.name.replace(/\.[^.]+$/, ''));
-    const duration = await getAudioDuration(file);
-    if (duration) fd.append('duration', String(duration));
+
     setUploading(true);
+    setUploadTotal(audioFiles.length);
+    setUploadCurrent(0);
     setUploadProgress(0);
+    let uploaded = 0;
+    let failed = 0;
     try {
-      await uploadTrack(fd, setUploadProgress);
-      setSnack('Трек добавлен в библиотеку');
-    } catch (err: any) {
-      console.error('music upload error:', err);
-      setSnack(err?.response?.data?.message || err?.message || 'Не удалось загрузить трек');
+      for (let index = 0; index < audioFiles.length; index += 1) {
+        const file = audioFiles[index];
+        setUploadCurrent(index + 1);
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('title', file.name.replace(/\.[^.]+$/, ''));
+        const duration = await getAudioDuration(file);
+        if (duration) fd.append('duration', String(duration));
+        try {
+          await uploadTrack(fd, setUploadProgress);
+          uploaded += 1;
+        } catch (err: any) {
+          failed += 1;
+          console.error(`music upload error (${file.name}):`, err);
+        }
+      }
+      const skipped = files.length - audioFiles.length;
+      setSnack(`Добавлено файлов: ${uploaded}${failed ? `, ошибок: ${failed}` : ''}${skipped ? `, пропущено: ${skipped}` : ''}`);
     } finally {
       setUploading(false);
       setUploadProgress(0);
+      setUploadCurrent(0);
+      setUploadTotal(0);
     }
   };
 
@@ -183,8 +204,8 @@ export default function MusicLibrary() {
               <input hidden type="file" accept=".zip,application/zip" onChange={(e) => { handleImportZip(e.target.files?.[0]); e.currentTarget.value = ''; }} />
             </IconButton>
             <Button component="label" size="small" variant="contained" startIcon={uploading ? <CircularProgress size={16} color="inherit" /> : <UploadFile />} disabled={uploading} sx={{ bgcolor: theme.accent, '&:hover': { bgcolor: theme.accent + 'cc' } }}>
-              {uploading ? `${uploadProgress || 0}%` : 'Добавить'}
-              <input hidden type="file" accept="audio/*,.mp3,.wav,.ogg,.flac,.aac,.m4a,.opus,.webm" onChange={(e) => { handleUploadFile(e.target.files?.[0]); e.currentTarget.value = ''; }} />
+              {uploading ? `${uploadCurrent}/${uploadTotal} · ${uploadProgress || 0}%` : 'Добавить'}
+              <input hidden multiple type="file" accept="audio/*,.mp3,.wav,.ogg,.flac,.aac,.m4a,.opus,.webm" onChange={(e) => { handleUploadFiles(e.target.files); e.currentTarget.value = ''; }} />
             </Button>
           </Stack>
         ) : <Box sx={{ visibility: 'hidden', height: 32 }} />}
@@ -204,6 +225,12 @@ export default function MusicLibrary() {
     </Tabs>
     <Box data-tab-panel key={tab} sx={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
     {tab === 1 ? <Box sx={{ flex: 1, overflow: 'hidden', minWidth: 0 }}><PlaylistsPanel /></Box> : loading ? <Box display="flex" justifyContent="center" mt={4}><CircularProgress sx={{ color: theme.accent }} /></Box> : <List data-vera-list sx={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', px: 1 }}>
+      <Box sx={{ px: 1, pb: 1 }}>
+        <Button startIcon={<Shuffle />} disabled={!tracks.length} onClick={() => playShuffled(tracks)}
+          sx={{ color: theme.accent, textTransform: 'none' }}>
+          Перемешать
+        </Button>
+      </Box>
       {tracks.map((track) => {
         const isCurrentPlaying = currentTrack?.id === track.id && isPlaying;
         return <ListItem key={track.id} sx={{ '&:hover': { bgcolor: theme.bgHover }, borderRadius: 2, pr: 16, minWidth: 0 }} secondaryAction={<Box sx={{ display: 'flex', gap: 0.25 }}>

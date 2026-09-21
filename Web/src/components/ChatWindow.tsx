@@ -4,14 +4,15 @@ import {
   Box, Typography, Avatar, IconButton, TextField,
   Menu, MenuItem, Tooltip, LinearProgress, Popover,
   Dialog, DialogTitle, DialogContent, DialogActions, Button,
-  Slider, Select, Divider as MuiDivider, Snackbar, Alert,
+  Slider, Select, Divider as MuiDivider, Snackbar, Alert, Checkbox, FormControlLabel,
 } from '@mui/material';
 import {
-  Send, Send as SendIcon, AttachFile, MoreVert, Search, Mic, Stop,
+  Send, Send as SendIcon, AttachFile, MoreVert, Search,
   EmojiEmotions, InfoOutlined, Close, PushPin,
   Call, Videocam, NotificationsOff, NotificationsActive,
   FormatSize, ExitToApp, ArrowBack, Palette, KeyboardArrowDown,
 } from '@mui/icons-material';
+import HowToVote from '@mui/icons-material/HowToVote';
 import { CallModal } from './CallModal';
 import { useCallStore } from '../store/callStore';
 import { useChatStore } from '../store/chatStore';
@@ -24,9 +25,11 @@ import { useChatSettingsStore, BUILTIN_FONTS } from '../store/chatSettingsStore'
 import { useUserSettingsStore } from '../store/userSettingsStore';
 import { useDraftsStore } from '../store/draftsStore';
 import { useChatFontStore, STOCK_FONTS } from '../store/chatFontStore';
-import { sendTypingStart, sendTypingStop } from '../services/socket';
-import { filesApi, messagesApi } from '../services/api';
+import { sendTypingStart, sendTypingStop, getSocket } from '../services/socket';
+import { chatsApi, filesApi, messagesApi } from '../services/api';
 import MessageBubble from './MessageBubble';
+import HoldRecorder from './HoldRecorder';
+import BubbleSettingsControls from './BubbleSettingsControls';
 import { membranePressSx, motion } from '../styles/motion';
 import ChatInfoPanel from './ChatInfoPanel';
 import UserProfileModal from './UserProfileModal';
@@ -37,8 +40,24 @@ import { useChatBgPrefsStore, STOCK_WALLPAPERS } from '../store/chatBgPrefsStore
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { useCustomEquipStore } from '../store/customEquipStore';
 import { specToStyle, specAnimationClass } from '../utils/customStyle';
-import { saveLiveBg, loadLiveBgUrl, clearLiveBg, hasLiveBg } from '../services/chatLiveBgStorage';
+import { resolveChatTheme } from '../utils/chatTheme';
+import { saveLiveBg, loadLiveBgUrl, clearLiveBg, getLiveBgBlob } from '../services/chatLiveBgStorage';
 import ChatWallpaper, { type WallpaperSpec } from './ChatWallpaper';
+
+// Крупные разные тайлы не дают SVG-паттернам превращаться в мелкую сетку.
+function patternBackgroundSize(pattern?: string, min = 860, max = 1400): string | undefined {
+  if (!pattern) return undefined;
+  const layers = Math.max(1, (pattern.match(/url\(/g) || []).length);
+  const low = Math.max(200, Math.min(min, max));
+  const high = Math.max(low, Math.max(min, max));
+  return Array.from({ length: layers }, (_, index) => {
+    const size = layers === 1 ? high : low + ((high - low) * index) / (layers - 1);
+    return `${size}px ${size}px`;
+  }).join(', ');
+}
+
+// Память скролла НЕ используем: чат всегда должен открываться на последнем
+// сообщении — независимо от того, как он был закрыт/перезагружен.
 
 // ── ErrorBoundary ─────────────────────────────────────────────────────────────
 class ChatErrorBoundary extends Component<{ children: React.ReactNode }, { error: string | null }> {
@@ -169,7 +188,7 @@ function ChatWindowInner() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const {
-    chats, messages, activeChat, setActiveChat,
+    chats, messages, activeChat, setActiveChat, updateChatList,
     sendMessage, sendMessageWithFile, typingUsers,
     leaveChat, onlineUsers,
   } = useChatStore();
@@ -178,10 +197,13 @@ function ChatWindowInner() {
   } = useChatPrefsStore();
   const mutedChats = { has: (id: string) => isMuted(id) };
   const { user } = useAuthStore();
-    const { theme, setChatPhoto, setChatBgImage, chatPhoto: chatPhotoGlobal, themeVersion } = useThemeStore();
+    const { theme: baseTheme, setChatPhoto, setChatBgImage, chatPhoto: chatPhotoGlobal, themeVersion } = useThemeStore();
   const chatBgBrightness = useChatBgPrefsStore((s) => id ? s.getBrightness(id) : s.defaultBrightness);
   const setBgBrightness = useChatBgPrefsStore((s) => s.setBrightness);
   const getChatWallpaper = useChatBgPrefsStore((s) => s.getChatWallpaper);
+  const perChatOverrides = useChatBgPrefsStore((s) => s.perChatOverrides);
+  const globalStockWallpaper = useChatBgPrefsStore((s) => s.globalStockWallpaper);
+  const userPhotoWallpaper = useChatBgPrefsStore((s) => s.userPhotoWallpaper);
   const setChatWallpaper = useChatBgPrefsStore((s) => s.setChatWallpaper);
   const clearChatWallpaper = useChatBgPrefsStore((s) => s.clearChatWallpaper);
   const liveBgStamp = useChatBgPrefsStore((s) => s.liveBgStamp);
@@ -190,9 +212,21 @@ function ChatWindowInner() {
   const { getChatFont, setChatFont, clearChatFont } = useChatFontStore();
   const globalFontFamily = useUserSettingsStore((s) => s.globalFontFamily);
   const chatLayout = useUserSettingsStore((s) => s.layout);
+  const bubblePrefs = useChatPrefsStore((s) => s.bubbleSettings[id || ''] || {});
+  const setBubbleSettings = useChatPrefsStore((s) => s.setBubbleSettings);
+  const effectiveBubble = {
+    enabled: bubblePrefs.enabled ?? chatLayout.bubbleEnabled ?? true,
+    textSize: bubblePrefs.textSize ?? chatLayout.bubbleTextSize ?? 15,
+    padding: bubblePrefs.padding ?? chatLayout.bubblePadding ?? 6,
+    maxWidth: bubblePrefs.maxWidth ?? chatLayout.messageMaxWidth,
+  };
   const [text, setText] = useState('');
+  const [keepSendButton, setKeepSendButton] = useState(false);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [forwardMsg, setForwardMsg] = useState<Message | null>(null);
+  const [forwardBusy, setForwardBusy] = useState(false);
+  const forwardBusyRef = useRef(false);
+  const [forwardError, setForwardError] = useState('');
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [chatPhotoInputRef] = useState<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -216,6 +250,28 @@ function ChatWindowInner() {
   const [activeCall, setActiveCall] = useState<{ type: 'audio' | 'video' } | null>(null);
   const callActive = useCallStore((s) => s.activeChatId === id);
   const [toast, setToast] = useState<{ message: string; severity: 'success' | 'info' | 'warning' | 'error' } | null>(null);
+  const [pollOpen, setPollOpen] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollOptions, setPollOptions] = useState(['', '']);
+  const [pollMultiple, setPollMultiple] = useState(false);
+  const [pollSubmitting, setPollSubmitting] = useState(false);
+  const pollSubmittingRef = useRef(false);
+  useEffect(() => { setPollOpen(false); setPollQuestion(''); setPollOptions(['', '']); setPollMultiple(false); }, [id]);
+
+  const createPoll = async () => {
+    if (!id || activeChat?.type !== 'channel' || channelReadOnly || uploading || pollSubmittingRef.current) return;
+    const question = pollQuestion.trim();
+    const options = pollOptions.map(option => option.trim());
+    if (!question || options.length < 2 || options.some(option => !option)) { setToast({ message: 'Укажите вопрос и заполните все варианты.', severity: 'warning' }); return; }
+    pollSubmittingRef.current = true;
+    setPollSubmitting(true);
+    try {
+      const result = await messagesApi.send(id, { type: 'poll', poll: { question, options: options.map((text, index) => ({ id: String(index + 1), text })), multiple: pollMultiple } });
+      useChatStore.getState().replaceOrAddMessage(result.data);
+      setPollOpen(false); setPollQuestion(''); setPollOptions(['', '']); setPollMultiple(false);
+    } catch { setToast({ message: 'Не удалось создать опрос.', severity: 'error' }); }
+    finally { pollSubmittingRef.current = false; setPollSubmitting(false); }
+  };
 
   const {
     fontSize, emojiSize, fontFamily, customFonts,
@@ -225,49 +281,51 @@ function ChatWindowInner() {
   const layout = useUserSettingsStore((st) => st.layout);
   const fontInputRef = useRef<HTMLInputElement>(null);
 
-  // Голосовые сообщения
-  const [recording, setRecording] = useState(false);
-  const [recordTime, setRecordTime] = useState(0);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const recordChunksRef = useRef<Blob[]>([]);
-  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const messageInputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatBgInputRef = useRef<HTMLInputElement>(null);
   const liveBgInputRef = useRef<HTMLInputElement>(null);
   const [liveBgUrl, setLiveBgUrl] = useState<string | null>(null);
+  const [loadedLiveBgKey, setLoadedLiveBgKey] = useState<string | null>(null);
   const [liveBgVersion, setLiveBgVersion] = useState(0);
+  const [settingsOfferSent, setSettingsOfferSent] = useState(false);
   
   // Состояние для кнопки "прокрутить вниз"
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [unreadAtBottom, setUnreadAtBottom] = useState(0);
 
-  // Загружаем живые обои (видео) из IndexedDB при монтировании и при смене версии
+  const currentWallpaper = useMemo(() => {
+    if (!id) return null;
+    if (perChatOverrides[id]) return perChatOverrides[id];
+    if (activeChat?.id === id && activeChat.wallpaper) return activeChat.wallpaper;
+    return getChatWallpaper(id);
+  }, [id, activeChat?.id, activeChat?.wallpaper, getChatWallpaper, perChatOverrides, globalStockWallpaper, userPhotoWallpaper]);
+  const liveWallpaperScope = currentWallpaper?.type === 'live' ? currentWallpaper.value : null;
+  const liveWallpaperKey = `${id}:${liveWallpaperScope}:${liveBgVersion}:${liveBgStamp}`;
+
+  // Перезагружаем видео при смене чата и освобождаем URL предыдущего фона.
   useEffect(() => {
     let cancelled = false;
     let currentUrl: string | null = null;
     (async () => {
-      if (!hasLiveBg()) { setLiveBgUrl(null); return; }
-      const url = await loadLiveBgUrl();
+      setLiveBgUrl(null);
+      if (!liveWallpaperScope) return;
+      const url = await loadLiveBgUrl(liveWallpaperScope);
       if (cancelled) { if (url) URL.revokeObjectURL(url); return; }
       currentUrl = url;
       setLiveBgUrl(url);
+      setLoadedLiveBgKey(liveWallpaperKey);
     })();
     return () => {
       cancelled = true;
       if (currentUrl) URL.revokeObjectURL(currentUrl);
     };
-  }, [liveBgVersion, liveBgStamp]);
+  }, [liveWallpaperScope, liveWallpaperKey]);
   const prevMsgCountRef = useRef<number>(0);
 
-  // Вычисляем текущие обои для чата (глобальные стоковые или per-chat переопределение)
-  const currentWallpaper = useMemo(() => {
-    if (!id) return null;
-    return getChatWallpaper(id);
-  }, [id, getChatWallpaper]);
 
   // URL для рендера: stock из каталога, photo из per-chat override, или live video
   const wallpaperPhotoUrl = useMemo(() => {
@@ -277,14 +335,47 @@ function ChatWindowInner() {
       return stock?.url || null;
     }
     if (currentWallpaper.type === 'photo') {
-      return currentWallpaper.value; // dataURL или URL
+      return resolveFileUrl(currentWallpaper.value); // dataURL или URL
     }
     return null;
   }, [currentWallpaper]);
 
-  const hasLiveWallpaper = currentWallpaper?.type === 'live';
+  const hasLiveWallpaper = currentWallpaper?.type === 'live' && loadedLiveBgKey === liveWallpaperKey;
+
+  const offerChatSettings = async () => {
+    if (!id || !getSocket()?.connected) {
+      setToast({ message: 'Собеседник недоступен для предложения', severity: 'warning' });
+      return;
+    }
+    try {
+      const wallpaper = currentWallpaper ? { ...currentWallpaper } : null;
+      const settings: any = {
+        theme: useChatThemeStore.getState().getTheme(id) || null,
+        wallpaper,
+        brightness: useChatBgPrefsStore.getState().getBrightness(id),
+      };
+      if (wallpaper?.type === 'live') {
+        const blob = await getLiveBgBlob(wallpaper.value);
+        if (blob) {
+          settings.videoDataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(blob);
+          });
+        }
+      }
+      getSocket()?.emit('chat:settings_offer', { chatId: id, settings });
+      setSettingsOfferSent(true);
+      setToast({ message: 'Предложение отправлено собеседнику', severity: 'info' });
+    } catch (error) {
+      console.error('settings offer error:', error);
+      setToast({ message: 'Не удалось подготовить настройки', severity: 'error' });
+    }
+  };
 
   useEffect(() => {
+    setKeepSendButton(false);
     if (id) {
       // Always load messages for this chat id
       useChatStore.getState().loadMessages(id);
@@ -316,26 +407,108 @@ function ChatWindowInner() {
     }
   }, [chats, id]);
 
-  const chatMessages = messages[id || ''] || [];
+  const channelReadOnly = activeChat?.type === 'channel' && !activeChat.members.some(m => m.userId === user?.id && (m.role === 'owner' || m.role === 'admin'));
+  const chatMessages = (messages[id || ''] || []).filter(m => activeChat?.type !== 'channel' || !m.replyToId);
 
-  // Звук при новом сообщении от другого пользователя
+  // Звук при новом сообщении от другого пользователя обрабатывается глобально
+  // в App.tsx (слушатель socket 'message-new'). Здесь только сбрасываем счётчик
+  // при смене чата, чтобы старый локальный триггер не повторял звук.
   useEffect(() => {
-    const prev = prevMsgCountRef.current;
-    const curr = chatMessages.length;
-    if (curr > prev && prev > 0) {
-      const lastMsg = chatMessages[curr - 1];
-      if (lastMsg?.senderId !== user?.id) {
-        if (!(id && mutedChats.has(id))) playNotificationSound(id);
-      }
+    prevMsgCountRef.current = chatMessages.length;
+  }, [id]);
+
+  // ── Скролл ─────────────────────────────────────────────────────────────────
+  // ПРАВИЛО: чат ВСЕГДА открывается на последнем сообщении (низ). Никакой
+  // памяти позиции, никаких анимаций. При новых сообщениях автоскроллим
+  // ТОЛЬКО если пользователь и так был внизу.
+  const atBottomRef = useRef<boolean>(true);
+  const lastChatIdRef = useRef<string | null>(null);
+  const restoredRef = useRef<boolean>(false);
+  const prevMsgLenRef = useRef<number>(0);
+
+  // (1) Открытие чата — ВСЕГДА показываем последнее сообщение (низ).
+  // Jump to bottom + УДЕРЖИВАЕМ низ, пока медиа/шрифты догружаются и меняют
+  // высоту. ResizeObserver на контейнере НЕ ловит рост scrollHeight при
+  // догрузке картинок, поэтому поллим высоту вручную + MutationObserver.
+  React.useLayoutEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!id || !container || chatMessages.length === 0) return;
+
+    // Сброс при смене чата.
+    if (lastChatIdRef.current !== id) {
+      lastChatIdRef.current = id;
+      restoredRef.current = false;
+      atBottomRef.current = true;
     }
-    prevMsgCountRef.current = curr;
+
+    const pinToBottom = () => {
+      try { messagesEndRef.current?.scrollIntoView({ block: 'end' }); } catch {}
+      container.scrollTop = container.scrollHeight;
+    };
+
+    pinToBottom();
+    atBottomRef.current = true;
+    restoredRef.current = true;
+    prevMsgLenRef.current = chatMessages.length;
+    setShowScrollButton(false);
+
+    // 1) rAF-цикл — пока layout устаканивается (до ~1.5 сек).
+    let raf = 0;
+    let frames = 0;
+    const tick = () => {
+      if (!atBottomRef.current) return;
+      pinToBottom();
+      if (++frames < 90) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+
+    // 2) Поллинг scrollHeight каждые 50 мс — ловит догрузку картинок/видео/
+    //    аудио/шрифтов, которые растягивают контент после нашего jump'а.
+    let ticks = 0;
+    const timer = setInterval(() => {
+      if (!atBottomRef.current) { clearInterval(timer); return; }
+      const bottom = container.scrollHeight - container.clientHeight;
+      // Первые 5 тиков жмём безусловно (гарантированная фиксация низа),
+      // дальше — только если контент реально вырос ниже текущей позиции.
+      if (ticks <= 4 || container.scrollTop < bottom - 2) pinToBottom();
+      if (++ticks >= 120) clearInterval(timer); // ≈6 сек максимум
+    }, 50);
+
+    // 3) MutationObserver — в DOM добавились новые сообщения/медиа — дожать низ.
+    let observer: MutationObserver | null = null;
+    if (typeof MutationObserver !== 'undefined') {
+      observer = new MutationObserver(() => { if (atBottomRef.current) pinToBottom(); });
+      observer.observe(container, {
+        childList: true, subtree: true,
+        attributes: true, attributeFilter: ['src', 'style', 'class'],
+      });
+    }
+
+    const cleanup = () => {
+      cancelAnimationFrame(raf);
+      clearInterval(timer);
+      observer?.disconnect();
+    };
+    const stopTimer = setTimeout(cleanup, 6000);
+    return () => { cleanup(); clearTimeout(stopTimer); };
+  }, [id, chatMessages.length]);
+
+  // (2) Новые сообщения — автоскролл ТОЛЬКО если были внизу.
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container || !restoredRef.current) return;
+    const prev = prevMsgLenRef.current;
+    const curr = chatMessages.length;
+    if (curr > prev && atBottomRef.current) {
+      // Плавно докатываемся до низа при новом сообщении.
+      requestAnimationFrame(() => {
+        container.scrollTop = container.scrollHeight;
+      });
+    }
+    prevMsgLenRef.current = curr;
   }, [chatMessages.length]);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages]);
-
-  // Отслеживаем позицию скролла для показа кнопки "вниз"
+  // (3) Отслеживание позиции + кнопка «вниз» + непрочитанные.
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
@@ -343,15 +516,13 @@ function ChatWindowInner() {
     const handleScroll = () => {
       const { scrollTop, scrollHeight, clientHeight } = container;
       const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-      
-      // Показываем кнопку если прокрутили вверх больше чем на 200px от низа
+      atBottomRef.current = distanceFromBottom < 40;
       setShowScrollButton(distanceFromBottom > 200);
-      
-      // Считаем непрочитанные внизу (если есть новые сообщения)
+
       if (distanceFromBottom > 200) {
         const lastReadIndex = chatMessages.findIndex(msg => msg.senderId !== user?.id && !msg.readBy?.includes(user?.id || ''));
         if (lastReadIndex !== -1) {
-          const unreadCount = chatMessages.slice(lastReadIndex).filter(msg => 
+          const unreadCount = chatMessages.slice(lastReadIndex).filter(msg =>
             msg.senderId !== user?.id && !msg.readBy?.includes(user?.id || '')
           ).length;
           setUnreadAtBottom(unreadCount);
@@ -363,12 +534,18 @@ function ChatWindowInner() {
       }
     };
 
-    container.addEventListener('scroll', handleScroll);
+    container.addEventListener('scroll', handleScroll, { passive: true });
     return () => container.removeEventListener('scroll', handleScroll);
   }, [chatMessages, user?.id]);
 
+  // Память позиции не храним — чат всегда открывается на последнем сообщении.
+
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = messagesContainerRef.current;
+    if (container) {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+    }
+    atBottomRef.current = true;
     setShowScrollButton(false);
     setUnreadAtBottom(0);
   };
@@ -416,20 +593,55 @@ function ChatWindowInner() {
   };
 
   const handleSend = async () => {
+    if (channelReadOnly || uploading) return;
     if ((!text.trim() && pendingFiles.length === 0) || !id) return;
+    if (activeChat?.type === 'channel' && pendingFiles.length) {
+      if (pendingFiles.length > 20) {
+        setToast({ message: 'В одном посте можно прикрепить до 20 файлов.', severity: 'warning' });
+        return;
+      }
+      setUploading(true); setUploadProgress(0);
+      try {
+        const attachments = [];
+        for (let i = 0; i < pendingFiles.length; i++) {
+          const file = pendingFiles[i];
+          const result = await filesApi.uploadWithProgress(file, progress => {
+            setUploadProgress(Math.round(((i + progress / 100) / pendingFiles.length) * 100));
+          });
+          const attachment = toMessageAttachment(result.data, file);
+          if (!attachment.fileUrl) throw new Error('Missing file URL');
+          attachments.push(attachment);
+        }
+        const result = await messagesApi.send(id, { text: text.trim(), attachments, type: 'document' });
+        useChatStore.getState().replaceOrAddMessage(result.data);
+        setText(''); clearDraft(id); setReplyTo(null);
+        pendingPreviews.forEach(url => { if (url) URL.revokeObjectURL(url); });
+        setPendingFiles([]); setPendingPreviews([]);
+      } catch {
+        setToast({ message: 'Не удалось опубликовать пост. Текст и файлы сохранены — попробуйте ещё раз.', severity: 'error' });
+      } finally {
+        setUploading(false); setUploadProgress(0);
+      }
+      return;
+    }
     const msg = text.trim();
+    // Не переключаем кнопку на микрофон сразу после очистки поля: на мобильных
+    // такая перестройка composer может забрать фокус и закрыть клавиатуру.
+    setKeepSendButton(true);
     setText('');
+    messageInputRef.current?.focus({ preventScroll: true });
     if (id) clearDraft(id); // Очищаем черновик после отправки
     if (typingTimer.current) clearTimeout(typingTimer.current);
     try { sendTypingStop(id); } catch {}
     if (msg) {
-      await sendMessage(id, msg, replyTo?.id);
+      await sendMessage(id, msg, activeChat?.type === 'channel' ? undefined : replyTo?.id);
     }
     if (pendingFiles.length > 0) {
       await uploadAndSendFiles(pendingFiles);
     } else {
       setReplyTo(null);
     }
+
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -450,9 +662,9 @@ function ChatWindowInner() {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    e.target.value = '';
     // Добавляем в pending — показываем превью перед отправкой
     const newFiles = Array.from(files);
+    e.target.value = '';
     const previews = newFiles.map(f =>
       f.type.startsWith('image/') ? URL.createObjectURL(f) : ''
     );
@@ -467,89 +679,43 @@ function ChatWindowInner() {
     mimeType: raw?.mimeType || fallbackFile.type || 'application/octet-stream',
   });
 
-  const startRecording = async () => {
+  const sendRecordedFile = async (file: File, round: boolean) => {
+    if (!id) return;
+    setUploading(true);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mr = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-      recordChunksRef.current = [];
-      mr.ondataavailable = (e) => { if (e.data.size > 0) recordChunksRef.current.push(e.data); };
-      mr.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(recordChunksRef.current, { type: 'audio/webm' });
-        const voiceFile = new File([blob], 'voice.webm', { type: 'audio/webm' });
-        if (id) {
-          setUploading(true);
-          try {
-            // P2P: читаем blob в data URL и сохраняем как attachment локально
-            // (mesh пока не передаёт бинарные вложения).
-            const dataUrl: string = await new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = () => resolve(String(reader.result || ''));
-              reader.onerror = () => reject(new Error('read error'));
-              reader.readAsDataURL(voiceFile);
-            });
-            const attachment = {
-              url: dataUrl,
-              fileUrl: dataUrl,
-              name: voiceFile.name,
-              fileName: voiceFile.name,
-              mime: 'audio/webm',
-              mimeType: 'audio/webm',
-              size: voiceFile.size,
-              duration: recordTime,
-            };
-            await sendMessageWithFile(id, attachment, undefined, 'voice');
-          } catch (err) { console.error('voice send error:', err); }
-          setUploading(false);
-        }
-      };
-      mr.start(250);
-      mediaRecorderRef.current = mr;
-      setRecording(true); setRecordTime(0);
-      recordTimerRef.current = setInterval(() => setRecordTime((t) => t + 1), 1000);
-    } catch {
-      setToast({ message: 'Нет доступа к микрофону. Разрешите запись звука в браузере.', severity: 'warning' });
+      const upload = await filesApi.uploadWithProgress(file, setUploadProgress);
+      const attachment: any = toMessageAttachment(upload.data, file);
+      if (!attachment.fileUrl) throw new Error('Upload response does not contain a file URL');
+      await sendMessageWithFile(id, attachment, undefined, round ? 'video' : 'voice');
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
     }
-  };
-
-  const stopRecording = () => {
-    mediaRecorderRef.current?.stop();
-    mediaRecorderRef.current = null;
-    if (recordTimerRef.current) clearInterval(recordTimerRef.current);
-    setRecording(false); setRecordTime(0);
   };
 
   // Загрузить массив File[] и отправить
   const uploadAndSendFiles = async (files: File[]) => {
-    if (!files.length || !id) return;
+    if (channelReadOnly || !files.length || !id) return;
     setUploading(true); setUploadProgress(0);
+    let sentCount = 0;
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         setUploadProgress(Math.round((i / files.length) * 100));
-        // P2P: сохраняем файл как data URL прямо в attachment (mesh не передаёт бинарь).
-        const dataUrl: string = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result || ''));
-          reader.onerror = () => reject(new Error('read error'));
-          reader.readAsDataURL(file);
+        // Upload the binary first. The message API stores attachment metadata,
+        // while the file itself must be sent as multipart/form-data.
+        const upload = await filesApi.uploadWithProgress(file, (progress) => {
+          setUploadProgress(Math.round(((i + progress / 100) / files.length) * 100));
         });
-        const attachment: any = {
-          url: dataUrl,
-          fileUrl: dataUrl,
-          fileName: file.name,
-          name: file.name,
-          fileSize: file.size,
-          size: file.size,
-          mimeType: file.type,
-          mime: file.type,
-        };
+        const attachment: any = toMessageAttachment(upload.data, file);
+        if (!attachment.fileUrl) throw new Error('Upload response does not contain a file URL');
         const mime = attachment.mimeType || '';
         let msgType = 'document';
         if (mime.startsWith('image/')) msgType = 'photo';
         else if (mime.startsWith('video/')) msgType = 'video';
         else if (mime.startsWith('audio/')) msgType = 'audio';
-        await sendMessageWithFile(id, attachment, replyTo?.id, msgType);
+        await sendMessageWithFile(id, attachment, activeChat?.type === 'channel' ? undefined : replyTo?.id, msgType);
+        sentCount++;
       }
       setReplyTo(null);
     } catch (err) {
@@ -557,7 +723,9 @@ function ChatWindowInner() {
       setToast({ message: 'Ошибка загрузки файла. Проверьте подключение к серверу.', severity: 'error' });
     } finally {
       setUploading(false); setUploadProgress(0);
-      setPendingFiles([]); setPendingPreviews([]);
+      pendingPreviews.slice(0, sentCount).forEach(url => { if (url) URL.revokeObjectURL(url); });
+      setPendingFiles(current => current.slice(sentCount));
+      setPendingPreviews(current => current.slice(sentCount));
     }
   };
 
@@ -653,8 +821,10 @@ function ChatWindowInner() {
   const handleOpenActions = useCallback((id: string) => {
     setHoveredMsgId((current) => current === id ? null : id);
   }, []);
-  const handleReply = useCallback((m: Message) => setReplyTo(m), []);
-  const handleForward = useCallback((m: Message) => setForwardMsg(m), []);
+  const handleReply = useCallback((m: Message) => {
+    if (activeChat?.type !== 'channel') setReplyTo(m);
+  }, [activeChat?.type]);
+  const handleForward = useCallback((m: Message) => { setForwardError(''); setForwardMsg(m); }, []);
   const handleSetProfileUser = useCallback((u: User) => setProfileUser(u), []);
   const handleScrollToMessage = useCallback((msgId: string) => {
     const el = document.getElementById(`msg-${msgId}`);
@@ -664,7 +834,7 @@ function ChatWindowInner() {
       el.style.background = theme.accent + '30';
       setTimeout(() => { el.style.background = ''; }, 1500);
     }
-  }, [theme.accent]);
+  }, [baseTheme.accent]);
 
   const handleAvatarClick = () => {
     const partner = getPartnerUser();
@@ -674,6 +844,10 @@ function ChatWindowInner() {
 
   // ── Хуки для магазинных возможностей (должны вызываться ДО ранних return, иначе React error #310) ──
   const chatThemeOverride = useChatThemeStore((s) => (id ? s.themes[id] : undefined));
+  // Персональная тема имеет приоритет только внутри текущего окна чата.
+  // Цвет своих пузырей из персональной темы не должен следовать за общей темой
+  // (см. resolveChatTheme) — иначе смена общей темы перекрашивает свои пузыри.
+  const theme = resolveChatTheme(baseTheme, chatThemeOverride);
   const smartWpActiveId = useShopStore((s) => s.activeWallpaper);
   const smartWpOwned = useShopStore((s) => s.owned);
   const smartWpItem = React.useMemo(() => {
@@ -762,13 +936,20 @@ function ChatWindowInner() {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
+        onPointerDown={(e) => {
+          const target = e.target as Element;
+          if (!target.closest('[data-chat-composer]')) {
+            setKeepSendButton(false);
+            messageInputRef.current?.blur();
+          }
+        }}
         sx={{
           display: 'flex', flexDirection: 'column',
           flex: 1, height: '100%',
           bgcolor: 'transparent',
-          background: theme.disableBackgroundBlobs 
-            ? theme.bgChat 
-            : `radial-gradient(circle at 78% 0%, ${theme.accent}14 0, transparent 30%), radial-gradient(circle at 8% 100%, rgba(255,79,216,0.10) 0, transparent 34%), ${theme.bgChat}`,
+          background: theme.disableBackgroundGlow || theme.disableBackgroundBlobs
+            ? theme.bgChat
+            : `radial-gradient(circle at 78% 0%, ${theme.backgroundGlowColor || '#8FE3CF'}14 0, transparent 30%), radial-gradient(circle at 8% 100%, ${theme.backgroundGlowColor || '#8FE3CF'}10 0, transparent 34%), ${theme.bgChat}`,
           overflow: 'hidden',
           position: 'relative',
           transformOrigin: '50% 72%',
@@ -777,12 +958,6 @@ function ChatWindowInner() {
             '0%': { opacity: 0, transform: 'translateY(18px) scale(.972) rotateX(3deg)', filter: 'blur(12px)' },
             '100%': { opacity: 1, transform: 'translateY(0) scale(1) rotateX(0)', filter: 'blur(0)' },
           },
-          // паттерн применяем только если нет фото (иначе фото-слой рисуется ниже)
-          ...(!theme.chatBgImage && theme.chatPattern ? {
-            backgroundImage: theme.chatPattern,
-            backgroundRepeat: 'repeat',
-            backgroundSize: 'auto',
-          } : {}),
         }}>
 
         <Snackbar
@@ -808,25 +983,17 @@ function ChatWindowInner() {
         </Snackbar>
 
         {/* ── Обои чата: smart-обои (движок) → кастом авторов → персональная тема → живые → фото ── */}
-        {smartWpSpec && !customWallpaperSpec && !liveBgUrl && !theme.chatBgImage && (
+        {smartWpSpec && !customWallpaperSpec && !currentWallpaper && !theme.chatBgImage && (
           <Box sx={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none', overflow: 'hidden' }}>
             <ChatWallpaper spec={smartWpSpec} isLight={isLightTheme} />
           </Box>
         )}
-        {customWallpaperSpec && !liveBgUrl && !theme.chatBgImage && (
+        {customWallpaperSpec && !currentWallpaper && !theme.chatBgImage && (
           <Box sx={{
             position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
             background: (specToStyle(customWallpaperSpec).background as string | undefined) || undefined,
           }} className={specAnimationClass(customWallpaperSpec)} />
         )}
-        {chatThemeOverride?.bg && !customWallpaperSpec && !smartWpSpec && !liveBgUrl && !theme.chatBgImage && (
-          <Box sx={{
-            position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
-            background: `linear-gradient(135deg, ${chatThemeOverride.bg}, ${chatThemeOverride.accent || chatThemeOverride.bg})`,
-            transition: 'background 800ms ease',
-          }} />
-        )}
-
         {/* ── Живые обои (видео-слой, приоритет выше фото) ── */}
         {hasLiveWallpaper && liveBgUrl && (
           <>
@@ -885,7 +1052,7 @@ function ChatWindowInner() {
         {/* ── Header ── */}
         <Box sx={{
           display: 'flex', alignItems: 'center',
-          px: 2.5, py: 1.5, gap: 2,
+          px: { xs: 0.75, md: 2.5 }, py: { xs: 0.65, md: 1.5 }, gap: { xs: 0.5, md: 2 },
           background: theme.headerGradient || theme.bgHeader,
           backdropFilter: 'blur(22px)',
           borderBottom: layout.chatHeaderPos === 'bottom' ? 'none' : `1px solid ${theme.border}`,
@@ -893,14 +1060,15 @@ function ChatWindowInner() {
           boxShadow: '0 16px 44px rgba(0,0,0,0.22)',
           flexShrink: 0,
           position: 'relative', zIndex: 2,
-          order: layout.chatHeaderPos === 'bottom' ? 3 : 0,
+          order: { xs: 0, md: layout.chatHeaderPos === 'bottom' ? 3 : 0 },
           ...getFinishStyles(theme),
+          '& .mobile-secondary-action': { display: { xs: 'none', md: 'inline-flex' } },
         }}>
           {/* Avatar — клик открывает профиль/инфо */}
           <Tooltip title="К списку чатов">
             <IconButton
               onClick={() => navigate('/')}
-              sx={{ color: theme.textSec, mr: -0.5, display: { xs: 'inline-flex', md: 'none' } }}
+              sx={{ color: theme.textSec, mr: -0.25, p: 0.75, display: { xs: 'inline-flex', md: 'none' } }}
             >
               <ArrowBack />
             </IconButton>
@@ -909,7 +1077,7 @@ function ChatWindowInner() {
             src={chatAvatar || undefined}
             onClick={handleAvatarClick}
             sx={{
-              width: 46, height: 46, fontSize: 17,
+              width: { xs: 40, md: 46 }, height: { xs: 40, md: 46 }, fontSize: { xs: 15, md: 17 },
               bgcolor: theme.accent + '60',
               cursor: 'pointer',
               border: `2px solid ${theme.accent}40`,
@@ -921,11 +1089,11 @@ function ChatWindowInner() {
           </Avatar>
 
           <Box flex={1} minWidth={0}>
-            <Typography sx={{ fontWeight: 700, fontSize: 17, color: theme.text }} noWrap>
+            <Typography sx={{ fontWeight: 700, fontSize: { xs: 15, md: 17 }, color: theme.text }} noWrap>
               {chatName}
             </Typography>
             <Typography sx={{
-              fontSize: 13,
+              fontSize: { xs: 11, md: 13 },
               color: typingList.length > 0 ? theme.accent
                 : partnerOnline ? theme.online
                 : theme.textSec,
@@ -943,9 +1111,9 @@ function ChatWindowInner() {
           {/* Кнопки звонка — 1:1 и группы (Discord-style) */}
           {(activeChat.type === 'private' || activeChat.type === 'direct' || activeChat.type === 'group') && (
             <>
-              <Tooltip title={callActive ? 'Идёт звонок' : 'Аудио звонок'}>
+              <Tooltip title="РђСѓРґРёРѕ Р·РІРѕРЅРѕРє">
                 <span>
-                  <IconButton
+                  <IconButton className="mobile-secondary-action"
                     onClick={() => useCallStore.getState().startCall(id!, 'audio')}
                     disabled={callActive}
                     sx={{
@@ -958,7 +1126,7 @@ function ChatWindowInner() {
                 </span>
               </Tooltip>
               <Tooltip title="Видео звонок">
-                <IconButton
+                <IconButton className="mobile-secondary-action"
                   onClick={() => useCallStore.getState().startCall(id!, 'video')}
                   sx={{ color: theme.textSec, '&:hover': { color: '#3b82f6' } }}
                 >
@@ -968,8 +1136,8 @@ function ChatWindowInner() {
             </>
           )}
 
-          <Tooltip title="Поиск по сообщениям">
-            <IconButton onClick={() => { setShowSearch(v => !v); setSearchQuery(''); }}
+          <Tooltip title="РџРѕРёСЃРє РїРѕ СЃРѕРѕР±С‰РµРЅРёСЏРј">
+            <IconButton className="mobile-secondary-action" onClick={() => { setShowSearch(v => !v); setSearchQuery(''); }}
               sx={{ color: showSearch ? theme.accent : theme.textSec, '&:hover': { color: theme.text } }}>
               <Search sx={{ fontSize: 22 }} />
             </IconButton>
@@ -998,6 +1166,16 @@ function ChatWindowInner() {
                 py: 0.5,
               }
             }}>
+            <MenuItem onClick={() => { setAnchorEl(null); setShowSearch(true); setSearchQuery(''); }}
+              sx={{
+                gap: 1.5, py: 1.2, px: 2,
+                color: theme.text, fontSize: 14, fontWeight: 500,
+                display: { xs: 'flex', md: 'none' },
+                '&:hover': { bgcolor: theme.bgHover },
+              }}>
+              <Search sx={{ fontSize: 18, color: theme.textSec }} />
+              Поиск по сообщениям
+            </MenuItem>
             <MenuItem onClick={() => { setAnchorEl(null); setShowInfo(true); }}
               sx={{
                 gap: 1.5, py: 1.2, px: 2,
@@ -1037,6 +1215,11 @@ function ChatWindowInner() {
               <Palette sx={{ fontSize: 18, color: theme.textSec }} />
               Персональная тема чата
             </MenuItem>
+            <MenuItem onClick={() => { setAnchorEl(null); void offerChatSettings(); }}
+              sx={{ gap: 1.5, py: 1.2, px: 2, color: theme.text, fontSize: 14, fontWeight: 500, '&:hover': { bgcolor: theme.bgHover } }}>
+              <Palette sx={{ fontSize: 18, color: theme.textSec }} />
+              {settingsOfferSent ? 'Предложение отправлено' : 'Предложить настройки собеседнику'}
+            </MenuItem>
             <MuiDivider sx={{ borderColor: theme.border, my: 0.5 }} />
             <MenuItem onClick={() => { setAnchorEl(null); setLeaveConfirmOpen(true); }}
               sx={{
@@ -1055,9 +1238,13 @@ function ChatWindowInner() {
             </MenuItem>
             <MenuItem onClick={async () => {
               setAnchorEl(null);
-              await clearLiveBg();
+              if (!id) return;
+              await clearLiveBg(id);
               setLiveBgVersion((v) => v + 1);
-              if (id) clearChatWallpaper(id);
+              if (id) {
+                setChatWallpaper(id, { type: 'stock', value: 'none' });
+                chatsApi.update(id, { wallpaper: { type: 'stock', value: 'none' } }).then((res) => updateChatList(res.data)).catch((err) => console.error('clear wallpaper error:', err));
+              }
               setToast({ message: 'Живые обои убраны из этого чата', severity: 'info' });
             }}>
               🗑 Убрать живые обои
@@ -1084,7 +1271,10 @@ function ChatWindowInner() {
             <MuiDivider sx={{ borderColor: theme.border, my: 0.5 }} />
             <MenuItem onClick={() => { 
               setAnchorEl(null); 
-              if (id) clearChatWallpaper(id);
+              if (id) {
+                setChatWallpaper(id, { type: 'stock', value: 'none' });
+                chatsApi.update(id, { wallpaper: { type: 'stock', value: 'none' } }).then((res) => updateChatList(res.data)).catch((err) => console.error('clear wallpaper error:', err));
+              }
               setToast({ message: 'Обои убраны из этого чата', severity: 'info' }); 
             }}>
               🗑 Убрать обои из этого чата
@@ -1108,10 +1298,11 @@ function ChatWindowInner() {
               }
               try {
                 setUploading(true);
-                await saveLiveBg(file);
+                if (!id) return;
+                await saveLiveBg(file, id);
                 setLiveBgVersion((v) => v + 1);
                 // Сохраняем как per-chat override типа 'live'
-                if (id) setChatWallpaper(id, { type: 'live', value: 'global' });
+                setChatWallpaper(id, { type: 'live', value: id });
                 setToast({ message: 'Живые обои установлены для этого чата', severity: 'success' });
               } catch (err) {
                 console.error('live bg save error:', err);
@@ -1136,36 +1327,12 @@ function ChatWindowInner() {
               e.target.value = '';
               try {
                 setUploading(true);
-                // P2P: читаем файл в data URL и сохраняем прямо в themeStore.
-                // Для больших изображений уменьшаем разрешение до 1280px,
-                // чтобы влезло в localStorage (квота ~5МБ на origin).
-                const rawUrl: string = await new Promise((resolve, reject) => {
-                  const reader = new FileReader();
-                  reader.onload = () => resolve(String(reader.result || ''));
-                  reader.onerror = () => reject(new Error('read error'));
-                  reader.readAsDataURL(file);
-                });
-                const url: string = await new Promise((resolve) => {
-                  const img = new Image();
-                  img.onload = () => {
-                    const maxSide = 1280;
-                    const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
-                    const w = Math.round(img.width * scale);
-                    const h = Math.round(img.height * scale);
-                    const canvas = document.createElement('canvas');
-                    canvas.width = w; canvas.height = h;
-                    const ctx = canvas.getContext('2d');
-                    if (!ctx) return resolve(rawUrl);
-                    ctx.drawImage(img, 0, 0, w, h);
-                    try { resolve(canvas.toDataURL('image/jpeg', 0.85)); }
-                    catch { resolve(rawUrl); }
-                  };
-                  img.onerror = () => resolve(rawUrl);
-                  img.src = rawUrl;
-                });
-                if (!url) throw new Error('no url');
-                // Сохраняем фото как per-chat override
-                if (id) setChatWallpaper(id, { type: 'photo', value: url });
+                const upload = await filesApi.uploadWithProgress(file, setUploadProgress);
+                const url = upload.data?.url;
+                if (!url || !id) throw new Error('no uploaded url');
+                const saved = await chatsApi.update(id, { wallpaper: { type: 'photo', value: url } });
+                setChatWallpaper(id, { type: 'photo', value: url });
+                updateChatList(saved.data);
                 setToast({ message: 'Фото чата установлено для этого чата', severity: 'success' });
               } catch (err) {
                 console.error('chat photo upload error:', err);
@@ -1191,22 +1358,15 @@ function ChatWindowInner() {
             <DialogContent sx={{ pt: 0 }}>
               {/* Превью */}
               <Box sx={{ bgcolor: theme.bgChat, borderRadius: 2, p: 1.5, mb: 2.5, border: `1px solid ${theme.border}` }}>
-                <Typography sx={{ fontSize: fontSize, fontFamily, color: theme.text, lineHeight: 1.5 }}>
+                <Typography sx={{ fontSize: effectiveBubble.textSize, fontFamily, color: theme.text, lineHeight: 1.5 }}>
                   Пример текста сообщения
                 </Typography>
                 <Typography component="span" sx={{ fontSize: emojiSize, lineHeight: 1 }}>😀🎉❤️</Typography>
               </Box>
 
-              {/* Размер текста */}
-              <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5, fontWeight: 600 }}>
-                Размер текста: {fontSize}px
-              </Typography>
-              <Slider
-                value={fontSize}
-                onChange={(_, v) => setFontSize(v as number)}
-                min={12} max={24} step={1}
-                sx={{ color: theme.accent, mb: 2.5 }}
-              />
+              <Typography sx={{ color: theme.textSec, mb: 1 }}>Пузыри только для этого чата</Typography>
+              <BubbleSettingsControls value={effectiveBubble} onChange={patch => id && setBubbleSettings(id, patch)} />
+              <Button onClick={() => id && useChatPrefsStore.getState().clearBubbleSettings(id)}>Использовать общие настройки</Button>
 
               {/* Размер эмодзи */}
               <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5, fontWeight: 600 }}>
@@ -1349,7 +1509,7 @@ function ChatWindowInner() {
             bgcolor: theme.bgHeader,
             borderBottom: `1px solid ${theme.border}`,
             display: 'flex', alignItems: 'center', gap: 1.5,
-            position: 'relative', zIndex: 2, order: 1,
+            position: 'relative', zIndex: 2, order: { xs: 1, md: 1 },
           }}>
             <Search sx={{ color: theme.textSec, fontSize: 20 }} />
             <TextField
@@ -1386,8 +1546,10 @@ function ChatWindowInner() {
             bgcolor: theme.accent + '12',
             borderBottom: `1px solid ${theme.accent}30`,
             display: 'flex', alignItems: 'center', gap: 1.5,
+            width: '100%', minWidth: 0, maxWidth: '100%',
+            overflow: 'hidden', boxSizing: 'border-box',
             cursor: 'pointer',
-            position: 'relative', zIndex: 2, order: 1,
+            position: 'relative', zIndex: 2, order: { xs: 1, md: 1 },
           }}
             onClick={() => {
               const pinned = pinnedMessages[activeChat.id];
@@ -1398,9 +1560,9 @@ function ChatWindowInner() {
             }}
           >
             <PushPin sx={{ fontSize: 16, color: theme.accent }} />
-            <Box flex={1} minWidth={0}>
+            <Box flex={1} minWidth={0} maxWidth="100%" overflow="hidden">
               <Typography sx={{ fontSize: 12, color: theme.accent, fontWeight: 600 }}>Закреплённое сообщение</Typography>
-              <Typography sx={{ fontSize: 13, color: theme.textSec }} noWrap>
+              <Typography sx={{ fontSize: 13, color: theme.textSec, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {pinnedMessages[activeChat.id]?.content || '📎 Вложение'}
               </Typography>
             </Box>
@@ -1416,22 +1578,33 @@ function ChatWindowInner() {
               height: 3,
               bgcolor: theme.accent + '20',
               '& .MuiLinearProgress-bar': { bgcolor: theme.accent },
-              position: 'relative', zIndex: 2, order: 1,
+              position: 'relative', zIndex: 2, order: { xs: 1, md: 1 },
             }}
           />
         )}
 
         {/* ── Messages ── */}
         <Box sx={{
-          flex: 1, overflowY: 'auto', px: { xs: 1.25, md: 2.5 }, py: 2,
+          // overflowY:'scroll' + scrollbarGutter → скроллбар виден ВСЕГДА
+          // (а не только при наведении/прокрутке), бегунок при открытии
+          // чата стоит в самом низу — чат открывается на последнем сообщении.
+          flex: 1, minHeight: 0, overflowY: 'auto', scrollbarGutter: 'stable',
+          WebkitOverflowScrolling: 'touch', touchAction: 'pan-y',
+          px: { xs: 1, md: 2.5 }, py: { xs: 1.25, md: 2 },
+          pb: { xs: 'calc(1.25rem + env(safe-area-inset-bottom))', md: 2 },
           backgroundImage: theme.chatPattern,
+          backgroundSize: patternBackgroundSize(theme.chatPattern, theme.chatPatternSizeMin, theme.chatPatternSizeMax),
           backgroundBlendMode: 'screen',
-          scrollBehavior: 'smooth',
           fontFamily: id ? (getChatFont(id) || globalFontFamily) : globalFontFamily,
-          '&::-webkit-scrollbar': { width: 5 },
-          '&::-webkit-scrollbar-thumb': { bgcolor: theme.accent + '30', borderRadius: 4 },
+          '&::-webkit-scrollbar': { width: { xs: 0, md: 5 } },
+          '&::-webkit-scrollbar-track': { bgcolor: theme.bgChat ? theme.bgChat + '55' : 'rgba(255,255,255,0.04)' },
+          '&::-webkit-scrollbar-thumb': {
+            bgcolor: theme.accent + '30', borderRadius: 4,
+            '&:hover': { bgcolor: theme.accent + '60' },
+          },
           position: 'relative', zIndex: 2, order: 2,
         }}
+          ref={messagesContainerRef}
           onClick={() => setHoveredMsgId(null)}
           onContextMenu={() => setHoveredMsgId(null)}
         >
@@ -1458,11 +1631,16 @@ function ChatWindowInner() {
                   {date}
                 </Typography>
               </Box>
-              {msgs.map((msg) => (
+              {msgs.map((msg, index) => {
+                const previous = msgs[index - 1];
+                const next = msgs[index + 1];
+                const isGroupStart = !previous || previous.senderId !== msg.senderId;
+                const isGroupEnd = !next || next.senderId !== msg.senderId;
+                return (
                                 <MessageBubble
                   key={msg.id}
                   message={msg}
-                  isOwn={msg.senderId === user?.id}
+                  isOwn={activeChat.type !== 'channel' && msg.senderId === user?.id}
                   isHovered={hoveredMsgId === msg.id}
                   onHover={handleHover}
                   onOpenActions={handleOpenActions}
@@ -1477,10 +1655,16 @@ function ChatWindowInner() {
                   bgBubbleOther={theme.bgBubbleOther}
                   bubbleOwnShadow={theme.bubbleOwnShadow}
                   bubbleOtherShadow={theme.bubbleOtherShadow}
-                  messageMaxWidth={chatLayout.messageMaxWidth}
+                  messageMaxWidth={effectiveBubble.maxWidth}
                   messageAlign={chatLayout.messageAlign}
+                  bubbleEnabled={effectiveBubble.enabled}
+                  bubbleTextSize={effectiveBubble.textSize}
+                  bubblePadding={effectiveBubble.padding}
+                  isGroupStart={isGroupStart}
+                  isGroupEnd={isGroupEnd}
                 />
-              ))}
+                );
+              })}
             </Box>
           ))}
           {typingList.length > 0 && (
@@ -1631,7 +1815,7 @@ function ChatWindowInner() {
               <Button
                 variant="contained"
                 size="small"
-                onClick={() => uploadAndSendFiles(pendingFiles)}
+                onClick={() => activeChat?.type === 'channel' ? handleSend() : uploadAndSendFiles(pendingFiles)}
                 disabled={uploading}
                 sx={{ bgcolor: theme.accent, color: '#fff', textTransform: 'none', borderRadius: 2, '&:hover': { bgcolor: theme.accent + 'CC' } }}
               >
@@ -1653,9 +1837,10 @@ function ChatWindowInner() {
         )}
 
         {/* ── Input ── */}
-        <Box sx={{
+        <Box data-chat-composer sx={{
           display: 'flex', alignItems: 'flex-end', gap: 0.85,
-          px: { xs: 1.15, md: 1.6 }, py: 1.25,
+          px: { xs: 0.65, md: 1.6 }, py: { xs: 0.55, md: 1.25 },
+          pb: { xs: 'calc(0.55rem + env(safe-area-inset-bottom))', md: 1.25 },
           bgcolor: theme.bgHeader,
           backdropFilter: 'blur(22px)',
           borderTop: layout.chatInputPos === 'top' ? 'none' : `1px solid ${theme.border}`,
@@ -1663,20 +1848,26 @@ function ChatWindowInner() {
           boxShadow: layout.chatInputPos === 'top' ? '0 18px 46px rgba(0,0,0,0.28)' : '0 -18px 46px rgba(0,0,0,0.28)',
           flexShrink: 0,
           position: 'relative', zIndex: 2,
-          order: layout.chatInputPos === 'top' ? 1 : 4,
+          order: { xs: 4, md: layout.chatInputPos === 'top' ? 1 : 4 },
         }}>
 
+          {activeChat?.type === 'channel' && !channelReadOnly && (
+            <Tooltip title="Создать опрос">
+              <IconButton aria-label="Создать опрос" onClick={() => setPollOpen(true)} disabled={uploading} sx={{ width: 42, height: 42, bgcolor: theme.bgInput, color: theme.textSec, flexShrink: 0, '&:hover': { bgcolor: theme.bgHover, color: theme.text } }}><HowToVote sx={{ fontSize: 21 }} /></IconButton>
+            </Tooltip>
+          )}
           {/* Кнопка скрепки */}
           <Tooltip title="Прикрепить файл">
             <span style={{ display: 'inline-flex', flexShrink: 0 }}>
               <IconButton
-                onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
+                onClick={() => fileInputRef.current?.click()}
+                aria-label="Прикрепить файл"
                 sx={{
                   width: 42, height: 42,
                   bgcolor: theme.bgInput,
                   color: uploading ? theme.border : theme.textSec,
-                  transform: 'translateX(3px)',
+                  transform: 'none',
                   transition: 'background 0.15s, color 0.15s',
                   '&:hover': { bgcolor: theme.bgHover, color: theme.text },
                 }}
@@ -1686,6 +1877,7 @@ function ChatWindowInner() {
             </span>
           </Tooltip>
           <input
+            id="chat-file-input"
             ref={fileInputRef}
             type="file"
             multiple
@@ -1703,7 +1895,7 @@ function ChatWindowInner() {
               sx={{
                 width: 42, height: 42,
                 color: emojiAnchor ? theme.accent : theme.textSec,
-                transform: 'translateX(1px)',
+                transform: 'none',
                 flexShrink: 0,
                 '&:hover': { color: theme.text },
               }}
@@ -1744,38 +1936,26 @@ function ChatWindowInner() {
             </Box>
           </Popover>
 
-          {recording ? (
-            <Box sx={{
-              flex: 1, display: 'flex', alignItems: 'center', gap: 1.5,
-              bgcolor: theme.bgInput, borderRadius: 999, px: 2.5, py: 1.25,
-              backdropFilter: 'blur(16px)',
-              border: `1px solid rgba(244,67,54,0.4)`,
-            }}>
-              <Box sx={{
-                width: 10, height: 10, borderRadius: '50%', bgcolor: '#f44336',
-                animation: 'blink 1s infinite',
-                '@keyframes blink': { '0%,100%': { opacity: 1 }, '50%': { opacity: 0.2 } },
-              }} />
-              <Typography sx={{ fontSize: 15, color: theme.text }}>
-                🎙 {Math.floor(recordTime / 60)}:{(recordTime % 60).toString().padStart(2, '0')}
-              </Typography>
-            </Box>
-          ) : (
-            <TextField
+          <TextField
               fullWidth multiline maxRows={6}
-placeholder="Сообщение..."
+              key="message-composer-input"
+              disabled={channelReadOnly}
+              placeholder={channelReadOnly ? "Комментарии доступны под публикациями" : activeChat.type === "channel" ? "Публикация от имени канала..." : "Сообщение..."}
               value={text}
+              inputRef={messageInputRef}
+              onFocus={() => setKeepSendButton(true)}
               onChange={(e) => handleTyping(e.target.value)}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               variant="outlined" size="small"
+              inputProps={{ maxLength: 10000 }}
               sx={{
                 '& .MuiOutlinedInput-root': {
-                  bgcolor: theme.bgInput, borderRadius: 999, fontSize: 15,
+                  bgcolor: theme.bgInput, borderRadius: 999, fontSize: { xs: 16, md: 15 },
                   color: theme.text,
                   backdropFilter: 'blur(16px)',
                   transition: `transform 220ms ${motion.spring}, box-shadow 240ms ${motion.easeOut}, border-color 180ms ${motion.easeOut}`,
-                  boxShadow: text.trim() ? `0 0 0 4px ${theme.accent}12, 0 14px 32px rgba(0,0,0,.24)` : '0 8px 22px rgba(0,0,0,.16)',
+                  boxShadow: keepSendButton ? `0 0 0 4px ${theme.accent}12, 0 14px 32px rgba(0,0,0,.24)` : '0 8px 22px rgba(0,0,0,.16)',
                   '&:active': { transform: 'scale(.992)' },
                   '& fieldset': { borderColor: theme.border },
                   '&:hover fieldset': { borderColor: theme.accent + '40' },
@@ -1785,14 +1965,20 @@ placeholder="Сообщение..."
                 '& .MuiInputBase-input::placeholder': { color: theme.textSec },
               }}
             />
-          )}
 
-          {(text.trim() || pendingFiles.length > 0) ? (
+          {(text.trim() || pendingFiles.length > 0 || keepSendButton) ? (
             <Tooltip title="Отправить (Enter)">
-              <IconButton onClick={handleSend} sx={{
+              <IconButton
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  messageInputRef.current?.focus({ preventScroll: true });
+                }}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={handleSend}
+                sx={{
                 width: 42, height: 42,
                 bgcolor: theme.accent, color: '#fff',
-                transform: 'translateX(-3px)',
+                transform: 'none',
                 flexShrink: 0,
                 position: 'relative', overflow: 'hidden',
                 borderRadius: 4,
@@ -1806,42 +1992,32 @@ placeholder="Сообщение..."
                 '&:active::after': { opacity: 1, transform: 'scale(1)' },
                 '&:hover': { bgcolor: theme.accent + 'CC' },
                 ...membranePressSx,
-              }} disabled={uploading}>
+              }} disabled={channelReadOnly || uploading || (!text.trim() && pendingFiles.length === 0)}>
                 <SendIcon sx={{ fontSize: 22 }} />
               </IconButton>
             </Tooltip>
-          ) : recording ? (
-            <Tooltip title="Стоп и отправить">
-              <IconButton onClick={stopRecording} sx={{
-                width: 42, height: 42, bgcolor: '#f44336', color: '#fff', transform: 'translateX(-3px)', flexShrink: 0,
-                '&:hover': { bgcolor: '#d32f2f' },
-                ...membranePressSx,
-              }}>
-                <Stop sx={{ fontSize: 22 }} />
-              </IconButton>
-            </Tooltip>
           ) : (
-            <Tooltip title="Голосовое сообщение">
-              <IconButton onClick={startRecording} sx={{
-                width: 42, height: 42,
-                bgcolor: theme.bgInput, color: theme.textSec,
-                transform: 'translateX(-3px)',
-                flexShrink: 0,
-                '&:hover': { bgcolor: theme.bgHover, color: theme.text },
-                borderRadius: '50%',
-                animation: `morphMic 240ms ${motion.spring} both`,
-                '@keyframes morphMic': {
-                  '0%': { borderRadius: '16px', transform: 'scale(.82) rotate(12deg)' },
-                  '100%': { borderRadius: '50%', transform: 'scale(1) rotate(0deg)' },
-                },
-                ...membranePressSx,
-              }}>
-                <Mic sx={{ fontSize: 22 }} />
-              </IconButton>
-            </Tooltip>
+            <HoldRecorder
+              key={id}
+              disabled={channelReadOnly || uploading}
+              onSend={sendRecordedFile}
+              onError={(message) => setToast({ message, severity: 'warning' })}
+            />
           )}
         </Box>
       </Box>
+
+      <Dialog open={pollOpen} onClose={() => { if (!pollSubmitting) setPollOpen(false); }} fullWidth maxWidth="sm" PaperProps={{ sx: { bgcolor: theme.bgHeader, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 3 } }}>
+        <DialogTitle>Новый опрос канала</DialogTitle>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+          <TextField autoFocus label="Вопрос" value={pollQuestion} onChange={e => setPollQuestion(e.target.value)} inputProps={{ maxLength: 500 }} fullWidth />
+          {pollOptions.map((option, index) => <TextField key={index} label={`Вариант ${index + 1}`} value={option} onChange={e => setPollOptions(current => current.map((item, i) => i === index ? e.target.value : item))} inputProps={{ maxLength: 200 }} fullWidth />)}
+          {pollOptions.length < 10 && <Button onClick={() => setPollOptions(current => [...current, ''])}>Добавить вариант</Button>}
+          {pollOptions.length > 2 && <Button color="inherit" onClick={() => setPollOptions(current => current.slice(0, -1))}>Удалить последний вариант</Button>}
+          <FormControlLabel control={<Checkbox checked={pollMultiple} onChange={e => setPollMultiple(e.target.checked)} />} label="Разрешить выбрать несколько вариантов" />
+        </DialogContent>
+        <DialogActions><Button disabled={pollSubmitting} onClick={() => setPollOpen(false)}>Отмена</Button><Button variant="contained" disabled={pollSubmitting || !pollQuestion.trim() || pollOptions.some(option => !option.trim())} onClick={createPoll}>{pollSubmitting ? 'Публикация…' : 'Опубликовать'}</Button></DialogActions>
+      </Dialog>
 
       {/* ── Info panel ── */}
       {showInfo && activeChat && (
@@ -1917,12 +2093,12 @@ placeholder="Сообщение..."
       {/* ── Диалог пересылки сообщения ── */}
       <Dialog
         open={!!forwardMsg}
-        onClose={() => setForwardMsg(null)}
+        onClose={() => { if (!forwardBusy) setForwardMsg(null); }}
         PaperProps={{ sx: { bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`, borderRadius: 3, minWidth: 360, maxWidth: 480 } }}
       >
         <DialogTitle sx={{ color: theme.text, fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           Переслать сообщение
-          <IconButton size="small" onClick={() => setForwardMsg(null)} sx={{ color: theme.textSec }}>
+          <IconButton size="small" disabled={forwardBusy} onClick={() => setForwardMsg(null)} sx={{ color: theme.textSec }}>
             <Close sx={{ fontSize: 18 }} />
           </IconButton>
         </DialogTitle>
@@ -1938,8 +2114,10 @@ placeholder="Сообщение..."
             </Box>
           )}
           <Typography sx={{ fontSize: 14, color: theme.textSec, mb: 1.5 }}>Выберите чат для пересылки:</Typography>
+          {forwardError && <Alert severity="error">{forwardError}</Alert>}
+          {forwardBusy && <LinearProgress />}
           <Box sx={{ maxHeight: 300, overflowY: 'auto' }}>
-            {chats.filter(c => c && c.id).map((c) => {
+            {chats.filter(c => c && c.id && c.id !== 'vera-ai' && (c.type !== 'channel' || c.members.some(m => m.userId === user?.id && ['owner', 'admin'].includes(m.role)))).map((c) => {
               const cName = c.name || (c.type === 'private'
                 ? c.members?.find(m => m.userId !== user?.id)?.user?.firstName || 'Чат'
                 : 'Группа');
@@ -1950,10 +2128,18 @@ placeholder="Сообщение..."
                 <Box
                   key={c.id}
                   onClick={async () => {
-                    if (forwardMsg) {
-                      await sendMessage(c.id, forwardMsg.content || '', undefined);
+                    if (!forwardMsg || forwardBusyRef.current) return;
+                    forwardBusyRef.current = true;
+                    setForwardBusy(true); setForwardError('');
+                    try {
+                      await useChatStore.getState().forwardMessage(c.id, forwardMsg);
+                      setForwardMsg(null);
+                      setToast({ message: 'Сообщение переслано', severity: 'success' });
+                    } catch (error: any) {
+                      setForwardError(error?.response?.data?.message || error?.message || 'Не удалось переслать сообщение');
+                    } finally {
+                      forwardBusyRef.current = false; setForwardBusy(false);
                     }
-                    setForwardMsg(null);
                   }}
                   sx={{
                     display: 'flex', alignItems: 'center', gap: 1.5,

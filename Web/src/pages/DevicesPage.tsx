@@ -81,11 +81,12 @@ export default function DevicesPage() {
     setLinking(true);
     setError(null);
     try {
-      await devicesApi.acceptLink(linkInput.trim());
+      const res = await devicesApi.acceptLink(linkInput.trim());
+      localStorage.setItem('vera_token', res.data.accessToken);
+      localStorage.setItem('vera_user', JSON.stringify(res.data.user));
       setLinkDlg(false);
       setLinkInput('');
-      await refresh();
-      alert('Устройство привязано! Теперь на этом устройстве можно войти в аккаунт.');
+      window.location.replace('/');
     } catch (e: any) {
       setError(e?.response?.data?.message || e?.message || 'Не удалось привязать устройство');
     } finally {

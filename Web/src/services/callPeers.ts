@@ -23,7 +23,7 @@ let currentKind: CallKind = 'audio';
 let localStream: MediaStream | null = null;
 let localScreen: MediaStream | null = null;
 let localVA: (() => void) | null = null;
-let bound = false;
+let boundSocket: ReturnType<typeof getSocket> | null = null;
 
 function myId(): string | null {
   return useAuthStore.getState().user?.id || null;
@@ -248,10 +248,24 @@ export async function stopScreenShare(): Promise<void> {
 }
 
 export function bindSocketHandlers(): void {
-  if (bound) return;
   const s = getSocket();
   if (!s) return;
-  bound = true;
+  if (boundSocket === s) return;
+  // Сокет пересоздан (реконнект/логин заново) — снимаем старые слушатели с прошлого инстанса,
+  // иначе после реконнекта callroom-события никто не обработает и звонок «не идёт через раз».
+  if (boundSocket) {
+    try {
+      boundSocket.off('callroom:peers');
+      boundSocket.off('callroom:peer-joined');
+      boundSocket.off('callroom:peer-left');
+      boundSocket.off('callroom:signal');
+      boundSocket.off('callroom:peer-state');
+      boundSocket.off('callroom:ended');
+      boundSocket.off('callroom:started');
+      boundSocket.off('callroom:ring');
+    } catch {}
+  }
+  boundSocket = s;
 
   s.on('callroom:peers', ({ peers: list }: { peers: Array<any> }) => {
     for (const p of list) {

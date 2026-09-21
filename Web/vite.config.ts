@@ -37,6 +37,12 @@ export default defineConfig({
         target: 'http://localhost:3000',
         changeOrigin: true,
       },
+      // Установщики лежат на Express-сервере. Без прокси Vite отдаёт SPA
+      // index.html под именем .exe, и Windows сообщает о повреждённом файле.
+      '/downloads': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+      },
       '/socket.io': {
         target: 'http://localhost:3000',
         ws: true,

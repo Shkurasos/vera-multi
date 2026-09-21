@@ -3,10 +3,26 @@ import { User } from '../types';
 import { authApi } from '../services/api';
 import { connectSocket, disconnectSocket } from '../services/socket';
 import { peer, isPeerAvailable } from '../services/peer';
-import { useThemeStore } from './themeStore';
+import { THEMES, useThemeStore } from './themeStore';
 import { initArchive, closeArchive } from '../services/localArchive';
 import { hydrateSettingsFromServer, startSettingsAutoSync } from './userSettingsStore';
 import { initStoreSyncOnLogin, disableAllStoreSync } from '../services/storeSyncSimple';
+import { prepareSettingsForAccount, disableSettingsSync } from './userSettingsStore';
+
+async function hydrateAccount(user: User): Promise<void> {
+  const changed = localStorage.getItem('vera_sync_active_account') !== user.id;
+  localStorage.setItem('vera_user', JSON.stringify(user));
+  disableSettingsSync();
+  await initStoreSyncOnLogin(user.id, () => {
+    const themeId = Number((user as any).themeId || 0);
+    const theme = useThemeStore.getState().customThemes.find(t => t.id === themeId)
+      || THEMES.find(t => t.id === themeId) || THEMES[0];
+    useThemeStore.setState({ themeId, theme, chatPhoto: (user as any).chatPhoto || undefined });
+  });
+  prepareSettingsForAccount(user.id, changed);
+  await hydrateSettingsFromServer();
+  startSettingsAutoSync(user.id);
+}
 
 interface AuthState {
   user: User | null;
@@ -78,6 +94,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       disconnectSocket();
     }
     closeArchive();
+    disableSettingsSync();
     disableAllStoreSync();
     localStorage.removeItem('vera_token');
     set({ user: null, token: null, isAuthenticated: false });
@@ -107,17 +124,12 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (existingToken && !existingToken.startsWith('mock-token-')) {
       try {
         const res = await authApi.me();
+        // Migrate an authenticated installation to its private cookie credential.
+        await authApi.device();
         connectSocket(existingToken);
-        try {
-          const themeId = Number((res.data as any).themeId || 0);
-          const chatPhoto = (res.data as any).chatPhoto;
-          if (themeId > 0) useThemeStore.getState().setTheme(themeId);
-          if (typeof chatPhoto === 'string' && chatPhoto) useThemeStore.getState().setChatPhoto(chatPhoto);
-        } catch {}
+        await hydrateAccount(res.data);
         set({ user: res.data, isAuthenticated: true, token: existingToken, isLoading: false });
         try { if (res.data?.id) initArchive(res.data.id); } catch {}
-        try { await hydrateSettingsFromServer(); startSettingsAutoSync(); } catch {}
-        try { await initStoreSyncOnLogin(); } catch {}
         return;
       } catch {
         // Токен невалиден — попробуем переавторизоваться по устройству ниже.
@@ -133,16 +145,9 @@ export const useAuthStore = create<AuthState>((set) => ({
       localStorage.setItem('vera_token', accessToken);
       localStorage.setItem('vera_user', JSON.stringify(user));
       try { connectSocket(accessToken); } catch {}
-      try {
-        const themeId = Number((user as any).themeId || 0);
-        const chatPhoto = (user as any).chatPhoto;
-        if (themeId > 0) useThemeStore.getState().setTheme(themeId);
-        if (typeof chatPhoto === 'string' && chatPhoto) useThemeStore.getState().setChatPhoto(chatPhoto);
-      } catch {}
-      set({ token: accessToken, user, isAuthenticated: true });
+      await hydrateAccount(user);
+      set({ token: accessToken, user, isAuthenticated: true, isLoading: false });
       try { if (user?.id) initArchive(user.id); } catch {}
-      try { await hydrateSettingsFromServer(); startSettingsAutoSync(); } catch {}
-      try { await initStoreSyncOnLogin(); } catch {}
     } catch (e) {
       console.error('[auth] device login failed', e);
     } finally {

@@ -29,7 +29,7 @@ git push -u origin main
 4. Render найдёт `render.yaml`: 1 web service.
 5. Apply. Первый билд 5–10 минут.
 
-Публичный URL: `https://vera-multi.onrender.com`. `JWT_SECRET` Render
+Публичный URL: `https://vera-koto.onrender.com`. `JWT_SECRET` Render
 сгенерирует сам (см. `generateValue: true` в `render.yaml`).
 
 ## 3. Крипто-кошелёк (NOWPayments)
@@ -54,14 +54,14 @@ git push -u origin main
 
 ### 3.2. IPN-секрет (подпись webhook'ов)
 1. **Store settings → IPN Settings**.
-2. IPN callback URL: `https://vera-multi.onrender.com/api/wallet/webhook`
+2. IPN callback URL: `https://vera-koto.onrender.com/api/wallet/webhook`
 3. Сгенерируй IPN Secret Key → скопируй. Это `NOWPAYMENTS_IPN_SECRET`.
 
 Сервер проверяет подпись `x-nowpayments-sig` (HMAC-SHA512) — без
 корректного секрета фейковые уведомления о «оплате» будут отбиваться 401.
 
 ### 3.3. Добавить ключи в Render
-1. В Render → сервис `vera-multi` → **Environment**.
+1. В Render → сервис `vera-koto` → **Environment**.
 2. Найди `NOWPAYMENTS_API_KEY` и `NOWPAYMENTS_IPN_SECRET` (они помечены
    `sync: false`, т.е. Render показал их пустыми — вводи вручную).
 3. Save Changes → Render передеплоит автоматически.
@@ -81,7 +81,7 @@ git push -u origin main
 1. https://uptimerobot.com → Register (free, без карты).
 2. Add New Monitor:
    - Type: **HTTP(s)**
-   - URL: `https://vera-multi.onrender.com/api/downloads`
+   - URL: `https://vera-koto.onrender.com/api/downloads`
    - Interval: **5 minutes**
 3. Create.
 

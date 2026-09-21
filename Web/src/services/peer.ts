@@ -52,6 +52,7 @@ export interface PeerChat {
   admins?: string[];
   description?: string;
   avatar?: string;
+  pinnedMessageId?: string | null;
 }
 
 export interface PeerMessage {
@@ -63,6 +64,13 @@ export interface PeerMessage {
   text: string;
   ts: number;
   self?: boolean;
+  forwardFromId?: string;
+  forwardFromName?: string;
+  attachment?: any;
+  kind?: string;
+  reactions?: any[];
+  edited?: boolean;
+  deleted?: boolean;
 }
 
 export interface CallLogEntry {

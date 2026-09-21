@@ -1,0 +1,673 @@
+[
+  {
+    "id": "case-base",
+    "name": "База",
+    "color": "#d9ad51",
+    "mark": "M24 24H76V76H24ZM38 50H62",
+    "packs": [
+      "shadow",
+      "minimal",
+      "rounded",
+      "sharp",
+      "retro",
+      "candy",
+      "mono",
+      "r-common",
+      "r-uncommon",
+      "r-cult"
+    ],
+    "price": 20,
+    "rewards": [
+      {
+        "key": "shadow",
+        "weight": 100
+      },
+      {
+        "key": "minimal",
+        "weight": 100
+      },
+      {
+        "key": "rounded",
+        "weight": 100
+      },
+      {
+        "key": "sharp",
+        "weight": 100
+      },
+      {
+        "key": "retro",
+        "weight": 100
+      },
+      {
+        "key": "candy",
+        "weight": 100
+      },
+      {
+        "key": "mono",
+        "weight": 100
+      },
+      {
+        "key": "r-common",
+        "weight": 100
+      },
+      {
+        "key": "r-uncommon",
+        "weight": 80
+      },
+      {
+        "key": "r-cult",
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "id": "case-elements",
+    "name": "Стихия",
+    "color": "#65bda0",
+    "mark": "M18 57Q34 43 50 57T82 57M18 69Q34 55 50 69T82 69",
+    "packs": [
+      "gradient-sunset",
+      "gradient-ocean",
+      "gradient-forest",
+      "aurora",
+      "gradient-lava",
+      "gradient-ice",
+      "r-crystal",
+      "r-plasma",
+      "r-core",
+      "r-anomaly"
+    ],
+    "price": 500,
+    "rewards": [
+      {
+        "key": "gradient-sunset",
+        "weight": 100
+      },
+      {
+        "key": "gradient-ocean",
+        "weight": 100
+      },
+      {
+        "key": "gradient-forest",
+        "weight": 100
+      },
+      {
+        "key": "aurora",
+        "weight": 100
+      },
+      {
+        "key": "gradient-lava",
+        "weight": 100
+      },
+      {
+        "key": "gradient-ice",
+        "weight": 100
+      },
+      {
+        "key": "r-crystal",
+        "weight": 11
+      },
+      {
+        "key": "r-plasma",
+        "weight": 9
+      },
+      {
+        "key": "r-core",
+        "weight": 2
+      },
+      {
+        "key": "r-anomaly",
+        "weight": 2
+      }
+    ]
+  },
+  {
+    "id": "case-signal",
+    "name": "Сигнал",
+    "color": "#65aef0",
+    "mark": "M20 60H35V35H50V65H65V40H80",
+    "packs": [
+      "neon",
+      "glass",
+      "cyber",
+      "neon-pink",
+      "holographic",
+      "r-rare",
+      "r-epic",
+      "r-digital",
+      "r-holo",
+      "r-mechanic"
+    ],
+    "price": 100,
+    "rewards": [
+      {
+        "key": "neon",
+        "weight": 100
+      },
+      {
+        "key": "glass",
+        "weight": 100
+      },
+      {
+        "key": "cyber",
+        "weight": 100
+      },
+      {
+        "key": "neon-pink",
+        "weight": 100
+      },
+      {
+        "key": "holographic",
+        "weight": 100
+      },
+      {
+        "key": "r-rare",
+        "weight": 64
+      },
+      {
+        "key": "r-epic",
+        "weight": 51
+      },
+      {
+        "key": "r-digital",
+        "weight": 7
+      },
+      {
+        "key": "r-holo",
+        "weight": 4
+      },
+      {
+        "key": "r-mechanic",
+        "weight": 4
+      }
+    ]
+  },
+  {
+    "id": "case-eclipse",
+    "name": "Затемнение",
+    "color": "#b09ae8",
+    "mark": "M62 22A30 30 0 1 0 78 66A29 29 0 0 1 62 22Z",
+    "packs": [
+      "gradient-gold",
+      "r-legendary",
+      "r-mythic",
+      "r-divine",
+      "r-transcendent",
+      "r-absolute",
+      "r-exclusive",
+      "r-relic",
+      "r-royal",
+      "r-infinity"
+    ],
+    "price": 500,
+    "rewards": [
+      {
+        "key": "gradient-gold",
+        "weight": 100
+      },
+      {
+        "key": "r-legendary",
+        "weight": 41
+      },
+      {
+        "key": "r-mythic",
+        "weight": 33
+      },
+      {
+        "key": "r-divine",
+        "weight": 26
+      },
+      {
+        "key": "r-transcendent",
+        "weight": 21
+      },
+      {
+        "key": "r-absolute",
+        "weight": 17
+      },
+      {
+        "key": "r-exclusive",
+        "weight": 13
+      },
+      {
+        "key": "r-relic",
+        "weight": 5
+      },
+      {
+        "key": "r-royal",
+        "weight": 3
+      },
+      {
+        "key": "r-infinity",
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "id": "case-games",
+    "name": "Легенды видеоигр",
+    "color": "#a98cff",
+    "mark": "M25 30H75L88 73L68 65L60 55H40L32 65L12 73ZM25 43H43M34 34V52M65 40H67M74 49H76",
+    "packs": [
+      "games-blocks",
+      "games-plumber",
+      "games-portal",
+      "games-bonfire",
+      "games-dragon",
+      "games-racer",
+      "games-invader",
+      "games-dungeon",
+      "games-mech",
+      "games-crown"
+    ],
+    "price": 500,
+    "rewards": [
+      {
+        "key": "games-blocks",
+        "weight": 9999900
+      },
+      {
+        "key": "games-plumber",
+        "weight": 7999920
+      },
+      {
+        "key": "games-portal",
+        "weight": 6399936
+      },
+      {
+        "key": "games-bonfire",
+        "weight": 5099949
+      },
+      {
+        "key": "games-dragon",
+        "weight": 631
+      },
+      {
+        "key": "games-racer",
+        "weight": 9999900
+      },
+      {
+        "key": "games-invader",
+        "weight": 7999920
+      },
+      {
+        "key": "games-dungeon",
+        "weight": 6399936
+      },
+      {
+        "key": "games-mech",
+        "weight": 5099949
+      },
+      {
+        "key": "games-crown",
+        "weight": 4099959
+      }
+    ]
+  },
+  {
+    "id": "case-corporation",
+    "name": "Корпорация",
+    "color": "#8faac4",
+    "mark": "M20 85V30L60 15V85M60 40H80V85M10 85H90M30 40H48M30 55H48M30 70H48",
+    "packs": [
+      "corp-pass",
+      "corp-tower",
+      "corp-network",
+      "corp-contract",
+      "corp-director",
+      "corp-terminal",
+      "corp-briefcase",
+      "corp-vault",
+      "corp-satellite",
+      "corp-citadel"
+    ],
+    "price": null,
+    "rewards": [
+      {
+        "key": "corp-pass",
+        "weight": 100
+      },
+      {
+        "key": "corp-tower",
+        "weight": 80
+      },
+      {
+        "key": "corp-network",
+        "weight": 64
+      },
+      {
+        "key": "corp-contract",
+        "weight": 51
+      },
+      {
+        "key": "corp-director",
+        "weight": 41
+      },
+      {
+        "key": "corp-terminal",
+        "weight": 100
+      },
+      {
+        "key": "corp-briefcase",
+        "weight": 80
+      },
+      {
+        "key": "corp-vault",
+        "weight": 64
+      },
+      {
+        "key": "corp-satellite",
+        "weight": 51
+      },
+      {
+        "key": "corp-citadel",
+        "weight": 41
+      }
+    ]
+  },
+  {
+    "id": "case-street",
+    "name": "Уличный стиль",
+    "color": "#ff669c",
+    "mark": "M30 35H65V85H30ZM38 35V20H57V35M65 22L83 13M67 30H90M30 50H65",
+    "packs": [
+      "street-tag",
+      "street-spray",
+      "street-stencil",
+      "street-wildstyle",
+      "street-mural",
+      "street-sticker",
+      "street-poster",
+      "street-skate",
+      "street-neon",
+      "street-crown"
+    ],
+    "price": 100,
+    "rewards": [
+      {
+        "key": "street-tag",
+        "weight": 100
+      },
+      {
+        "key": "street-spray",
+        "weight": 80
+      },
+      {
+        "key": "street-stencil",
+        "weight": 64
+      },
+      {
+        "key": "street-wildstyle",
+        "weight": 51
+      },
+      {
+        "key": "street-mural",
+        "weight": 41
+      },
+      {
+        "key": "street-sticker",
+        "weight": 100
+      },
+      {
+        "key": "street-poster",
+        "weight": 80
+      },
+      {
+        "key": "street-skate",
+        "weight": 64
+      },
+      {
+        "key": "street-neon",
+        "weight": 51
+      },
+      {
+        "key": "street-crown",
+        "weight": 41
+      }
+    ]
+  },
+  {
+    "id": "case-culture",
+    "name": "Культура",
+    "color": "#e4c38b",
+    "mark": "M12 35L50 12L88 35ZM18 43H82M25 43V75M42 43V75M58 43V75M75 43V75M15 78H85V88H15Z",
+    "packs": [
+      "culture-book",
+      "culture-jazz",
+      "culture-theatre",
+      "culture-cinema",
+      "culture-heritage",
+      "culture-ink",
+      "culture-gallery",
+      "culture-ballet",
+      "culture-orchestra",
+      "culture-observatory"
+    ],
+    "price": 100,
+    "rewards": [
+      {
+        "key": "culture-book",
+        "weight": 100
+      },
+      {
+        "key": "culture-jazz",
+        "weight": 80
+      },
+      {
+        "key": "culture-theatre",
+        "weight": 64
+      },
+      {
+        "key": "culture-cinema",
+        "weight": 51
+      },
+      {
+        "key": "culture-heritage",
+        "weight": 41
+      },
+      {
+        "key": "culture-ink",
+        "weight": 100
+      },
+      {
+        "key": "culture-gallery",
+        "weight": 80
+      },
+      {
+        "key": "culture-ballet",
+        "weight": 64
+      },
+      {
+        "key": "culture-orchestra",
+        "weight": 51
+      },
+      {
+        "key": "culture-observatory",
+        "weight": 41
+      }
+    ]
+  },
+  {
+    "id": "case-myths",
+    "name": "Мифы и легенды",
+    "color": "#d7a84a",
+    "mark": "M18 82H82M26 82V38H42V82M58 82V38H74V82M18 38H82L50 18ZM35 30H65",
+    "packs": [
+      "myths-icarus",
+      "myths-medusa",
+      "myths-minotaur",
+      "myths-fenrir",
+      "myths-odyssey",
+      "myths-valkyrie",
+      "myths-phoenix",
+      "myths-excalibur",
+      "myths-olympus",
+      "myths-grail"
+    ],
+    "price": 20,
+    "rewards": [
+      {
+        "key": "myths-icarus",
+        "weight": 100
+      },
+      {
+        "key": "myths-medusa",
+        "weight": 80
+      },
+      {
+        "key": "myths-minotaur",
+        "weight": 64
+      },
+      {
+        "key": "myths-fenrir",
+        "weight": 51
+      },
+      {
+        "key": "myths-odyssey",
+        "weight": 41
+      },
+      {
+        "key": "myths-valkyrie",
+        "weight": 100
+      },
+      {
+        "key": "myths-phoenix",
+        "weight": 80
+      },
+      {
+        "key": "myths-excalibur",
+        "weight": 64
+      },
+      {
+        "key": "myths-olympus",
+        "weight": 51
+      },
+      {
+        "key": "myths-grail",
+        "weight": 41
+      }
+    ]
+  },
+  {
+    "id": "case-nightmares",
+    "name": "Кошмары",
+    "color": "#d96b8a",
+    "mark": "M50 18C28 18 15 32 15 50C15 68 28 82 50 82C72 82 85 68 85 50C85 32 72 18 50 18ZM50 32C39 32 32 40 32 50C32 60 39 68 50 68C61 68 68 60 68 50C68 40 61 32 50 32ZM42 45L46 49M58 45L54 49M42 57Q50 63 58 57",
+    "packs": [
+      "nightmare-whisper",
+      "nightmare-mirror",
+      "nightmare-doll",
+      "nightmare-hall",
+      "nightmare-sleepwalker",
+      "nightmare-mouth",
+      "nightmare-eyes",
+      "nightmare-crow",
+      "nightmare-puppet",
+      "nightmare-abyss"
+    ],
+    "price": 20,
+    "rewards": [
+      {
+        "key": "nightmare-whisper",
+        "weight": 100
+      },
+      {
+        "key": "nightmare-mirror",
+        "weight": 80
+      },
+      {
+        "key": "nightmare-doll",
+        "weight": 64
+      },
+      {
+        "key": "nightmare-hall",
+        "weight": 51
+      },
+      {
+        "key": "nightmare-sleepwalker",
+        "weight": 41
+      },
+      {
+        "key": "nightmare-mouth",
+        "weight": 100
+      },
+      {
+        "key": "nightmare-eyes",
+        "weight": 80
+      },
+      {
+        "key": "nightmare-crow",
+        "weight": 64
+      },
+      {
+        "key": "nightmare-puppet",
+        "weight": 51
+      },
+      {
+        "key": "nightmare-abyss",
+        "weight": 41
+      }
+    ]
+  },
+  {
+    "id": "case-ashes",
+    "name": "Пепел",
+    "color": "#e1845a",
+    "mark": "M50 14C36 31 28 39 30 54C31 64 39 70 50 72C61 70 69 64 70 54C72 39 64 31 50 14ZM50 42C43 50 41 56 46 62C48 64 52 64 54 62C59 56 57 50 50 42ZM22 80H78M30 86H70",
+    "packs": [
+      "ashes-ember",
+      "ashes-cinder",
+      "ashes-smoke",
+      "ashes-forge",
+      "ashes-phoenix",
+      "ashes-charcoal",
+      "ashes-ruins",
+      "ashes-volcano",
+      "ashes-scorch",
+      "ashes-afterglow"
+    ],
+    "price": 20,
+    "rewards": [
+      {
+        "key": "ashes-ember",
+        "weight": 100
+      },
+      {
+        "key": "ashes-cinder",
+        "weight": 80
+      },
+      {
+        "key": "ashes-smoke",
+        "weight": 64
+      },
+      {
+        "key": "ashes-forge",
+        "weight": 51
+      },
+      {
+        "key": "ashes-phoenix",
+        "weight": 41
+      },
+      {
+        "key": "ashes-charcoal",
+        "weight": 100
+      },
+      {
+        "key": "ashes-ruins",
+        "weight": 80
+      },
+      {
+        "key": "ashes-volcano",
+        "weight": 64
+      },
+      {
+        "key": "ashes-scorch",
+        "weight": 51
+      },
+      {
+        "key": "ashes-afterglow",
+        "weight": 41
+      }
+    ]
+  }
+]

@@ -1,6 +1,6 @@
 # fly.toml — Vera Multi (сервер + Web) на Fly.io
 # Регион ams (Амстердам) даёт лучшую задержку из СНГ. Меняйте на удобный.
-app = "vera-multi"
+app = "vera-koto"
 primary_region = "ams"
 
 [build]

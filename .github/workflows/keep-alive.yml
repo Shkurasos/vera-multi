@@ -14,7 +14,7 @@ jobs:
       - name: Ping /api/downloads
         run: |
           set -e
-          URL="https://vera-multi.onrender.com/api/downloads"
+          URL="https://vera-koto.onrender.com/api/downloads"
           echo "Pinging $URL"
           # -f: fail на HTTP >=400, --max-time 60: даём Render до минуты подняться из сна.
           curl -fsS --max-time 60 --retry 2 --retry-delay 15 "$URL" | head -c 200

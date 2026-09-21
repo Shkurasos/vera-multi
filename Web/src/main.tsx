@@ -1,10 +1,13 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { HashRouter } from 'react-router-dom';
-import { ThemeProvider, createTheme, CssBaseline, Box, Typography, Button } from '@mui/material';
+import { ThemeProvider, createTheme, CssBaseline, GlobalStyles, Box, Typography, Button } from '@mui/material';
+import { useUserSettingsStore } from './store/userSettingsStore';
+import { appFontStyles, resolveAppFont } from './utils/appFont';
 import App from './App';
 import './store/uiPrefsStore'; // применяет data-icon-pack / data-ui-style на <html>
 import './store/animStore'; // глобальные анимации интерфейса (data-anim-off-* на <html>)
+import './store/outboxStore'; // очередь исходящих сообщений (оффлайн-режим)
 
 
 // ─── Error Boundary ───────────────────────────────────────────────────────────
@@ -108,6 +111,14 @@ const darkTheme = createTheme({
     },
     MuiCssBaseline: {
       styleOverrides: {
+        'html, body, #root': {
+          width: '100%',
+          height: '100%',
+          minHeight: '100%',
+          margin: 0,
+          overflow: 'hidden',
+          overscrollBehavior: 'none',
+        },
         '@keyframes veraRarityPulse': { '0%,100%': { filter: 'brightness(1)' }, '50%': { filter: 'brightness(1.35)' } },
         '@keyframes veraRaritySpin': { from: { transform: 'rotate(0deg)' }, to: { transform: 'rotate(360deg)' } },
 
@@ -363,8 +374,9 @@ const darkTheme = createTheme({
           width: '100%', maxWidth: '100%', overflowX: 'hidden',
           background: '#000',
           fontFeatureSettings: '"cv02", "cv03", "cv04"',
+          position: 'fixed', inset: 0, overflowY: 'hidden', touchAction: 'pan-y',
         },
-        '#root': { width: '100%', maxWidth: '100%', minHeight: '100vh', overflowX: 'hidden' },
+        '#root': { width: '100%', maxWidth: '100%', height: '100%', minHeight: 0, overflow: 'hidden' },
         '*': { boxSizing: 'border-box' },
         '*::-webkit-scrollbar': { width: 8, height: 8 },
         '*::-webkit-scrollbar-thumb': { background: 'var(--vera-accent-soft, rgba(0,229,255,.32))', borderRadius: 999 },
@@ -383,6 +395,15 @@ const darkTheme = createTheme({
         'html[data-ui-style="square"] .MuiOutlinedInput-root': { borderRadius: 4 },
         'html[data-ui-style="square"] [data-vera-bubble]': { borderRadius: 4 },
         'html[data-ui-style="square"] .MuiAvatar-root': { borderRadius: 6 },
+
+        // Decorative avatar rings can extend beyond the avatar itself. The photo
+        // must still follow the avatar shape instead of becoming a rectangle.
+        '.MuiAvatar-root > .MuiAvatar-img': {
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          borderRadius: 'inherit',
+        },
 
         // Glass: полупрозрачные поверхности с блюром.
         'html[data-ui-style="glass"] .MuiPaper-root': {
@@ -410,13 +431,35 @@ const darkTheme = createTheme({
   },
 });
 
+function AppThemeProvider({ children }: { children: React.ReactNode }) {
+  const font = useUserSettingsStore((state) => state.globalFontFamily);
+  const theme = React.useMemo(() => {
+    const fontFamily = resolveAppFont(font);
+    return createTheme(darkTheme, {
+      typography: {
+        fontFamily,
+        ...Object.fromEntries([
+          'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'subtitle1', 'subtitle2',
+          'body1', 'body2', 'button', 'caption', 'overline',
+        ].map((variant) => [variant, { fontFamily }])),
+      },
+    });
+  }, [font]);
+  return (
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <GlobalStyles styles={appFontStyles(font)} />
+      {children}
+    </ThemeProvider>
+  );
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <HashRouter>
-    <ThemeProvider theme={darkTheme}>
-      <CssBaseline />
+    <AppThemeProvider>
       <ErrorBoundary>
         <App />
       </ErrorBoundary>
-    </ThemeProvider>
+    </AppThemeProvider>
   </HashRouter>,
 );

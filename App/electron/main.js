@@ -15,7 +15,7 @@ const { app, BrowserWindow, shell, session, desktopCapturer } = require('electro
 const path = require('path');
 
 const DEV = !app.isPackaged;
-const DEFAULT_SERVER_URL = DEV ? 'http://localhost:3000' : 'https://vera-multi.onrender.com';
+const DEFAULT_SERVER_URL = DEV ? 'http://localhost:3000' : 'https://vera-koto.onrender.com';
 const SERVER_URL = process.env.VERA_SERVER_URL || DEFAULT_SERVER_URL;
 
 let mainWindow = null;

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { Box, CircularProgress } from '@mui/material';
 import { useAuthStore } from './store/authStore';
 import { useChatStore } from './store/chatStore';
@@ -11,6 +11,7 @@ import MainLayout from './pages/MainLayout';
 import ProfilePage from './pages/ProfilePage';
 import DevicesPage from './pages/DevicesPage';
 import AcceptLinkPage from './pages/AcceptLinkPage';
+import DeviceEntryPage from './pages/DeviceEntryPage';
 import DownloadPage from './pages/DownloadPage';
 import ContactsPage from './pages/ContactsPage';
 import CallLogPage from './pages/CallLogPage';
@@ -27,7 +28,12 @@ import { peer, isPeerAvailable } from './services/peer';
 import { useUserSettingsStore } from './store/userSettingsStore';
 import { useThemeStore } from './store/themeStore';
 import { useShopStore } from './store/shopStore';
+import { useLootStore } from './store/lootStore';
 import { useCustomEquipStore } from './store/customEquipStore';
+import { useChatThemeStore } from './store/chatThemeStore';
+import { useChatBgPrefsStore } from './store/chatBgPrefsStore';
+import { saveLiveBgDataUrl } from './services/chatLiveBgStorage';
+import ChatSettingsOfferDialog from './components/ChatSettingsOfferDialog';
 import Store, { StoreOpen } from './components/Store';
 import AppLockGate from './components/AppLockGate';
 import DevInspector from './components/DevInspector';
@@ -91,11 +97,27 @@ void ({} as IncomingCallState);
 
 export default function App() {
   const { checkAuth, isAuthenticated, isLoading, user, isPeerMode } = useAuthStore();
+  const navigate = useNavigate();
   const {
     addMessage, replaceOrAddMessage, updateMessage, removeMessage,
     applyPinnedMessage, setTyping, updateChatList, setUserOnline, setUserOffline, clearOnlineUsers, markMessageRead,
   } = useChatStore();
   const listenersAttached = useRef(false);
+  const [settingsOffer, setSettingsOffer] = useState<any | null>(null);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user?.isAdmin) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
+      if (event.key.toLowerCase() === 'x') {
+        event.preventDefault();
+        navigate(window.location.hash === '#/admin' ? '/' : '/admin');
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isAuthenticated, user?.isAdmin, navigate]);
 
   useEffect(() => {
     // На публичной странице /link авто-логин запрещён: устройство ещё не
@@ -234,7 +256,9 @@ export default function App() {
               icon: chat?.avatarUrl || message.sender?.avatarUrl,
               onClick: () => {
                 window.location.hash = '';
-                window.location.hash = `#/chat/${message.chatId}`;
+                window.location.hash = message.moderationReportId && user?.isAdmin
+                  ? `#/admin?report=${encodeURIComponent(message.moderationReportId)}`
+                  : `#/chat/${message.chatId}`;
               },
             });
           }
@@ -292,6 +316,10 @@ export default function App() {
         updateChatList(chat);
       });
 
+      socket.on('chat:settings_offer', (offer: any) => {
+        if (offer?.chatId && offer?.settings && offer?.senderId !== user?.id) setSettingsOffer(offer);
+      });
+
       socket.on('user:online', ({ userId }: { userId: string }) => {
         setUserOnline(userId);
       });
@@ -308,6 +336,12 @@ export default function App() {
 
       socket.on('shop:owned', ({ ownedItems }: { ownedItems: string[] }) => {
         useShopStore.getState().mergeOwned(ownedItems || []);
+      });
+      socket.on('cases:updated', data => useLootStore.getState().hydrate(data));
+
+      socket.on('connect', () => {
+        void useChatStore.getState().loadChats();
+        void useLootStore.getState().load().catch(console.error);
       });
 
       socket.on('disconnect', () => {
@@ -356,14 +390,35 @@ export default function App() {
   // Применяем глобальные настройки внешнего вида: яркость, масштаб текста и шрифт.
   const brightness = useUserSettingsStore((s) => s.brightness);
   const textScale = useUserSettingsStore((s) => s.textScale);
-  const globalFontFamily = useUserSettingsStore((s) => s.globalFontFamily);
   const appTheme = useThemeStore((s) => s.theme);
+  const applySettingsOffer = async () => {
+    const offer = settingsOffer;
+    if (!offer) return;
+    const { chatId, settings, senderId } = offer;
+    try {
+      if (settings.theme) useChatThemeStore.getState().setChatTheme(chatId, settings.theme);
+      else useChatThemeStore.getState().removeChatTheme(chatId);
+      if (settings.wallpaper) useChatBgPrefsStore.getState().setChatWallpaper(chatId, settings.wallpaper);
+      else useChatBgPrefsStore.getState().setChatWallpaper(chatId, { type: 'stock', value: 'none' });
+      if (typeof settings.brightness === 'number') useChatBgPrefsStore.getState().setBrightness(chatId, settings.brightness);
+      if (settings.videoDataUrl) {
+        await saveLiveBgDataUrl(settings.videoDataUrl, chatId);
+        useChatBgPrefsStore.getState().setChatWallpaper(chatId, { type: 'live', value: chatId });
+        useChatBgPrefsStore.getState().bumpLiveBg();
+      }
+      getSocket()?.emit('chat:settings_offer_response', { chatId, senderId, accepted: true });
+    } catch (error) {
+      console.error('settings offer apply error:', error);
+      getSocket()?.emit('chat:settings_offer_response', { chatId, senderId, accepted: false });
+    } finally {
+      setSettingsOffer(null);
+    }
+  };
   useEffect(() => {
     document.body.style.filter = brightness === 1 ? '' : `brightness(${brightness})`;
     document.documentElement.style.setProperty('--vera-text-scale', String(textScale));
     document.documentElement.style.fontSize = `${16 * textScale}px`;
-    document.body.style.fontFamily = globalFontFamily === 'inherit' ? '' : globalFontFamily;
-  }, [brightness, textScale, globalFontFamily]);
+  }, [brightness, textScale]);
 
   // Текущая тема как CSS-переменные: слайдеры, свитчи, прогресс-бары и фокус
   // полей ввода следуют акценту темы (см. глобальные стили в main.tsx).
@@ -422,12 +477,25 @@ export default function App() {
         <Route path="/devices" element={isAuthenticated ? <DevicesPage /> : <Navigate to="/" />} />
         <Route path="/contacts" element={isAuthenticated ? <ContactsPage /> : <Navigate to="/" />} />
         <Route path="/calls" element={isAuthenticated ? <CallLogPage /> : <Navigate to="/" />} />
+        <Route path="/admin" element={isAuthenticated && user?.isAdmin ? <AdminToolsPage /> : <Navigate to="/" />} />
         <Route path="/*" element={isAuthenticated ? <MainLayout /> : (
-          <Box display="flex" justifyContent="center" alignItems="center" height="100vh" sx={{ bgcolor: '#1a1a2e' }}>
-            <CircularProgress sx={{ color: '#7C6AF7' }} />
-          </Box>
+          <DeviceEntryPage />
         )} />
       </Routes>
+
+      <ChatSettingsOfferDialog
+        open={!!settingsOffer}
+        senderName={settingsOffer?.sender
+          ? [settingsOffer.sender.firstName, settingsOffer.sender.lastName].filter(Boolean).join(' ') || settingsOffer.sender.username || 'Собеседник'
+          : 'Собеседник'}
+        onAccept={applySettingsOffer}
+        onReject={() => {
+          if (settingsOffer) getSocket()?.emit('chat:settings_offer_response', {
+            chatId: settingsOffer.chatId, senderId: settingsOffer.senderId, accepted: false,
+          });
+          setSettingsOffer(null);
+        }}
+      />
 
       {/* Плеер рендерится глобально над всеми маршрутами — не размонтируется при навигации */}
       {isAuthenticated && <MusicPlayer />}
