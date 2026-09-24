@@ -13,6 +13,8 @@ import { useChatStore } from '../store/chatStore';
 import { useThemeStore } from '../store/themeStore';
 import { useAuthStore } from '../store/authStore';
 import { useChatSettingsStore } from '../store/chatSettingsStore';
+import { useChatFontStore } from '../store/chatFontStore';
+import { useUserSettingsStore } from '../store/userSettingsStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { useEquipmentStore } from '../store/equipmentStore';
 import { useCustomEquipStore } from '../store/customEquipStore';
@@ -22,6 +24,7 @@ import { skinColors } from '../utils/skinColors';
 import { bubbleSkin, selfcardSkin } from '../utils/bubbleSkin';
 import { mirrorBubble } from '../utils/mirrorBubble';
 import { clampBubble } from '../utils/bubbleSettings';
+import { clampAlpha, withAlpha } from '../utils/colorAlpha';
 import { messagesApi, voiceApi } from '../services/api';
 import PlaylistMessageCard, { VeraPlaylistPayload } from './PlaylistMessageCard';
 import GroupInviteCard from './GroupInviteCard';
@@ -50,6 +53,8 @@ interface Props {
   bgBubbleOther: string;
   bubbleOwnShadow?: string;
   bubbleOtherShadow?: string;
+  /** Цвет времени в пузыре из темы; undefined — как раньше, цвет текста пузыря. */
+  messageTimeColor?: string;
   /** Максимальная ширина сообщений (% от ширины окна чата), 35..95. */
   messageMaxWidth?: number;
   /** Сторона сообщений: auto | left | right. */
@@ -410,6 +415,7 @@ function MessageBubble({
   bgBubbleOther,
   bubbleOwnShadow,
   bubbleOtherShadow,
+  messageTimeColor,
   messageMaxWidth,
   messageAlign,
   bubbleEnabled = true,
@@ -425,8 +431,11 @@ function MessageBubble({
   const canDelete = isOwn || hasGroupRight(groupChat?.members.find(m => m.userId === user?.id), 'deleteMessages');
   const senderTitle = groupChat?.members.find(m => m.userId === message.senderId && m.role === 'admin')?.adminTitle;
   const { theme } = useThemeStore();
-  const { addReaction, pinMessage, editMessage, deleteMessage, sendMessage, addMessage, updateMessage } = useChatStore();
-  const { fontSize, emojiSize, fontFamily } = useChatSettingsStore();
+  const { addReaction, pinMessage, unpinMessage, editMessage, deleteMessage, sendMessage, addMessage, updateMessage } = useChatStore();
+  const { fontSize, emojiSize } = useChatSettingsStore();
+  const { getChatFont } = useChatFontStore();
+  const globalFontFamily = useUserSettingsStore((s) => s.globalFontFamily);
+  const fontFamily = getChatFont(message.chatId) || globalFontFamily;
 
   // На какой стороне показывать сообщение.
   // auto — как обычно (свои справа, чужие слева); left/right — все с одной стороны.
@@ -517,7 +526,11 @@ function MessageBubble({
   };
 
   const handleTogglePin = () => {
-    void runAction(() => pinMessage(message.chatId, message.isPinned ? null : message.id));
+    // Как в Telegram: «Закрепить» добавляет сообщение к списку закреплённых,
+    // «Открепить» убирает только это сообщение, остальные остаются.
+    void runAction(() => (message.isPinned
+      ? unpinMessage(message.chatId, message.id)
+      : pinMessage(message.chatId, message.id)));
   };
 
   const handleSaveEdit = () => {
@@ -621,6 +634,14 @@ function MessageBubble({
     ...shopBubbleSx,
     ...(isOwn && customBubbleSpec ? specToStyle(customBubbleSpec) : {}),
   };
+  // ── Цвет времени и «(изменено)» ──────────────────────────────────────
+  // Приоритет: настройка темы (персональной темы чата, затем глобальной).
+  // Если цвет не задан — как раньше, цвет текста пузыря (с учётом стиля из магазина).
+  const timeColor = messageTimeColor || theme.messageTimeColor;
+  const messageTimeText = timeColor || shopBubbleText || bubbleTextColor;
+  const messageTimeOpacity = timeColor ? 1 : 0.75;
+  // «(изменено)» — тот же цвет времени, но чуть приглушённее, когда цвет не задан.
+  const editedTextOpacity = timeColor ? 0.85 : 0.6;
   // ── Обводка аватара из магазина ──────────────────────────────────────
   // Обводка аватара: для своих сообщений — своя покупка; для чужих — обводка ОТПРАВИТЕЛЯ,
   // переданная сервером (sender.activeRing). Так обводка привязана к аккаунту покупателя.
@@ -825,7 +846,7 @@ function MessageBubble({
             px: bubbleEnabled ? '14px' : 0,
             py: bubbleEnabled ? `${clampBubble('padding', bubblePadding)}px` : 0,
           } : { display: 'contents' }}>
-          {message.forwardFromId && <Typography sx={{ fontSize: 12, color: theme.accent, mb: 0.5 }}>
+          {message.forwardFromId && <Typography sx={{ fontSize: 12, color: theme.accent, mb: 0.5, fontFamily }}>
             Переслано от {message.forwardFromName || 'пользователя'}
           </Typography>}
           {message.replyToId && (
@@ -834,10 +855,10 @@ function MessageBubble({
               bgcolor: 'rgba(255,255,255,0.08)',
               borderLeft: `3px solid ${theme.accent}`,
             }}>
-              <Typography sx={{ fontSize: 12, color: theme.accent, fontWeight: 600 }}>
+              <Typography sx={{ fontSize: 12, color: theme.accent, fontWeight: 600, fontFamily }}>
                 {message.replyTo?.sender?.firstName || message.replyTo?.sender?.username || 'Сообщение'}
               </Typography>
-              <Typography sx={{ fontSize: 13, color: theme.textSec }} noWrap>
+              <Typography sx={{ fontSize: 13, color: theme.textSec, fontFamily }} noWrap>
                 {message.replyTo?.content || '📎 Вложение'}
               </Typography>
             </Box>
@@ -887,7 +908,7 @@ function MessageBubble({
                 const totalVotes = new Set(message.poll.options.flatMap(option => option.voterIds || [])).size;
                 const voted = message.poll.options.some(option => option.voterIds?.includes(user?.id || ''));
                 return <Box sx={{ mt: 1, p: 1.25, border: `1px solid ${theme.border}`, borderRadius: 2, bgcolor: 'rgba(255,255,255,0.05)' }}>
-                  <Typography sx={{ fontWeight: 700, mb: 1 }}>{message.poll.question}</Typography>
+                  <Typography sx={{ fontWeight: 700, mb: 1, fontFamily }}>{message.poll.question}</Typography>
                   {message.poll.options.map(option => {
                     const selected = voted ? !!option.voterIds?.includes(user?.id || '') : pollSelection.includes(option.id);
                     const percent = totalVotes ? Math.round(option.votes / totalVotes * 100) : 0;
@@ -897,7 +918,7 @@ function MessageBubble({
                     </Button>;
                   })}
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1 }}>
-                    <Typography sx={{ fontSize: 12, opacity: 0.7 }}>Участников: {totalVotes}{message.poll.multiple ? ' · Несколько вариантов' : ''}</Typography>
+                    <Typography sx={{ fontSize: 12, opacity: 0.7, fontFamily }}>Участников: {totalVotes}{message.poll.multiple ? ' · Несколько вариантов' : ''}</Typography>
                     <Button size="small" disabled={voted || !pollSelection.length || pollBusy} onClick={async () => {
                       setPollBusy(true);
                       setPollError('');
@@ -953,13 +974,13 @@ function MessageBubble({
               </Box>
 
               {message.isEdited && (
-                <Typography sx={{ fontSize: 11, color: bubbleTextColor, opacity: 0.6, mt: 0.3, fontStyle: 'italic' }}>
+                <Typography sx={{ fontSize: 11, color: messageTimeText, opacity: editedTextOpacity, mt: 0.3, fontStyle: 'italic', fontFamily }}>
                   (изменено)
                 </Typography>
               )}
 
               <Box sx={{ display: 'flex', alignItems: 'center', flexShrink: 0, gap: 1, mt: message.content && !attachment && !message.replyToId && !message.isEdited ? 0 : 0.75, justifyContent: 'flex-end' }}>
-                <Typography sx={{ fontSize: 11, color: bubbleTextColor, opacity: 0.75 }}>
+                <Typography sx={{ fontSize: 11, color: messageTimeText, opacity: messageTimeOpacity, fontFamily }}>
                   {formatTime(message.createdAt)}
                 </Typography>
                 {isOwn && (() => {
@@ -1156,6 +1177,7 @@ export default memo(
     prev.bubbleEnabled === next.bubbleEnabled &&
     prev.bubbleTextSize === next.bubbleTextSize &&
     prev.bubblePadding === next.bubblePadding &&
+    prev.messageTimeColor === next.messageTimeColor &&
     prev.messageAlign === next.messageAlign
     && prev.isGroupStart === next.isGroupStart
     && prev.isGroupEnd === next.isGroupEnd

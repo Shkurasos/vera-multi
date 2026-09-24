@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { enableStoreSync } from '../services/storeSyncSimple';
+import { injectFontFace, removeFontFace } from '../services/customFontStorage';
 
 /**
  * Стоковые шрифты (базовые пресеты).
@@ -95,6 +96,7 @@ export const useChatFontStore = create<ChatFontState>()(
       removeCustomFont: (id) => {
         set((state) => {
           const { [id]: removed, ...rest } = state.customFonts;
+          if (removed?.family) removeFontFace(removed.family);
           return { customFonts: rest };
         });
       },
@@ -103,29 +105,8 @@ export const useChatFontStore = create<ChatFontState>()(
   )
 );
 
-/**
- * Инжектирует @font-face в DOM для загруженного пользовательского шрифта
- */
-function injectFontFace(family: string, url: string) {
-  if (typeof document === 'undefined') return;
-  
-  const styleId = `custom-font-${family.replace(/\s+/g, '-')}`;
-  
-  // Удаляем старый стиль если есть
-  const existing = document.getElementById(styleId);
-  if (existing) existing.remove();
-  
-  // Создаём новый
-  const style = document.createElement('style');
-  style.id = styleId;
-  style.textContent = `
-    @font-face {
-      font-family: "${family}";
-      src: url("${url}");
-    }
-  `;
-  document.head.appendChild(style);
-}
+// Свои шрифты регистрируются общим сервисом (`customFontStorage.injectFontFace`) —
+// так @font-face для одного и того же файла не дублируется в <head>.
 
 // Подключаем синхронизацию между устройствами
 if (typeof window !== 'undefined') {

@@ -17,13 +17,16 @@
     "appId": "app.vera.multi",
     "productName": "VERA Multi",
     "files": [
-      "electron/**/*"
+      "electron/**/*",
+      "build/icon.png"
     ],
     "directories": {
-      "output": "dist-electron-build"
+      "output": "dist-electron-build",
+      "buildResources": "build"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,

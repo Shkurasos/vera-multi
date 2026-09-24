@@ -8,6 +8,7 @@ import { Close, Add, Edit, Publish, Unpublished, Delete, Payment } from '@mui/ic
 import { creatorApi, CustomItem } from '../services/api';
 import CustomItemPreview from './CustomItemPreview';
 import CreatorEditor from './CreatorEditor';
+import VpIcon from './VpIcon';
 import { useThemeStore } from '../store/themeStore';
 
 interface Props { open: boolean; onClose: () => void; }
@@ -156,7 +157,7 @@ function ItemsList({ me, items, error, setError, openCreate, openEdit, doPublish
     <>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
         <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
-          {me.isAdmin ? 'Режим админа — публикация без комиссии.' : `Комиссия 15%. Заработано: ${me.revenueVp} ВП`}
+          {me.isAdmin ? 'Режим админа — публикация без комиссии.' : <>Комиссия 15%. Заработано: {me.revenueVp} <VpIcon size={13} /></>}
         </Typography>
         <Button variant="contained" startIcon={<Add />} onClick={openCreate}>Создать</Button>
       </Box>
@@ -173,8 +174,8 @@ function ItemsList({ me, items, error, setError, openCreate, openEdit, doPublish
                 <CustomItemPreview spec={item.spec} label={item.name} size={72} />
                 <Box sx={{ flex: 1 }}>
                   <Typography variant="subtitle1">{item.name}</Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {item.category} · {item.price} ВП · продаж: {item.salesCount || 0}
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                    {item.category} · {item.price} <VpIcon size={12} /> · продаж: {item.salesCount || 0}
                   </Typography>
                   <Box sx={{ mt: 0.5 }}>
                     <Chip

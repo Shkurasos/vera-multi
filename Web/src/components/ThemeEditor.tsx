@@ -4,6 +4,7 @@ import { ContentCopy } from '@mui/icons-material';
 import { useThemeStore, THEMES, CUSTOM_THEME_ID_START, Theme, themeToLink, themeFromLink } from '../store/themeStore';
 import { aiApi } from '../services/botsApi';
 import { useShopStore } from '../store/shopStore';
+import VpIcon from './VpIcon';
 
 // ─── SVG паттерны ─────────────────────────────────────────────────────────────
 function svgUrl(content: string) {
@@ -226,6 +227,18 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply }: Props
     boxShadow: draft.bubbleOtherShadow || undefined,
     borderRadius: '14px 14px 14px 4px', padding: '6px 12px', fontSize: 13,
   };
+  // Время в превью — чтобы выбранный цвет было видно сразу.
+  const previewTimeBase: React.CSSProperties = { fontSize: 10, marginTop: 2, textAlign: 'right' };
+  const previewTimeOwn: React.CSSProperties = {
+    ...previewTimeBase,
+    color: draft.messageTimeColor || draft.bubbleOwnText || '#fff',
+    opacity: draft.messageTimeColor ? 1 : 0.75,
+  };
+  const previewTimeOther: React.CSSProperties = {
+    ...previewTimeBase,
+    color: draft.messageTimeColor || draft.bubbleOtherText || draft.text,
+    opacity: draft.messageTimeColor ? 1 : 0.75,
+  };
 
   // ── Стили модалки ───────────────────────────────────────────────────────
   const overlay: React.CSSProperties = {
@@ -355,8 +368,8 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply }: Props
           border: '1px solid ' + theme.accent + '44',
           background: `linear-gradient(135deg, ${theme.accent}10, transparent)`,
         }}>
-          <div style={{ ...sectionLabel, marginTop: 0, color: theme.accent, opacity: 0.9 }}>
-            ✨ Генерация темы ИИ (10 ВП / тема)
+          <div style={{ ...sectionLabel, marginTop: 0, color: theme.accent, opacity: 0.9, display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+            ✨ Генерация темы ИИ (10 <VpIcon size={13} /> / тема)
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <input
@@ -415,6 +428,19 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply }: Props
             <ColorField label="Чужой пузырь"         value={draft.bgBubbleOther} onChange={v => upd('bgBubbleOther', v)} />
             <ColorField label="Текст своего пузыря"  value={draft.bubbleOwnText || '#ffffff'} onChange={v => upd('bubbleOwnText', v)} />
             <ColorField label="Текст чужого пузыря"  value={draft.bubbleOtherText || draft.text} onChange={v => upd('bubbleOtherText', v)} />
+
+            <div style={sectionLabel}>Время сообщений и чатов</div>
+            <ColorField label="Время на сообщениях"  value={draft.messageTimeColor || draft.bubbleOtherText || draft.text} onChange={v => upd('messageTimeColor', v)} />
+            <ColorField label="Время в списке чатов" value={draft.chatTimeColor || draft.textSec} onChange={v => upd('chatTimeColor', v)} />
+            {(!draft.messageTimeColor || !draft.chatTimeColor) && (
+              <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 6 }}>
+                Пока цвет не задан: на сообщениях — цвет текста пузыря, в списке чатов — «Вторичный текст».
+              </div>
+            )}
+            <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 6 }}>
+              «Время на сообщениях» — цифры времени в пузыре (и у своих, и у чужих, а также пометка «(изменено)»).
+              «Время в списке чатов» — время справа от имени в списке слева.
+            </div>
 
             <div style={{ ...sectionLabel, marginTop: 12 }}>Градиент своего пузыря (CSS)</div>
             <input
@@ -602,10 +628,10 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply }: Props
                   zIndex: 1,
                 }} />
               )}
-              <div style={{ ...previewOther, position: 'relative', zIndex: 2 }}>Привет! 👋 Как дела?</div>
-              <div style={{ ...previewOwn, position: 'relative', zIndex: 2 }}>Отлично, спасибо 😊</div>
-              <div style={{ ...previewOther, position: 'relative', zIndex: 2 }}>Vera — твой мессенджер</div>
-              <div style={{ ...previewOwn, position: 'relative', zIndex: 2 }}>Красивая тема! 🎨</div>
+              <div style={{ ...previewOther, position: 'relative', zIndex: 2 }}>Привет! 👋 Как дела?<div style={previewTimeOther}>12:45</div></div>
+              <div style={{ ...previewOwn, position: 'relative', zIndex: 2 }}>Отлично, спасибо 😊<div style={previewTimeOwn}>12:45</div></div>
+              <div style={{ ...previewOther, position: 'relative', zIndex: 2 }}>Vera — твой мессенджер<div style={previewTimeOther}>12:46</div></div>
+              <div style={{ ...previewOwn, position: 'relative', zIndex: 2 }}>Красивая тема! 🎨<div style={previewTimeOwn}>12:46 · изменено</div></div>
             </div>
             <div style={{ ...sectionLabel, marginTop: 14 }}>Превью сайдбара</div>
             <div style={{
@@ -624,8 +650,11 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply }: Props
                   }}
                 >
                   <div style={{ width: 30, height: 30, borderRadius: '50%', background: draft.accent + '60', flexShrink: 0 }} />
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>{n}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>{n}</div>
+                      <div style={{ fontSize: 11, color: draft.chatTimeColor || draft.textSec }}>12:45</div>
+                    </div>
                     <div style={{ fontSize: 11, color: draft.textSec }}>Последнее сообщение...</div>
                   </div>
                 </div>

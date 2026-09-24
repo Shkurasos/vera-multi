@@ -15,13 +15,15 @@ import { useNavigate } from 'react-router-dom';
 import { useThemeStore } from '../store/themeStore';
 import WallpaperSettingsDialog from './WallpaperSettingsDialog';
 import GlobalSoundSettingsDialog from './GlobalSoundSettingsDialog';
+import FontPicker from './FontPicker';
 import {
   useUserSettingsStore, hashPassword,
   PrivacyScope, PreviewMode, AutoDeleteMonths,
-  SidePos, VertPos, Density,
+  SidePos, VertPos, PlayerPos, Density,
 } from '../store/userSettingsStore';
 import InviteLinkDialog from './InviteLinkDialog';
 import LayoutDesignerDialog from './LayoutDesignerDialog';
+import { APP_FONT_OPTIONS } from '../utils/appFont';
 import { useShopStore } from '../store/shopStore';
 import { useUiPrefsStore, ICON_PACKS, UI_STYLES, IconPack, UiStyle } from '../store/uiPrefsStore';
 import { useAnimStore, ANIM_GROUPS } from '../store/animStore';
@@ -272,23 +274,14 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
                 <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
                   <TextFields fontSize="small" /> Шрифт всего приложения
                 </Typography>
-                <Select fullWidth size="small" value={s.globalFontFamily}
-                  onChange={(e) => s.set('globalFontFamily', e.target.value)}
-                  inputProps={{ 'aria-label': 'Шрифт всего приложения' }}
-                  MenuProps={{ PaperProps: { 'data-font-preview': true } as React.HTMLAttributes<HTMLDivElement> }}
-                  sx={{ fontFamily: s.globalFontFamily }}>
-                  <MenuItem value="inherit" sx={{ fontFamily: 'inherit' }}>По умолчанию</MenuItem>
-                  <MenuItem value="'Inter', sans-serif" sx={{ fontFamily: "'Inter', sans-serif" }}>Inter</MenuItem>
-                  <MenuItem value="'Roboto', sans-serif" sx={{ fontFamily: "'Roboto', sans-serif" }}>Roboto</MenuItem>
-                  <MenuItem value="'Montserrat', sans-serif" sx={{ fontFamily: "'Montserrat', sans-serif" }}>Montserrat</MenuItem>
-                  <MenuItem value="'Source Code Pro', monospace" sx={{ fontFamily: "'Source Code Pro', monospace" }}>Source Code Pro</MenuItem>
-                  <MenuItem value="Georgia, serif" sx={{ fontFamily: 'Georgia, serif' }}>Georgia</MenuItem>
-                  <MenuItem value="Arial, sans-serif" sx={{ fontFamily: 'Arial, sans-serif' }}>Arial</MenuItem>
-                  <MenuItem value="'Comic Sans MS', cursive" sx={{ fontFamily: "'Comic Sans MS', cursive" }}>Comic Sans</MenuItem>
-                </Select>
-                <Alert severity="info" sx={{ mt: 1, fontSize: 12 }}>
-                  Меняет весь текст: кнопки, меню, заголовки, настройки и сообщения. Применяется сразу и сохраняется. Выбранный шрифт имеет приоритет над шрифтами чатов; «По умолчанию» возвращает индивидуальные настройки.
-                </Alert>
+                <FontPicker
+                  value={s.globalFontFamily}
+                  onChange={(value) => s.set('globalFontFamily', value)}
+                  baseOptions={APP_FONT_OPTIONS}
+                  manage
+                  ariaLabel="Шрифт всего приложения"
+                  hint="Меняет весь текст: кнопки, меню, заголовки, настройки и сообщения. Применяется сразу и сохраняется. Выбранный шрифт имеет приоритет над шрифтами чатов; «По умолчанию» возвращает индивидуальные настройки."
+                />
                 <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
                   <Language fontSize="small" /> Язык интерфейса
                 </Typography>
@@ -354,9 +347,11 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
                     <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Плеер</Typography>
                     <ToggleButtonGroup exclusive size="small" fullWidth
                       value={s.layout.playerPos}
-                      onChange={(_, v) => v && s.setLayout('playerPos', v as VertPos)}>
+                       onChange={(_, v) => v && s.setLayout('playerPos', v as PlayerPos)}>
                       <ToggleButton value="bottom">Снизу</ToggleButton>
                       <ToggleButton value="top">Сверху</ToggleButton>
+                       <ToggleButton value="left">Слева</ToggleButton>
+                       <ToggleButton value="right">Справа</ToggleButton>
                     </ToggleButtonGroup>
                   </Box>
 

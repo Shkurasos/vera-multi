@@ -9,6 +9,7 @@ import { Close } from '@mui/icons-material';
 import type { CustomItem, CustomSpec, CustomCategory } from '../services/api';
 import { DEFAULT_CUSTOM_SPEC } from '../utils/customStyle';
 import CustomItemPreview from './CustomItemPreview';
+import VpIcon from './VpIcon';
 
 interface Props {
   open: boolean;
@@ -117,12 +118,12 @@ export default function CreatorEditor({ open, initial, onClose, onSave, saving, 
             }}>
               <CustomItemPreview spec={spec} label={name || '?'} size={140} />
             </Box>
-            <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: 'block' }}>
-              Цена: <b>{price} ВП</b>{!isAdmin && ' (комиссия 15%)'}
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+              Цена: <b>{price} <VpIcon size={12} /></b>{!isAdmin && ' (комиссия 15%)'}
             </Typography>
             {!isAdmin && (
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                Автору с покупки: <b>{Math.floor(price * 0.85)} ВП</b>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap', mt: 0.5 }}>
+                Автору с покупки: <b>{Math.floor(price * 0.85)} <VpIcon size={12} /></b>
               </Typography>
             )}
           </Box>

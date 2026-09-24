@@ -4,13 +4,13 @@ import {
   Box, Typography, Avatar, IconButton, TextField,
   Menu, MenuItem, Tooltip, LinearProgress, Popover,
   Dialog, DialogTitle, DialogContent, DialogActions, Button,
-  Slider, Select, Divider as MuiDivider, Snackbar, Alert, Checkbox, FormControlLabel,
+  Slider, Divider as MuiDivider, Snackbar, Alert, Checkbox, FormControlLabel,
 } from '@mui/material';
 import {
   Send, Send as SendIcon, AttachFile, MoreVert, Search,
   EmojiEmotions, InfoOutlined, Close, PushPin,
   Call, Videocam, NotificationsOff, NotificationsActive,
-  FormatSize, ExitToApp, ArrowBack, Palette, KeyboardArrowDown,
+  FormatSize, ExitToApp, ArrowBack, Palette, KeyboardArrowDown, KeyboardArrowUp,
 } from '@mui/icons-material';
 import HowToVote from '@mui/icons-material/HowToVote';
 import { CallModal } from './CallModal';
@@ -30,6 +30,7 @@ import { chatsApi, filesApi, messagesApi } from '../services/api';
 import MessageBubble from './MessageBubble';
 import HoldRecorder from './HoldRecorder';
 import BubbleSettingsControls from './BubbleSettingsControls';
+import FontPicker from './FontPicker';
 import { membranePressSx, motion } from '../styles/motion';
 import ChatInfoPanel from './ChatInfoPanel';
 import UserProfileModal from './UserProfileModal';
@@ -55,6 +56,13 @@ function patternBackgroundSize(pattern?: string, min = 860, max = 1400): string 
     return `${size}px ${size}px`;
   }).join(', ');
 }
+
+// Варианты «Шрифт для этого чата»: 'default' = следовать за глобальным шрифтом.
+// Свои шрифты (customFontsStore) FontPicker добавляет к списку сам.
+const CHAT_FONT_OPTIONS = STOCK_FONTS.map((font) => ({
+  value: font.id === 'default' ? 'default' : font.family,
+  label: font.name,
+}));
 
 // Память скролла НЕ используем: чат всегда должен открываться на последнем
 // сообщении — независимо от того, как он был закрыт/перезагружен.
@@ -184,13 +192,17 @@ function resolveFileUrl(url?: string): string {
   return url;
 }
 
-function ChatWindowInner() {
+interface ChatWindowProps {
+  onPlayerHost: (node: HTMLDivElement | null) => void;
+}
+
+function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const {
     chats, messages, activeChat, setActiveChat, updateChatList,
     sendMessage, sendMessageWithFile, typingUsers,
-    leaveChat, onlineUsers,
+    leaveChat, onlineUsers, pinMessage, unpinMessage,
   } = useChatStore();
   const {
     toggleMute, isMuted, pinnedMessages,
@@ -231,7 +243,14 @@ function ChatWindowInner() {
   const [chatPhotoInputRef] = useState<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [showInfo, setShowInfo] = useState(false);
+  // Панель «инфо о чате» живёт в chatPrefsStore (localStorage): после обновления
+  // страницы панель остаётся в том же состоянии — открытой или закрытой.
+  const prefsShowInfo = useChatPrefsStore((s) => s.showInfo);
+  const showInfo = id ? !!prefsShowInfo[id] : false;
+  const setShowInfo = (open: boolean | ((prev: boolean) => boolean)) => {
+    const next = typeof open === 'function' ? open(showInfo) : open;
+    if (id) useChatPrefsStore.getState().setShowInfo(id, next);
+  };
   // Pending files (превью перед отправкой)
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [pendingPreviews, setPendingPreviews] = useState<string[]>([]);
@@ -250,6 +269,8 @@ function ChatWindowInner() {
   const [activeCall, setActiveCall] = useState<{ type: 'audio' | 'video' } | null>(null);
   const callActive = useCallStore((s) => s.activeChatId === id);
   const [toast, setToast] = useState<{ message: string; severity: 'success' | 'info' | 'warning' | 'error' } | null>(null);
+  /** Индекс текущего закреплённого сообщения в панели (как в Telegram). */
+  const [pinnedIndex, setPinnedIndex] = useState(0);
   const [pollOpen, setPollOpen] = useState(false);
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollOptions, setPollOptions] = useState(['', '']);
@@ -274,12 +295,10 @@ function ChatWindowInner() {
   };
 
   const {
-    fontSize, emojiSize, fontFamily, customFonts,
+    fontSize, emojiSize, fontFamily,
     setFontSize, setEmojiSize, setFontFamily,
-    addCustomFont, removeCustomFont,
   } = useChatSettingsStore();
   const layout = useUserSettingsStore((st) => st.layout);
-  const fontInputRef = useRef<HTMLInputElement>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -866,6 +885,48 @@ function ChatWindowInner() {
   // Кастомные обои от авторов (перебивают smart-обои).
   const customWallpaperSpec = useCustomEquipStore((s) => s.equipped.wallpaper ? s.items[s.equipped.wallpaper]?.spec : undefined);
 
+  // ── Закреплённые сообщения: список + переключение (как в Telegram) ──
+  const pinnedKey = activeChat
+    ? (Array.isArray(activeChat.pinnedMessageIds)
+      ? activeChat.pinnedMessageIds.filter(Boolean).join('|')
+      : (activeChat.pinnedMessageId || ''))
+    : '';
+  const pinnedList = useMemo(() => {
+    if (!activeChat || !pinnedKey) return [] as Message[];
+    const msgs = messages[activeChat.id] || [];
+    const fromServer = activeChat.pinnedMessages || [];
+    const legacy = pinnedMessages[activeChat.id];
+    return pinnedKey.split('|')
+      .map((pid) => msgs.find((m) => m.id === pid)
+        || fromServer.find((m) => m.id === pid)
+        || (legacy && legacy.id === pid ? legacy : null))
+      .filter(Boolean) as Message[];
+  }, [activeChat?.id, activeChat?.pinnedMessages, pinnedKey, messages, pinnedMessages]);
+  const pinnedCount = pinnedList.length;
+  const pinnedAt = pinnedCount ? Math.min(pinnedIndex, pinnedCount - 1) : 0;
+  const currentPinned = pinnedList[pinnedAt] || null;
+
+  // Сброс переключателя при смене чата и подрезка индекса после открепления.
+  useEffect(() => { setPinnedIndex(0); }, [activeChat?.id]);
+  useEffect(() => {
+    if (pinnedIndex > pinnedCount - 1) setPinnedIndex(Math.max(0, pinnedCount - 1));
+  }, [pinnedCount, pinnedIndex]);
+
+  const showPinnedByIndex = (next: number) => {
+    if (!pinnedCount) return;
+    const clamped = ((next % pinnedCount) + pinnedCount) % pinnedCount;
+    setPinnedIndex(clamped);
+    const target = pinnedList[clamped];
+    if (target) handleScrollToMessage(target.id);
+  };
+  const handleUnpinPinned = async (m: Message) => {
+    if (!activeChat) return;
+    try { await unpinMessage(activeChat.id, m.id); }
+    catch (error: any) {
+      setToast({ message: error?.response?.data?.message || error?.message || 'Не удалось открепить сообщение', severity: 'error' });
+    }
+  };
+
   if (!activeChat) {
     // If there's a chat id in URL — we're loading, not waiting for selection
     if (id) {
@@ -1385,113 +1446,36 @@ function ChatWindowInner() {
               <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 1, fontWeight: 600 }}>
                 Шрифт для этого чата
               </Typography>
-              <Select
-                value={id ? (getChatFont(id) || 'default') : 'default'}
-                onChange={(e) => {
-                  if (!id) return;
-                  const val = e.target.value;
-                  if (val === 'default') {
-                    clearChatFont(id);
-                  } else {
-                    setChatFont(id, val);
-                  }
-                }}
-                size="small"
-                fullWidth
-                sx={{
-                  color: theme.text, bgcolor: theme.bgInput, borderRadius: 2, mb: 1,
-                  fontFamily: id ? (getChatFont(id) || globalFontFamily) : globalFontFamily,
-                  '& .MuiOutlinedInput-notchedOutline': { borderColor: theme.border },
-                  '& .MuiSvgIcon-root': { color: theme.textSec },
-                  '& .MuiSelect-select': { py: 1 },
-                }}
-                MenuProps={{ PaperProps: { sx: { bgcolor: theme.bgHeader, border: `1px solid ${theme.border}` } } }}
-              >
-                {STOCK_FONTS.map(f => (
-                  <MenuItem key={f.id} value={f.id === 'default' ? 'default' : f.family} sx={{ fontFamily: f.family, color: theme.text }}>
-                    {f.name}
-                  </MenuItem>
-                ))}
-              </Select>
-              <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 2, fontStyle: 'italic' }}>
-                💡 Шрифт применяется только к этому чату. Глобальные настройки шрифта можно изменить в настройках приложения.
-              </Typography>
+              <Box sx={{ mb: 2 }}>
+                <FontPicker
+                  value={id ? (getChatFont(id) || 'default') : 'default'}
+                  onChange={(value) => {
+                    if (!id) return;
+                    if (value === 'default') clearChatFont(id);
+                    else setChatFont(id, value);
+                  }}
+                  baseOptions={CHAT_FONT_OPTIONS}
+                  manage
+                  dense
+                  ariaLabel="Шрифт для этого чата"
+                  hint="Шрифт применяется только к этому чату; «По умолчанию» — глобальный шрифт приложения. Свои шрифты хранятся локально на этом устройстве."
+                />
+              </Box>
 
               {/* Шрифт */}
               <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 1, fontWeight: 600 }}>
                 Шрифт сообщений (устаревшее, для совместимости)
               </Typography>
-              <Select
+              <FontPicker
                 value={fontFamily}
-                onChange={(e) => setFontFamily(e.target.value)}
-                size="small"
-                fullWidth
-                sx={{
-                  color: theme.text, bgcolor: theme.bgInput, borderRadius: 2, mb: 2,
-                  fontFamily,
-                  '& .MuiOutlinedInput-notchedOutline': { borderColor: theme.border },
-                  '& .MuiSvgIcon-root': { color: theme.textSec },
-                  '& .MuiSelect-select': { py: 1 },
-                }}
-                MenuProps={{ PaperProps: { sx: { bgcolor: theme.bgHeader, border: `1px solid ${theme.border}` } } }}
-              >
-                {[...BUILTIN_FONTS, ...customFonts.map(f => ({ label: f.name, value: f.name }))].map(f => (
-                  <MenuItem key={f.value} value={f.value} sx={{ fontFamily: f.value, color: theme.text }}>
-                    {f.label}
-                  </MenuItem>
-                ))}
-              </Select>
-
-              {/* Загрузка своего шрифта */}
-              <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 1, fontWeight: 600 }}>
-                Добавить свой шрифт (.ttf / .otf / .woff)
-              </Typography>
-              <input
-                ref={fontInputRef}
-                type="file"
-                hidden
-                accept=".ttf,.otf,.woff,.woff2"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  e.target.value = '';
-                  const reader = new FileReader();
-                  reader.onload = (ev) => {
-                    const dataUrl = ev.target?.result as string;
-                    const fontName = file.name.replace(/\.[^.]+$/, '');
-                    const styleEl = document.createElement('style');
-                    styleEl.textContent = `@font-face { font-family: '${fontName}'; src: url('${dataUrl}'); }`;
-                    document.head.appendChild(styleEl);
-                    addCustomFont({ name: fontName, url: dataUrl });
-                    setFontFamily(fontName);
-                  };
-                  reader.readAsDataURL(file);
-                }}
+                onChange={setFontFamily}
+                baseOptions={BUILTIN_FONTS}
+                dense
+                ariaLabel="Шрифт сообщений"
+                hint="Список своих шрифтов общий с «Шрифтом для этого чата» выше и с настройками приложения."
               />
-              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-                <Button
-                  variant="outlined" size="small"
-                  onClick={() => fontInputRef.current?.click()}
-                  sx={{ color: theme.accent, borderColor: theme.accent + '60', textTransform: 'none', borderRadius: 2 }}
-                >
-                  📁 Загрузить шрифт
-                </Button>
-                {customFonts.map(f => (
-                  <Box key={f.name} sx={{
-                    display: 'flex', alignItems: 'center', gap: 0.5,
-                    bgcolor: theme.bgChat, border: `1px solid ${theme.border}`,
-                    borderRadius: 2, px: 1.2, py: 0.4,
-                  }}>
-                    <Typography sx={{ fontSize: 13, color: theme.text, fontFamily: f.name }}>{f.name}</Typography>
-                    <IconButton size="small" onClick={() => {
-                      removeCustomFont(f.name);
-                      if (fontFamily === f.name) setFontFamily('inherit');
-                    }} sx={{ color: theme.textSec, p: 0.2 }}>
-                      <Close sx={{ fontSize: 14 }} />
-                    </IconButton>
-                  </Box>
-                ))}
-              </Box>
+
+
             </DialogContent>
             <DialogActions sx={{ px: 3, pb: 2 }}>
               <Button onClick={() => setShowDisplaySettings(false)}
@@ -1539,33 +1523,66 @@ function ChatWindowInner() {
           </Box>
         )}
 
-        {/* ── Закреплённое сообщение ── */}
-        {activeChat && pinnedMessages[activeChat.id] && (
+        {/* ── Закреплённые сообщения: счётчик, переключение стрелками, открепить ── */}
+        {activeChat && currentPinned && (
           <Box sx={{
             px: 2.5, py: 0.75,
             bgcolor: theme.accent + '12',
             borderBottom: `1px solid ${theme.accent}30`,
-            display: 'flex', alignItems: 'center', gap: 1.5,
+            display: 'flex', alignItems: 'center', gap: 1,
             width: '100%', minWidth: 0, maxWidth: '100%',
             overflow: 'hidden', boxSizing: 'border-box',
             cursor: 'pointer',
             position: 'relative', zIndex: 2, order: { xs: 1, md: 1 },
           }}
-            onClick={() => {
-              const pinned = pinnedMessages[activeChat.id];
-              if (pinned) {
-                const el = document.getElementById(`msg-${pinned.id}`);
-                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              }
-            }}
+            onClick={() => handleScrollToMessage(currentPinned.id)}
           >
-            <PushPin sx={{ fontSize: 16, color: theme.accent }} />
+            <PushPin sx={{ fontSize: 16, color: theme.accent, flexShrink: 0 }} />
             <Box flex={1} minWidth={0} maxWidth="100%" overflow="hidden">
-              <Typography sx={{ fontSize: 12, color: theme.accent, fontWeight: 600 }}>Закреплённое сообщение</Typography>
+              <Typography sx={{ fontSize: 12, color: theme.accent, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                {pinnedCount > 1 ? 'Закреплённые сообщения' : 'Закреплённое сообщение'}
+                {pinnedCount > 1 && (
+                  <Box component="span" sx={{
+                    px: 0.75, py: 0.1, borderRadius: 5,
+                    bgcolor: theme.accent + '22', color: theme.accent, fontSize: 11, fontWeight: 600,
+                  }}>
+                    {pinnedAt + 1} из {pinnedCount}
+                  </Box>
+                )}
+              </Typography>
               <Typography sx={{ fontSize: 13, color: theme.textSec, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {pinnedMessages[activeChat.id]?.content || '📎 Вложение'}
+                {(() => {
+                  const author = currentPinned.sender?.firstName || currentPinned.sender?.username;
+                  const body = currentPinned.content || '📎 Вложение';
+                  return author ? `${author}: ${body}` : body;
+                })()}
               </Typography>
             </Box>
+            {pinnedCount > 1 && (
+              <>
+                <Tooltip title="Предыдущее закреплённое">
+                  <IconButton size="small" aria-label="Предыдущее закреплённое сообщение"
+                    onClick={(e) => { e.stopPropagation(); showPinnedByIndex(pinnedAt - 1); }}
+                    sx={{ color: theme.accent, flexShrink: 0 }}>
+                    <KeyboardArrowUp sx={{ fontSize: 18 }} />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Следующее закреплённое">
+                  <IconButton size="small" aria-label="Следующее закреплённое сообщение"
+                    onClick={(e) => { e.stopPropagation(); showPinnedByIndex(pinnedAt + 1); }}
+                    sx={{ color: theme.accent, flexShrink: 0 }}>
+                    <KeyboardArrowDown sx={{ fontSize: 18 }} />
+                  </IconButton>
+                </Tooltip>
+              </>
+            )}
+            <Tooltip title="Открепить">
+              <IconButton size="small" aria-label="Открепить сообщение"
+                onClick={(e) => { e.stopPropagation(); void handleUnpinPinned(currentPinned); }}
+                sx={{ color: theme.accent, flexShrink: 0 }}>
+                <Close sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Tooltip>
           </Box>
         )}
 
@@ -1655,6 +1672,7 @@ function ChatWindowInner() {
                   bgBubbleOther={theme.bgBubbleOther}
                   bubbleOwnShadow={theme.bubbleOwnShadow}
                   bubbleOtherShadow={theme.bubbleOtherShadow}
+                  messageTimeColor={theme.messageTimeColor}
                   messageMaxWidth={effectiveBubble.maxWidth}
                   messageAlign={chatLayout.messageAlign}
                   bubbleEnabled={effectiveBubble.enabled}
@@ -2022,6 +2040,7 @@ function ChatWindowInner() {
       {/* ── Info panel ── */}
       {showInfo && activeChat && (
         <ChatInfoPanel
+          onPlayerHost={onPlayerHost}
           chat={activeChat}
           onClose={() => setShowInfo(false)}
           onViewProfile={(userId) => {
@@ -2162,10 +2181,10 @@ function ChatWindowInner() {
   );
 }
 
-export default function ChatWindow() {
+export default function ChatWindow(props: ChatWindowProps) {
   return (
     <ChatErrorBoundary>
-      <ChatWindowInner />
+      <ChatWindowInner {...props} />
     </ChatErrorBoundary>
   );
 }

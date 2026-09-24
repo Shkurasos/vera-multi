@@ -17,6 +17,8 @@ export type AutoDeleteMonths = 0 | 1 | 3 | 6 | 12; // 0 = отключено
 /* ─── Layout / раскладка интерфейса ─────────────────────────────────── */
 export type SidePos = 'left' | 'right' | 'top' | 'bottom';
 export type VertPos = 'top' | 'bottom';
+/** Позиция развёрнутого плеера: снизу/сверху лентой или правой панелью. */
+export type PlayerPos = VertPos | 'left' | 'right';
 export type Density = 'compact' | 'cozy' | 'roomy';
 /** Сторона сообщений в чате: auto — свои справа/чужие слева (как обычно), left/right — все с одной стороны. */
 export type MessageAlign = 'auto' | 'left' | 'right';
@@ -25,7 +27,9 @@ export interface LayoutSettings {
   sidebarSide: SidePos;        // left | right
   sidebarWidth: number;        // 72px..50% ширины окна
   mobileNavPos: VertPos;       // bottom | top (нижняя навигация на мобильном)
-  playerPos: VertPos;          // bottom | top (место развёрнутого плеера)
+  playerPos: PlayerPos;        // bottom | top | left | right (место развёрнутого плеера)
+  playerWidth: number;         // ширина плеера-панели при боковом playerPos (px)
+  chatInfoWidth: number;
   chatHeaderPos: VertPos;      // top | bottom (шапка чата)
   chatInputPos: VertPos;       // bottom | top (поле ввода)
   density: Density;            // плотность отступов
@@ -46,6 +50,8 @@ export const defaultLayout: LayoutSettings = {
   sidebarWidth: 300,
   mobileNavPos: 'bottom',
   playerPos: 'bottom',
+  playerWidth: 300,
+  chatInfoWidth: 300,
   chatHeaderPos: 'top',
   chatInputPos: 'bottom',
   density: 'cozy',

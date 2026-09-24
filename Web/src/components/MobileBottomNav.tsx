@@ -37,6 +37,26 @@ export default function MobileBottomNav() {
     setHiding(false);
   }, [activePath]);
 
+  // Панель не должна «залипать» невидимой: как только оверлеи (Музыка/Темы)
+  // закрыты, снимаем анимационное скрытие. Раньше закрытие «Тем» оставляло
+  // hiding=true, и нижняя навигация исчезала до перезагрузки страницы.
+  useEffect(() => {
+    if (!musicOpen && !themeEditorOpen) setHiding(false);
+  }, [musicOpen, themeEditorOpen]);
+
+  // Мобильные браузеры восстанавливают страницу из bfcache, не пересоздавая
+  // React-состояние: при возврате на вкладку принудительно показываем панель.
+  useEffect(() => {
+    const restore = () => setHiding(false);
+    const onVisible = () => { if (document.visibilityState === 'visible') setHiding(false); };
+    window.addEventListener('pageshow', restore);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('pageshow', restore);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
+
   // В открытом чате нижняя навигация не должна перекрывать переписку.
   if (activePath.startsWith('/chat/')) return null;
 
@@ -52,6 +72,13 @@ export default function MobileBottomNav() {
   };
   const openThemeEditor = () => hideForOpen(() => setThemeEditorOpen(true));
   const openProfile = () => hideForOpen(() => navigate('/profile'));
+
+  // Закрытие «Тем» обязано вернуть панель на место (иначе она «залипала» скрытой).
+  const closeThemeEditor = () => { setThemeEditorOpen(false); setHiding(false); };
+
+  // Пока оверлей открыт или идёт анимация — панель скрыта; во всех остальных
+  // случаях она обязана быть видимой.
+  const navHidden = hiding || musicOpen || themeEditorOpen;
 
   const item = (
     active: boolean,
@@ -115,8 +142,9 @@ export default function MobileBottomNav() {
           backdropFilter: 'blur(22px) saturate(1.35)',
           border: `1px solid ${theme.border}`,
           boxShadow: '0 -6px 26px rgba(0,0,0,.28), 0 8px 24px rgba(0,0,0,.24)',
-          transform: hiding ? 'translateY(130%)' : 'translateY(0)',
-          opacity: hiding ? 0 : 1,
+          transform: navHidden ? 'translateY(130%)' : 'translateY(0)',
+          opacity: navHidden ? 0 : 1,
+          pointerEvents: navHidden ? 'none' : 'auto',
           transition: 'transform 220ms ease, opacity 220ms ease',
         }}
       >
@@ -141,8 +169,8 @@ export default function MobileBottomNav() {
       <Suspense fallback={null}>
         {themeEditorOpen && (
           <ThemeEditor
-            onClose={() => setThemeEditorOpen(false)}
-            onGoChats={() => { setThemeEditorOpen(false); navigate('/'); }}
+            onClose={closeThemeEditor}
+            onGoChats={() => { closeThemeEditor(); navigate('/'); }}
           />
         )}
       </Suspense>

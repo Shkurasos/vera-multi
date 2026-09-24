@@ -75,7 +75,10 @@ export interface Chat {
   isMuted?: boolean;
   membership?: ChatMember;
   pinnedMessageId?: string;
+  /** Несколько закреплённых сообщений (новые первыми), как в Telegram. */
+  pinnedMessageIds?: string[];
   pinnedMessage?: Message;
+  pinnedMessages?: Message[];
   createdAt: string;
   updatedAt: string;
 }

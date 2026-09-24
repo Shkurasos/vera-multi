@@ -13,11 +13,14 @@ interface ChatPrefsState {
   mutedIds: string[];
   // pinnedMessages per chat: chatId -> Message | null
   pinnedMessages: Record<string, Message | null>;
+  /** Панель «инфо о чате» открыта для конкретного чата (переживает обновление страницы). */
+  showInfo: Record<string, boolean>;
 
   togglePin: (chatId: string) => void;
   toggleArchive: (chatId: string) => void;
   toggleMute: (chatId: string) => void;
   setPinnedMessage: (chatId: string, message: Message | null) => void;
+  setShowInfo: (chatId: string, open: boolean) => void;
   setBubbleSettings: (chatId: string, settings: ChatPrefsState['bubbleSettings'][string]) => void;
 
   isPinned: (chatId: string) => boolean;
@@ -32,6 +35,7 @@ export const useChatPrefsStore = create<ChatPrefsState>()(
       archivedIds: [],
       mutedIds: [],
       pinnedMessages: {},
+      showInfo: {},
       bubbleSettings: {},
       clearBubbleSettings: (chatId) => set(s => {
         const bubbleSettings = { ...s.bubbleSettings };
@@ -63,6 +67,9 @@ export const useChatPrefsStore = create<ChatPrefsState>()(
 
       setPinnedMessage: (chatId, message) => set((s) => ({
         pinnedMessages: { ...s.pinnedMessages, [chatId]: message },
+      })),
+      setShowInfo: (chatId, open) => set((s) => ({
+        showInfo: { ...s.showInfo, [chatId]: open },
       })),
       setBubbleSettings: (chatId, settings) => set((s) => ({
         bubbleSettings: { ...s.bubbleSettings, [chatId]: { ...s.bubbleSettings[chatId], ...settings,

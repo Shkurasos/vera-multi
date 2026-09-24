@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Box, IconButton, Slider, Typography, Tooltip, Popover, List, ListItemButton, Avatar, Button } from '@mui/material';
+import { createPortal } from 'react-dom';
+import { Box, IconButton, Slider, Typography, Tooltip, Popover, List, ListItemButton, Avatar, Button, TextField, useMediaQuery } from '@mui/material';
 import {
   GraphicEq, Pause, SkipNext, SkipPrevious,
   VolumeUp, VolumeOff, Shuffle, Repeat, RepeatOne, MusicNote,
@@ -23,12 +24,17 @@ const resolveAudioUrl = (url: string): string => {
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
 
+// Минимальная ширина боковой панели плеера.
+const PLAYER_SIDE_MIN = 280;
+const PLAYER_SIDE_COLLAPSED = 44;
+
 interface Props {
+  sideHost?: HTMLDivElement | null;
   onOpenLibrary?: () => void;
   libraryOpen?: boolean;
 }
 
-export default function MusicPlayer({ onOpenLibrary, libraryOpen }: Props = {}) {
+export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Props = {}) {
   const {
     currentTrack, isPlaying, volume, progress, duration, queue, currentIndex,
     repeat, shuffle, togglePlay, next, prev,
@@ -58,6 +64,27 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen }: Props = {}) 
     const ids = getPlaylistTracks(p).map((t) => t.id);
     return ids.length === queue.length && ids.every((id, i) => queue[i]?.id === id);
   });
+  const playerWidth = useUserSettingsStore((s) => s.layout.playerWidth);
+  const setLayout = useUserSettingsStore((s) => s.setLayout);
+  const isDesktop = useMediaQuery('(min-width: 701px)');
+  const [queueFilter, setQueueFilter] = useState('');
+  const [sideResizing, setSideResizing] = useState(false);
+  // Боковой режим: плеер становится панелью стандартной ширины,
+  // которую можно двигать точно так же, как панель чатов.
+  const showSidePanel = isDesktop && (playerPos === 'left' || playerPos === 'right');
+  const embedded = showSidePanel && playerPos === 'right';
+  const renderSide = (node: React.ReactNode) => embedded
+    ? (sideHost ? createPortal(node, sideHost) : null)
+    : node;
+  const sidePanelW = showSidePanel
+    ? Math.min(
+      Math.max(Number(playerWidth) || 300, PLAYER_SIDE_MIN),
+      Math.max(PLAYER_SIDE_MIN, Math.floor(window.innerWidth / 2)),
+    )
+    : 0;
+  // В правой панели можно переключать компоненты внутри: «Трек», «Плейлист», «Настройки».
+  const [rightTab, setRightTab] = useState<'track' | 'playlist' | 'settings'>('track');
+
   const playlistViz = getSettings('playlist', currentPlaylist?.id);
   const trackViz = getSettings('track', currentTrack?.id);
   const configuredViz = trackViz.enabled ? trackViz : playlistViz;
@@ -233,6 +260,28 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen }: Props = {}) 
     }
   }, []);
 
+  // Ресайз правой панели плеера мышью за левый край (как у панели чатов).
+  useEffect(() => {
+    if (!sideResizing) return;
+    const onMove = (e: MouseEvent) => {
+      const max = Math.max(PLAYER_SIDE_MIN, Math.floor(window.innerWidth / 2));
+      const raw = playerPos === 'left' ? e.clientX : window.innerWidth - e.clientX;
+      const w = Math.min(Math.max(raw, PLAYER_SIDE_MIN), max);
+      setLayout('playerWidth', Math.round(w / 5) * 5);
+    };
+    const onUp = () => {
+      setSideResizing(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [sideResizing, playerPos, setLayout]);
+
   const handleSeek = (_: unknown, val: number | number[]) => {
     const t = Array.isArray(val) ? val[0] : val;
     if (audioRef.current) audioRef.current.currentTime = t;
@@ -253,7 +302,31 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen }: Props = {}) 
     />
   );
 
-  if (playerCollapsed) {
+  if (playerCollapsed && showSidePanel) {
+    return (
+      <>
+        {audioNode}
+        {renderSide(<Box sx={{
+          position: 'fixed', top: 0, bottom: 0,
+          ...(playerPos === 'left'
+            ? { left: 0, borderRight: `1px solid ${theme.border}` }
+            : { right: 0, borderLeft: `1px solid ${theme.border}` }),
+          width: PLAYER_SIDE_COLLAPSED, zIndex: 1300,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          bgcolor: theme.bgHeader, boxShadow: '0 0 12px rgba(0,0,0,0.25)',
+          ...(embedded ? { position: 'relative', width: '100%', height: 44, boxShadow: 'none', borderLeft: 0, borderTop: `1px solid ${theme.border}` } : {}),
+        }}>
+          <Tooltip title="Развернуть плеер" placement={playerPos === 'left' ? 'right' : 'left'}>
+            <IconButton size="small" onClick={() => setPlayerCollapsed(false)} sx={{ color: theme.textSec }}>
+              <MusicNote sx={{ fontSize: 19 }} />
+            </IconButton>
+          </Tooltip>
+        </Box>)}
+      </>
+    );
+  }
+
+  if (playerCollapsed && !showSidePanel) {
     return (
       <>
         {audioNode}
@@ -294,11 +367,127 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen }: Props = {}) 
     <>
       {audioNode}
       <MusicVisualizerOverlay settings={activeViz} {...vizSignal} />
+      {showSidePanel && renderSide(
+        <Box
+          sx={{
+            position: 'fixed',
+            top: 0,
+            ...(playerPos === 'left' ? { left: 0, borderRight: `1px solid ${theme.border}` } : { right: 0, borderLeft: `1px solid ${theme.border}` }),
+            height: '100%',
+            width: sidePanelW,
+            zIndex: 1000,
+            display: 'flex',
+            flexDirection: 'column',
+            bgcolor: theme.bgHeader,
+            boxShadow: '0 0 18px rgba(0,0,0,0.35)',
+            ...(embedded ? { position: 'relative', width: '100%', height: 'auto', boxShadow: 'none', borderLeft: 0, borderTop: `1px solid ${theme.border}` } : {}),
+          }}
+        >
+          {/* Шапка */}
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+              px: 1.5,
+              height: 48,
+              flexShrink: 0,
+              borderBottom: `1px solid ${theme.border}`,
+              cursor: 'default',
+              position: 'relative',
+            }}
+          >
+            {showSidePanel && !embedded && (
+              <Box
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  setSideResizing(true);
+                  document.body.style.cursor = 'col-resize';
+                  document.body.style.userSelect = 'none';
+                }}
+                sx={{
+                  position: 'absolute',
+                  ...(playerPos === 'left' ? { right: 0 } : { left: 0 }),
+                  top: 0,
+                  bottom: 0,
+                  width: 6,
+                  cursor: 'col-resize',
+                  bgcolor: 'transparent',
+                }}
+              />
+            )}
+            <Typography
+              sx={{ fontSize: 13, fontWeight: 700, color: theme.text, flex: 1, minWidth: 0 }}
+              noWrap
+            >
+              Музыка
+            </Typography>
+            <IconButton
+              size="small"
+              onClick={() => setPlayerCollapsed(true)}
+              sx={{ color: theme.textSec, '&:hover': { color: theme.text } }}
+            >
+              <Close sx={{ fontSize: 18 }} />
+            </IconButton>
+          </Box>
 
-      <Box sx={{
-        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 1100,
+          {/* Вкладки */}
+          <Box sx={{ display: 'flex', borderBottom: `1px solid ${theme.border}`, bgcolor: theme.bgInput }}>
+            {(['track', 'playlist', 'settings'] as const).map((tab) => (
+              <Box
+                key={tab}
+                onClick={() => setRightTab(tab)}
+                sx={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: rightTab === tab ? theme.accent : theme.textSec,
+                  fontWeight: rightTab === tab ? 700 : 400,
+                  fontSize: 12,
+                  borderBottom: rightTab === tab ? `2px solid ${theme.accent}` : 'none',
+                  transition: 'color 120ms ease, border-color 120ms ease',
+                  cursor: 'pointer',
+                }}
+              >
+                {tab === 'track' && 'Трек'}
+                {tab === 'playlist' && 'Плейлист'}
+                {tab === 'settings' && 'Настройки'}
+              </Box>
+            ))}
+          </Box>
+          <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', gap: 1.5, p: 1.5, overflow: 'auto' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Box sx={{ width: 52, height: 52, borderRadius: 1.5, bgcolor: theme.bgInput, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
+                {currentTrack.coverUrl ? <img src={currentTrack.coverUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <MusicNote sx={{ color: theme.accent }} />}
+              </Box>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography sx={{ color: theme.text, fontWeight: 700, fontSize: 14 }} noWrap>{currentTrack.title}</Typography>
+                <Typography sx={{ color: theme.textSec, fontSize: 12 }} noWrap>{currentTrack.artist || 'Неизвестный'}</Typography>
+              </Box>
+            </Box>
+            <Slider size="small" min={0} max={duration || 1} value={progress} onChange={handleSeek} sx={{ color: theme.accent }} />
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 0.5 }}>
+              <IconButton size="small" onClick={toggleShuffle} sx={{ color: shuffle ? theme.accent : theme.textSec }}><Shuffle /></IconButton>
+              <IconButton onClick={prev} sx={{ color: theme.textSec }}><SkipPrevious /></IconButton>
+              <IconButton onClick={togglePlay} sx={{ bgcolor: theme.accent, color: '#fff', '&:hover': { bgcolor: theme.accent } }}>{isPlaying ? <Pause /> : <GraphicEq />}</IconButton>
+              <IconButton onClick={next} sx={{ color: theme.textSec }}><SkipNext /></IconButton>
+              <IconButton size="small" onClick={toggleRepeat} sx={{ color: repeat !== 'none' ? theme.accent : theme.textSec }}>{repeat === 'one' ? <RepeatOne /> : <Repeat />}</IconButton>
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              {volume === 0 ? <VolumeOff sx={{ color: theme.textSec }} /> : <VolumeUp sx={{ color: theme.textSec }} />}
+              <Slider size="small" min={0} max={1} step={0.01} value={volume} onChange={(_, v) => setVolume((Array.isArray(v) ? v[0] : v) as number)} sx={{ color: theme.accent }} />
+            </Box>
+            <Button size="small" startIcon={<QueueMusic />} onClick={(e) => setQueueAnchor(e.currentTarget)} sx={{ color: theme.textSec, textTransform: 'none' }}>Очередь ({queue.length})</Button>
+          </Box>
+        </Box>
+      )}
+
+
+      {!showSidePanel && <Box sx={{
+        position: 'fixed', ...(playerPos === 'top' ? { top: 0, left: 0, right: 0, borderBottom: `1px solid ${theme.border}` } : { bottom: 0, left: 0, right: 0, borderTop: `1px solid ${theme.border}` }), zIndex: 1100,
         height: 60, display: 'flex', alignItems: 'center', px: 1.5, gap: 1,
-        bgcolor: theme.bgHeader, borderTop: `1px solid ${theme.border}`,
+        bgcolor: theme.bgHeader,
         boxShadow: '0 -3px 10px rgba(0,0,0,0.25)',
       }}>
         <Box sx={{
@@ -405,7 +594,7 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen }: Props = {}) 
             </IconButton>
           </Tooltip>
         </Box>
-      </Box>
+      </Box>}
 
       <Popover
         open={queueOpen}

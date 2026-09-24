@@ -30,6 +30,9 @@ function setup(type = 'direct') {
   return { context, routes, response, send, reload() { context.db = JSON.parse(disk); } };
 }
 
+// Массивы из vm-контекста имеют другой прототип — сравниваем локальные копии.
+const ids = (value) => [...value];
+
 for (const type of ['direct', 'private', 'group', 'saved']) {
   test(`${type}: edits, reactions and pins survive storage reload`, () => {
     const { send, routes, response, reload, context } = setup(type);
@@ -107,4 +110,79 @@ for (const type of ['direct', 'group']) {
     reload();
     assert.equal(context.db.chats[0].pinnedMessageId, null);
   });
+for (const type of ['direct', 'group']) {
+  test(`${type}: several pins are kept newest-first and unpinned one by one`, () => {
+    const { send, context, routes, response, reload } = setup(type);
+    const first = send('source', { text: 'one' }).data;
+    const second = send('source', { text: 'two' }).data;
+    const pin = (messageId, userId = 'alice') => {
+      const res = response();
+      routes['post /api/messages/:id/pin']({ userId, body: { chatId: 'source', messageId } }, res);
+      return res;
+    };
+    const unpin = (messageId, userId = 'alice') => {
+      const res = response();
+      routes['post /api/messages/:id/unpin']({ userId, body: { chatId: 'source', messageId } }, res);
+      return res;
+    };
+
+    assert.equal(pin(first.id).code, 200);
+    const both = pin(second.id);
+    assert.deepEqual(ids(both.data.pinnedMessageIds), [second.id, first.id]);
+    assert.equal(both.data.pinnedMessageId, second.id);
+    assert.equal(both.data.pinnedMessages.length, 2);
+    assert.equal(both.data.pinnedMessage.id, second.id);
+    // Повторное закрепление поднимает сообщение наверх, но не дублирует его.
+    assert.deepEqual(ids(pin(first.id).data.pinnedMessageIds), [first.id, second.id]);
+    reload();
+    assert.deepEqual(ids(context.db.chats[0].pinnedMessageIds), [first.id, second.id]);
+
+    // Открепляем одно — второе остаётся закреплённым.
+    const one = unpin(first.id);
+    assert.equal(one.code, 200);
+    assert.deepEqual(ids(one.data.pinnedMessageIds), [second.id]);
+    assert.equal(one.data.pinnedMessageId, second.id);
+    reload();
+    assert.deepEqual(ids(context.db.chats[0].pinnedMessageIds), [second.id]);
+    assert.equal(context.db.chats[0].pinnedMessageId, second.id);
+
+    // Неизвестный id не ломает список, пустой id отклоняется, чужой — 403.
+    assert.deepEqual(ids(unpin('archive-only').data.pinnedMessageIds), [second.id]);
+    assert.equal(unpin(undefined).code, 400);
+    assert.equal(unpin(second.id, 'outsider').code, 403);
+    assert.equal(pin(second.id, 'outsider').code, 403);
+
+    // Снятие всех закреплений очищает список.
+    assert.deepEqual(ids(pin(null).data.pinnedMessageIds), []);
+    assert.equal(context.db.chats[0].pinnedMessageId, null);
+  });
+
+  test(`${type}: isPinned flag marks every pinned message in history`, () => {
+    const { send, routes, response } = setup(type);
+    const first = send('source', { text: 'one' }).data;
+    const second = send('source', { text: 'two' }).data;
+    const pin = (messageId) => routes['post /api/messages/:id/pin']({ userId: 'alice', body: { chatId: 'source', messageId } }, response());
+    pin(first.id);
+    pin(second.id);
+    const list = response();
+    routes['get /api/messages/:chatId']({ params: { chatId: 'source' }, userId: 'alice', query: {} }, list);
+    assert.deepEqual(ids(list.data.filter(m => m.isPinned).map(m => m.id)), [first.id, second.id]);
+  });
+}
+
+test('deleted pinned message leaves the list on the next sync', () => {
+  const { send, context, routes, response } = setup('group');
+  const a = send('source', { text: 'a' }).data;
+  const b = send('source', { text: 'b' }).data;
+  const pin = (messageId) => routes['post /api/messages/:id/pin']({ userId: 'alice', body: { chatId: 'source', messageId } }, response());
+  pin(a.id);
+  pin(b.id);
+  context.db.messages.find(m => m.id === a.id).isDeleted = true;
+  const chat = context.db.chats.find(c => c.id === 'source');
+  context.syncPinnedMessages(chat);
+  assert.deepEqual(ids(chat.pinnedMessageIds), [b.id]);
+  assert.equal(chat.pinnedMessageId, b.id);
+  assert.deepEqual(ids(context.pinnedMessageIds(chat)), [b.id]);
+});
+
 }

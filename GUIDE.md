@@ -304,7 +304,8 @@ Vera_Multi/
 | `NotificationSettingsDialog.tsx` | Звук/громкость уведомлений чата | `chatSoundStore`, `chatPrefsStore` |
 | `GlobalSoundSettingsDialog.tsx` | Глобальный звук уведомлений + громкость | `chatSoundStore` |
 | `LayoutDesignerDialog.tsx` | Конструктор раскладки: стороны сайдбара/плеера/шапки/инпута, плотность, радиусы, ширина сообщений | `userSettingsStore` |
-| `SettingsDialog.tsx` | Общие настройки: внешний вид, уведомления, приватность, данные, безопасность, язык, устройства | `userSettingsStore`, `authStore`, `deviceStore` |
+| `SettingsDialog.tsx` | Общие настройки: внешний вид, уведомления, приватность, данные, безопасность, язык, устройства | `userSettingsStore`, `authStore`, `deviceStore`, `FontPicker` |
+| `FontPicker.tsx` | Выбор шрифта + управление своими шрифтами (загрузка .ttf/.otf/.woff/.woff2, список, удаление) — общий для «шрифта всего приложения» и шрифтов чата | `customFontsStore`, `customFontStorage` |
 | `AppLockGate.tsx` | Гейт «приложение заблокировано паролем» (sessionStorage) | `userSettingsStore` (hashPassword) |
 
 ### Компоненты звонков (часть 1.1)
@@ -364,6 +365,7 @@ Vera_Multi/
 | `notifications.ts` | Нативные push-уведомления (Web Notifications API) + звук |
 | `localArchive.ts` | Локальный зеркальный архив в IndexedDB (`vera-archive-<userId>`, `chats`/`messages`) — история переживает рестарт сервера |
 | `chatLiveBgStorage.ts` | Живые обои (видео) в IndexedDB + blob-URL |
+| `customFontStorage.ts` | Свои шрифты (.ttf/.otf/.woff/.woff2) в IndexedDB: `saveFontFile/loadFontFiles/deleteFontFile` + `injectFontFace/removeFontFace` (`@font-face` со ссылкой на Blob) |
 | `peer.ts` | **P2P-мост в `window.vera`** (legacy-режим). `isPeerAvailable()`, `peer.*`. Без `window.vera` вызовы падают с понятной ошибкой |
 | `storeSync.ts` | Универсальный `syncedStore()` — middleware синка Zustand-стора (server + socket, last-write-wins) |
 | `storeSyncSimple.ts` | Упрощённый `enableStoreSync(name, api, debounce)` — подключение синка к существующим сторам |
@@ -377,6 +379,9 @@ Vera_Multi/
 | `types/bots.ts` | Типы ботов/ИИ: `Bot`, `BotCommand`, `BotKeywordRule`, `ScanResult`, `ProxyLogEntry`, `RepeaterEntry` |
 | `utils/customStyle.ts` | `specToStyle(spec)` — рендер `CustomSpec` в CSS/MUI sx |
 | `utils/rarityStyles.ts` | 21 редкость для обводок/плашек: `RARITY_META`, `buildShopRingSx/buildPlaqueSx` |
+| `utils/appFont.ts` | Шрифт приложения: `DEFAULT_APP_FONT`, `APP_FONT_OPTIONS` (список вариантов), `resolveAppFont`, `appFontStyles` |
+| `utils/customFonts.ts` | Чистые помощники своих шрифтов: `sanitizeFontFamily`, `customFontCss`, `checkFontFile`, `formatFontSize`, `FONT_FILE_ACCEPT`, `MAX_FONT_FILE_SIZE` |
+| `utils/themeLink.ts` | Экспорт/импорт темы ссылкой (base64 JSON): `themeToLink`, `themeFromLink`, `CUSTOM_THEME_ID_START` (реэкспортируется из `themeStore`) |
 | `styles/motion.ts` | Кривые анимаций (`easeOut/spring/emphasized`), `membranePressSx` |
 | `mui-icons-shim.tsx` | Шим `@mui/icons-material` → no-op (см. vite alias) |
 
@@ -388,11 +393,12 @@ Vera_Multi/
 | `chatStore.ts` | Чаты и сообщения + действия: `loadChats`, `loadMessages` (с архивом), `sendMessage`, `edit/delete/pin/reaction`, `markRead`, typing, online. Адаптеры `peerChatToChat/peerMsgToMsg` для P2P | — (архив в IndexedDB) |
 | `chatPrefsStore.ts` | Пер-чат преференсы: закреплённые, архив, mute, закреплённое сообщение | `enableStoreSync` |
 | `chatFontStore.ts` | Стоковые шрифты (`STOCK_FONTS`) + шрифт на чат | `enableStoreSync` |
-| `chatSettingsStore.ts` | Размер шрифта/эмодзи, font-family, кастомные шрифты (`BUILTIN_FONTS`) | `enableStoreSync` |
+| `chatSettingsStore.ts` | Размер шрифта/эмодзи, font-family, кастомные шрифты (`BUILTIN_FONTS`; старые загрузки мигрируют в `customFontsStore`) | `enableStoreSync` |
+| `customFontsStore.ts` | **Свои шрифты пользователя** (один список на приложение): `fonts`, `hydrate/addFont/removeFont`, файлы в IndexedDB, `@font-face` на Blob, сброс выбранного шрифта при удалении | — (локально, IndexedDB) |
 | `chatSoundStore.ts` | Звуки уведомлений (data URL) и громкости на чат + глобальный звук | `enableStoreSync` |
 | `chatThemeStore.ts` | Персональные темы чатов (`CHAT_THEME_PRESETS`), overrides | `enableStoreSync` |
 | `chatBgPrefsStore.ts` | Обои: `STOCK_WALLPAPERS`, глобальные/per-chat, яркость фона | — |
-| `themeStore.ts` | **Темы**: `THEMES` (каталог), `setTheme`, finish (solid/glass/matte/metal), `themeToLink/themeFromLink`, `CUSTOM_THEME_ID_START`, `getFinishStyles` | persist + сервер |
+| `themeStore.ts` | **Темы**: `THEMES` (каталог), `setTheme`, finish (solid/glass/matte/metal), `themeToLink/themeFromLink` (в `utils/themeLink.ts`), `CUSTOM_THEME_ID_START`, `getFinishStyles`, отдельные цвета времени (`messageTimeColor` на сообщениях, `chatTimeColor` в списке чатов) | persist + сервер |
 | `musicStore.ts` | Библиотека треков, очередь, currentTrack, play/pause/next/prev, volume, repeat, shuffle | — |
 | `musicVisualizerStore.ts` | Настройки визуализатора (цвет, стиль, режимы, размещение) | — |
 | `playlistStore.ts` | Плейлисты (свои + публичные), CRUD, треки, реордер, `getPlaylistTracks` | — |

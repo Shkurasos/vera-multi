@@ -2652,7 +2652,7 @@ app.get('/api/chats', authMiddleware, (req, res) => {
     const unreadCount = db.messages.filter(msg =>
       msg.chatId === chat.id && !msg.readBy?.includes(req.userId) && msg.senderId !== req.userId
     ).length;
-    return { ...chat, pinnedMessage: getPinnedMessage(chat), type: chat.type || 'direct', members, lastMessage: lastMsg, unreadCount };
+    return { ...chat, pinnedMessageIds: pinnedMessageIds(chat), pinnedMessage: getPinnedMessage(chat), pinnedMessages: pinnedMessageList(chat), type: chat.type || 'direct', members, lastMessage: lastMsg, unreadCount };
   }).filter(Boolean);
 
   chats.sort((a, b) => {
@@ -3214,6 +3214,51 @@ function getPinnedMessage(chat) {
   return msg ? { ...msg, content: msg.text || msg.content || '', isPinned: true } : null;
 }
 
+/**
+ * Список закреплённых id чата (новые сверху). Поддерживает старый формат с
+ * единственным pinnedMessageId и отбрасывает удалённые/чужие сообщения.
+ */
+function pinnedMessageIds(chat) {
+  const stored = Array.isArray(chat.pinnedMessageIds)
+    ? chat.pinnedMessageIds
+    : (chat.pinnedMessageId ? [chat.pinnedMessageId] : []);
+  const ids = [];
+  for (const id of stored) {
+    if (typeof id !== 'string' || !id || ids.includes(id)) continue;
+    if (db.messages.some(m => m.chatId === chat.id && m.id === id && !m.isDeleted)) ids.push(id);
+  }
+  return ids;
+}
+
+/** Приводит chat.pinnedMessageIds/pinnedMessageId к актуальному состоянию. */
+function syncPinnedMessages(chat) {
+  const ids = pinnedMessageIds(chat);
+  chat.pinnedMessageIds = ids;
+  chat.pinnedMessageId = ids[0] || null;
+  return ids;
+}
+
+/** Развёрнутые сообщения закрепления в порядке отображения. */
+function pinnedMessageList(chat) {
+  return pinnedMessageIds(chat).map(id => {
+    const msg = db.messages.find(m => m.chatId === chat.id && m.id === id);
+    return { ...msg, content: msg.text || msg.content || '', isPinned: true };
+  });
+}
+
+/** Единый payload закрепления для REST и сокета (старые поля сохранены). */
+function pinnedPayload(chat, messageId) {
+  const pinnedMessages = pinnedMessageList(chat);
+  return {
+    chatId: chat.id,
+    messageId: messageId ?? null,
+    pinnedMessageId: pinnedMessages[0]?.id || null,
+    pinnedMessageIds: pinnedMessages.map(m => m.id),
+    pinnedMessage: pinnedMessages[0] || null,
+    pinnedMessages,
+  };
+}
+
 app.post('/api/messages/:id/pin', authMiddleware, (req, res) => {
   const { chatId, messageId } = req.body || {};
   const member = db.chatMembers.find(m => m.chatId === chatId && m.userId === req.userId);
@@ -3231,11 +3276,34 @@ app.post('/api/messages/:id/pin', authMiddleware, (req, res) => {
       });
     }
   }
-  chat.pinnedMessageId = messageId;
+  // Список закреплённых: новое сообщение встаёт первым (как в Telegram),
+  // повторное закрепление не создаёт дубликат. messageId === null — снять все.
+  chat.pinnedMessageIds = messageId === null
+    ? []
+    : [messageId, ...pinnedMessageIds(chat).filter(id => id !== messageId)];
+  syncPinnedMessages(chat);
   saveDb();
-  const pinnedMessage = getPinnedMessage(chat);
-  io.to(`chat:${chatId}`).emit('message:pinned', { chatId, messageId, pinnedMessage });
-  res.json(pinnedMessage);
+  const payload = pinnedPayload(chat, messageId);
+  io.to(`chat:${chatId}`).emit('message:pinned', payload);
+  res.json(payload);
+});
+
+// POST /api/messages/:id/unpin — открепить одно сообщение (остальные остаются).
+app.post('/api/messages/:id/unpin', authMiddleware, (req, res) => {
+  const { chatId, messageId } = req.body || {};
+  const member = db.chatMembers.find(m => m.chatId === chatId && m.userId === req.userId);
+  if (!member) return res.status(403).json({ code: 'CHAT_ACCESS_DENIED', message: 'Нет доступа к чату. Открепление доступно только его участникам.' });
+  const chat = db.chats.find(c => c.id === chatId);
+  if (!chat) return res.status(404).json({ message: 'Чат не найден' });
+  if (typeof messageId !== 'string' || !messageId) {
+    return res.status(400).json({ code: 'INVALID_MESSAGE_ID', message: 'Не указано сообщение для открепления' });
+  }
+  chat.pinnedMessageIds = pinnedMessageIds(chat).filter(id => id !== messageId);
+  syncPinnedMessages(chat);
+  saveDb();
+  const payload = pinnedPayload(chat, messageId);
+  io.to(`chat:${chatId}`).emit('message:pinned', payload);
+  res.json(payload);
 });
 
 // GET /api/messages/:chatId
@@ -3273,7 +3341,10 @@ app.get('/api/messages/:chatId', authMiddleware, (req, res) => {
       attachments,
       sender,
       isEdited: !!(m.editedAt),
-      isPinned: db.chats.find(c => c.id === m.chatId)?.pinnedMessageId === m.id,
+      isPinned: (() => {
+        const chat = db.chats.find(c => c.id === m.chatId);
+        return chat ? pinnedMessageIds(chat).includes(m.id) : false;
+      })(),
       isDeleted: false,
       type: m.type || (attachments.length > 0 ? 'document' : 'text'),
     };
@@ -3490,9 +3561,10 @@ app.delete('/api/messages/:id', authMiddleware, (req, res) => {
   moderation.archive(db, [msg], req.userId, { uploadsDir: UPLOADS_DIR });
   db.messages.splice(idx, 1);
   const chat = db.chats.find(c => c.id === msg.chatId);
-  if (chat?.pinnedMessageId === msg.id) {
-    chat.pinnedMessageId = null;
-    io.to(`chat:${msg.chatId}`).emit('message:pinned', { chatId: msg.chatId, messageId: null, pinnedMessage: null });
+  if (chat?.pinnedMessageId === msg.id || (chat && pinnedMessageIds(chat).includes(msg.id))) {
+    chat.pinnedMessageIds = pinnedMessageIds(chat).filter(id => id !== msg.id);
+    syncPinnedMessages(chat);
+    io.to(`chat:${msg.chatId}`).emit('message:pinned', pinnedPayload(chat, null));
   }
   if (chat?.type === 'channel' && !msg.replyToId) {
     const comments = db.messages.filter(m => m.chatId === chat.id && m.replyToId === msg.id);

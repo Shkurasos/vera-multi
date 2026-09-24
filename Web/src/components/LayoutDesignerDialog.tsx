@@ -8,7 +8,7 @@ import { Close, RestartAlt, SwapHoriz, Undo } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
 import {
   useUserSettingsStore, LayoutSettings,
-  SidePos, VertPos, Density, MessageAlign,
+  SidePos, VertPos, PlayerPos, Density, MessageAlign,
 } from '../store/userSettingsStore';
 
 /**
@@ -370,9 +370,11 @@ export default function LayoutDesignerDialog({ open, onClose }: Props) {
             <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Плеер</Typography>
             <ToggleButtonGroup exclusive size="small" fullWidth
               value={layout.playerPos}
-              onChange={(_, v) => v && setLayout('playerPos', v as VertPos)}>
+               onChange={(_, v) => v && setLayout('playerPos', v as PlayerPos)}>
               <ToggleButton value="bottom">Снизу</ToggleButton>
               <ToggleButton value="top">Сверху</ToggleButton>
+               <ToggleButton value="left">Слева</ToggleButton>
+               <ToggleButton value="right">Справа</ToggleButton>
             </ToggleButtonGroup>
           </Box>
           <Box>

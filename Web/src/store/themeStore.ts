@@ -58,6 +58,14 @@ export interface Theme {
   bubbleOwnText?: string;
   // Цвет текста на чужом пузыре
   bubbleOtherText?: string;
+  // Прозрачность фона своего пузыря: 0 — непрозрачный, 1 — фон полностью прозрачный
+  bubbleOwnOpacity?: number;
+  // Прозрачность фона чужого пузыря: 0 — непрозрачный, 1 — фон полностью прозрачный
+  bubbleOtherOpacity?: number;
+  // Цвет времени под сообщением (если не задан — цвета текста пузыря, как раньше)
+  messageTimeColor?: string;
+  // Цвет времени в списке чатов (если не задан — вторичный текст textSec)
+  chatTimeColor?: string;
   // Фото чата (аватар чата), base64/data URL, независимо от темы
   chatPhoto?: string;
 }
@@ -139,100 +147,9 @@ const moons = (color: string) =>
 const leaves = (color: string) =>
   svg(`<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'><path d='M5,35 Q20,5 35,5 Q35,20 20,30 Q12,35 5,35 Z' fill='none' stroke='${color}' stroke-width='0.8'/><line x1='5' y1='35' x2='30' y2='10' stroke='${color}' stroke-width='0.5'/></svg>`);
 
-// ID кастомных тем начинается с 1000
-export const CUSTOM_THEME_ID_START = 1000;
-
-export function themeToLink(theme: Theme): string {
-  try {
-    const payload = {
-      n: theme.name,
-      b: theme.bg,
-      t: theme.text,
-      a: theme.accent,
-      s: theme.bgSidebar,
-      c: theme.bgChat,
-      h: theme.bgHeader,
-      i: theme.bgInput,
-      o: theme.bgBubbleOwn,
-      p: theme.bgBubbleOther,
-      v: theme.bgHover,
-      x: theme.bgActive,
-      ts: theme.textSec,
-      bd: theme.border,
-      on: theme.online,
-      cp: theme.chatPattern,
-      cpn: theme.chatPatternSizeMin,
-      cpx: theme.chatPatternSizeMax,
-      db: theme.disableBackgroundBlobs,
-      dg: theme.disableBackgroundGlow,
-      gc: theme.backgroundGlowColor,
-      gi: theme.backgroundGlowIntensity,
-      ci: theme.chatBgImage,
-      co: theme.chatBgImageOpacity,
-      og: theme.bubbleOwnGradient,
-      os: theme.bubbleOwnShadow,
-      ps: theme.bubbleOtherShadow,
-      sg: theme.sidebarGradient,
-      sl: theme.sidebarBlur,
-      hg: theme.headerGradient,
-      ot: theme.bubbleOwnText,
-      pt: theme.bubbleOtherText,
-      f: theme.finish,
-      fa: theme.finishAmount,
-    };
-    const json = JSON.stringify(payload);
-    return btoa(unescape(encodeURIComponent(json)));
-  } catch {
-    return '';
-  }
-}
-
-export function themeFromLink(link: string): Theme | null {
-  try {
-    const json = decodeURIComponent(escape(atob(link.trim())));
-    const p = JSON.parse(json);
-    const id = CUSTOM_THEME_ID_START + Math.floor(Math.random() * 9000000);
-    return {
-      id,
-      name: p.n || 'Imported',
-      bg: p.b || '#000',
-      text: p.t || '#fff',
-      accent: p.a || '#0f0',
-      bgSidebar: p.s || '#000',
-      bgChat: p.c || '#000',
-      bgHeader: p.h || '#000',
-      bgInput: p.i || '#111',
-      bgBubbleOwn: p.o || '#0f0',
-      bgBubbleOther: p.p || '#222',
-      bgHover: p.v || '#111',
-      bgActive: p.x || '#222',
-      textSec: p.ts || '#aaa',
-      border: p.bd || 'rgba(255,255,255,0.08)',
-      online: p.on || '#0f0',
-      chatPattern: p.cp,
-      chatPatternSizeMin: p.cpn ?? 860,
-      chatPatternSizeMax: p.cpx ?? 1400,
-      disableBackgroundBlobs: p.db,
-      disableBackgroundGlow: p.dg,
-      backgroundGlowColor: p.gc || '#8FE3CF',
-      backgroundGlowIntensity: p.gi ?? 0.18,
-      chatBgImage: p.ci,
-      chatBgImageOpacity: p.co ?? 0.35,
-      bubbleOwnGradient: p.og,
-      bubbleOwnShadow: p.os,
-      bubbleOtherShadow: p.ps,
-      sidebarGradient: p.sg,
-      sidebarBlur: p.sl,
-      headerGradient: p.hg,
-      bubbleOwnText: p.ot,
-      bubbleOtherText: p.pt || p.t,
-      finish: p.f,
-      finishAmount: p.fa ?? 0.5,
-    };
-  } catch {
-    return null;
-  }
-}
+// Ссылки на темы (экспорт/импорт) живут в утилитах — так их покрывают тесты
+// (`themeLink.test.cjs`); реэкспорт сохраняет прежние импорты из themeStore.
+export { CUSTOM_THEME_ID_START, themeToLink, themeFromLink } from '../utils/themeLink';
 
 // ── Хелпер для применения material finish эффектов ──
 export function getFinishStyles(theme: Theme) {

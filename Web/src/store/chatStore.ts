@@ -136,6 +136,14 @@ function withoutTemporaryCopy(list: Message[], confirmed: Message, myId?: string
   });
 }
 
+/** Текущие закреплённые id чата (поддерживает старый формат с одним id). */
+function chatPinnedIds(chat: Chat | null | undefined): string[] {
+  if (!chat) return [];
+  return Array.isArray(chat.pinnedMessageIds)
+    ? chat.pinnedMessageIds.filter(Boolean)
+    : (chat.pinnedMessageId ? [chat.pinnedMessageId] : []);
+}
+
 interface ChatState {
   chats: Chat[];
   activeChat: Chat | null;
@@ -153,13 +161,15 @@ interface ChatState {
   editMessage: (messageId: string, content: string) => Promise<void>;
   deleteMessage: (messageId: string, chatId: string) => Promise<void>;
   pinMessage: (chatId: string, messageId: string | null) => Promise<void>;
+  /** Открепить одно сообщение — остальные закреплённые остаются. */
+  unpinMessage: (chatId: string, messageId: string) => Promise<void>;
   addReaction: (chatId: string, messageId: string, emoji: string) => Promise<void>;
   leaveChat: (chatId: string) => Promise<void>;
   addMessage: (message: Message) => void;
   replaceOrAddMessage: (message: Message) => void;
   updateMessage: (message: Message) => void;
   removeMessage: (messageId: string, chatId: string) => void;
-  applyPinnedMessage: (chatId: string, messageId: string | null, pinnedMessage?: Message | null) => void;
+  applyPinnedMessage: (chatId: string, messageId: string | null, pinnedMessage?: Message | null, pinnedMessageIds?: string[], pinnedMessageList?: Message[] | null) => void;
   setTyping: (chatId: string, userId: string, isTyping: boolean) => void;
   markRead: (chatId: string, messageId: string) => void;
   markChatRead: (chatId: string) => void;
@@ -269,7 +279,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const archived = await loadArchivedChats().catch(() => [] as Chat[]);
       const merged = mergeById(archived, normalized);
       set({ chats: withVeraAi(merged) });
-      normalized.forEach(chat => get().applyPinnedMessage(chat.id, chat.pinnedMessageId || null, chat.pinnedMessage || null));
+      normalized.forEach(chat => get().applyPinnedMessage(
+        chat.id,
+        chat.pinnedMessageId || null,
+        chat.pinnedMessage || null,
+        chat.pinnedMessageIds,
+        chat.pinnedMessages,
+      ));
       saveArchivedChats(normalized).catch(() => {});
     } catch (err) {
       console.error('loadChats error:', err);
@@ -681,11 +697,44 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messageId = resolvedId;
     }
     if (isPeerAvailable()) {
-      await peer.updateChat(chatId, { pinnedMessageId: messageId });
-      get().applyPinnedMessage(chatId, messageId);
+      // P2P: список закреплённых ведём локально, чтобы поддержать несколько.
+      const next = messageId
+        ? [messageId, ...chatPinnedIds(get().chats.find((c) => c.id === chatId) || get().activeChat).filter((id) => id !== messageId)]
+        : [];
+      await peer.updateChat(chatId, { pinnedMessageId: next[0] || null, pinnedMessageIds: next });
+      get().applyPinnedMessage(chatId, messageId, undefined, next);
     } else {
       const res = await messagesApi.pin(messageId, chatId);
-      get().applyPinnedMessage(chatId, messageId, res.data);
+      const payload: any = res.data || {};
+      get().applyPinnedMessage(
+        chatId,
+        payload.messageId ?? messageId,
+        payload.pinnedMessage ?? null,
+        payload.pinnedMessageIds,
+        payload.pinnedMessages,
+      );
+    }
+  },
+
+  /** Открепить одно сообщение — остальные закреплённые остаются. */
+  unpinMessage: async (chatId, messageId) => {
+    const resolvedId = resolveActionableId(get().messages, messageId);
+    if (!resolvedId) throw new Error(PENDING_SEND_ERROR);
+    if (isPeerAvailable()) {
+      const next = chatPinnedIds(get().chats.find((c) => c.id === chatId) || get().activeChat)
+        .filter((id) => id !== resolvedId);
+      await peer.updateChat(chatId, { pinnedMessageId: next[0] || null, pinnedMessageIds: next });
+      get().applyPinnedMessage(chatId, resolvedId, undefined, next);
+    } else {
+      const res = await messagesApi.unpin(resolvedId, chatId);
+      const payload: any = res.data || {};
+      get().applyPinnedMessage(
+        chatId,
+        payload.messageId ?? resolvedId,
+        payload.pinnedMessage ?? null,
+        payload.pinnedMessageIds,
+        payload.pinnedMessages,
+      );
     }
   },
 
@@ -885,32 +934,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 
-  applyPinnedMessage: (chatId, messageId, pinnedMessage) => {
+  applyPinnedMessage: (chatId, messageId, pinnedMessage, pinnedMessageIds, pinnedMessageList) => {
     const { setPinnedMessage } = useChatPrefsStore.getState();
     set((state) => {
       const msgs = state.messages[chatId] || [];
-      const pinned = pinnedMessage !== undefined
-        ? pinnedMessage
-        : messageId
-          ? msgs.find((m) => m.id === messageId) || null
-          : null;
-      setPinnedMessage(chatId, pinned || null);
+      // Если сервер прислал список — доверяем ему полностью (пустой список =
+      // «сняли все закрепления»). Без списка работаем как раньше: один id.
+      const ids = Array.isArray(pinnedMessageIds)
+        ? pinnedMessageIds.filter(Boolean)
+        : (messageId ? [messageId] : []);
+      // Полные объекты: сначала из загруженных сообщений (там свежие правки),
+      // затем из payload сервера, затем одиночное pinnedMessage.
+      const list: Message[] = ids
+        .map((pid) => msgs.find((m) => m.id === pid)
+          || (Array.isArray(pinnedMessageList) ? pinnedMessageList.find((m) => m.id === pid) : undefined)
+          || (pinnedMessage?.id === pid ? pinnedMessage : undefined))
+        .filter(Boolean) as Message[];
+      const firstId = ids[0] || null;
+      const first = list[0] || null;
+      setPinnedMessage(chatId, first || null);
+      const patch = {
+        pinnedMessageId: firstId || undefined,
+        pinnedMessageIds: ids,
+        pinnedMessage: first || undefined,
+        pinnedMessages: list,
+      };
       return {
         activeChat: state.activeChat?.id === chatId
-          ? { ...state.activeChat, pinnedMessageId: messageId || undefined, pinnedMessage: pinned || undefined }
+          ? { ...state.activeChat, ...patch }
           : state.activeChat,
-        chats: state.chats.map((c) =>
-          c.id === chatId
-            ? { ...c, pinnedMessageId: messageId || undefined, pinnedMessage: pinned || undefined }
-            : c
-        ),
+        chats: state.chats.map((c) => (c.id === chatId ? { ...c, ...patch } : c)),
         messages: {
           ...state.messages,
-          [chatId]: msgs.map((m) =>
-            messageId
-              ? { ...m, isPinned: m.id === messageId }
-              : { ...m, isPinned: false }
-          ),
+          [chatId]: msgs.map((m) => ({ ...m, isPinned: ids.includes(m.id) })),
         },
       };
     });

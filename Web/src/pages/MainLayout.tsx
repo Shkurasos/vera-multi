@@ -16,8 +16,10 @@ import { useActiveWallpaperSpec, isLightColor } from '../hooks/useActiveWallpape
 // Реальные высоты плеера — синхронизированы с MusicPlayer.tsx
 const PLAYER_EXPANDED = 60;
 const PLAYER_COLLAPSED = 32;
+const PLAYER_SIDE_MIN = 280;
+const PLAYER_SIDE_COLLAPSED = 44;
 
-export default function MainLayout() {
+export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTMLDivElement | null) => void }) {
   const { loadChats } = useChatStore();
   const { theme } = useThemeStore();
   const { currentTrack, playerCollapsed } = useMusicStore();
@@ -63,13 +65,26 @@ export default function MainLayout() {
   // Полноэкранные обои (категория «wallpaper» магазина / кастомные авторов).
   const wallpaperSpec = useActiveWallpaperSpec();
 
-  // Позиция плеера: снизу → padding-bottom, сверху → padding-top
+  // Позиция плеера: снизу/сверху занимают вертикальное место, боковые режимы
+  // резервируют место внутри основной области ниже.
   let bottomPad = '0px';
   let topPad = '0px';
+  const sidePlayer = !isMobile && layout.playerPos === 'left';
+  const effectiveVerticalPos = isMobile && (layout.playerPos === 'left' || layout.playerPos === 'right')
+    ? 'bottom'
+    : layout.playerPos;
+  const maxSidePlayerWidth = Math.max(PLAYER_SIDE_MIN, Math.floor(window.innerWidth / 2));
+  const sidePlayerWidth = Math.min(
+    Math.max(Number(layout.playerWidth) || 300, PLAYER_SIDE_MIN),
+    maxSidePlayerWidth,
+  );
+  const sidePlayerPad = currentTrack && sidePlayer
+    ? `${playerCollapsed ? PLAYER_SIDE_COLLAPSED : sidePlayerWidth}px`
+    : '0px';
   if (currentTrack) {
     const size = playerCollapsed ? PLAYER_COLLAPSED : PLAYER_EXPANDED;
-    if (layout.playerPos === 'top') topPad = `${size}px`;
-    else bottomPad = `calc(${bottomPad} + ${size}px)`;
+    if (effectiveVerticalPos === 'top') topPad = `${size}px`;
+    else if (effectiveVerticalPos === 'bottom') bottomPad = `${size}px`;
   }
 
   const bg = {
@@ -90,6 +105,9 @@ export default function MainLayout() {
     `,
     pt: topPad,
     pb: bottomPad,
+    ...(sidePlayer ? (layout.playerPos === 'left'
+      ? { pl: sidePlayerPad }
+      : { pr: sidePlayerPad }) : {}),
     boxSizing: 'border-box',
     transition: 'padding 160ms ease, background 800ms cubic-bezier(0.22, 1, 0.36, 1), color 800ms cubic-bezier(0.22, 1, 0.36, 1)',
     position: 'relative',
@@ -126,7 +144,7 @@ export default function MainLayout() {
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0, height: '100%', position: 'relative', zIndex: 1 }}>
           <Box sx={{ flex: 1, overflow: 'hidden', minHeight: 0, height: '100%' }}>
             <Routes>
-              <Route path="/chat/:id" element={<ChatWindow />} />
+              <Route path="/chat/:id" element={<ChatWindow onPlayerHost={onPlayerHost} />} />
               <Route path="/botfather" element={<BotFatherPage />} />
               <Route path="/admin" element={<AdminToolsPage />} />
             </Routes>
@@ -159,7 +177,7 @@ export default function MainLayout() {
       }}>
         <Routes>
           <Route path="/" element={<WelcomeScreen />} />
-          <Route path="/chat/:id" element={<ChatWindow />} />
+          <Route path="/chat/:id" element={<ChatWindow onPlayerHost={onPlayerHost} />} />
           <Route path="/botfather" element={<BotFatherPage />} />
           <Route path="/admin" element={<AdminToolsPage />} />
         </Routes>

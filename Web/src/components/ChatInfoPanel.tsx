@@ -12,6 +12,7 @@ import { Chat, User, Message, MessageAttachment } from '../types';
 import { useAuthStore } from '../store/authStore';
 import { useChatStore } from '../store/chatStore';
 import { useThemeStore } from '../store/themeStore';
+import { useUserSettingsStore } from '../store/userSettingsStore';
 import { chatsApi, filesApi, usersApi, messagesApi } from '../services/api';
 import { peer, isPeerAvailable } from '../services/peer';
 import { useNavigate } from 'react-router-dom';
@@ -25,18 +26,37 @@ function getInitials(name: string): string {
 }
 
 interface Props {
+  onPlayerHost: (node: HTMLDivElement | null) => void;
   chat: Chat;
   onClose: () => void;
   onViewProfile?: (userId: string) => void;
 }
 
-export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
+export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHost }: Props) {
   const { user } = useAuthStore();
   const [channelSkins, setChannelSkins] = useState<{ chatId: string; ids: string[] } | null>(null);
   const [skinError, setSkinError] = useState('');
   const { loadChats, updateChatList, onlineUsers, chats, messages } = useChatStore();
   const { theme } = useThemeStore();
   const navigate = useNavigate();
+  const savedWidth = useUserSettingsStore(s => s.layout.chatInfoWidth);
+  const setLayout = useUserSettingsStore(s => s.setLayout);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ x: number; width: number } | null>(null);
+  const [maxWidth, setMaxWidth] = useState(600);
+  const [resizing, setResizing] = useState(false);
+  const panelWidth = Math.min(maxWidth, Math.max(300, Number(savedWidth) || 300));
+
+  useEffect(() => {
+    const parent = panelRef.current?.parentElement;
+    if (!parent) return;
+    const observer = new ResizeObserver(() => {
+      setMaxWidth(Math.max(300, Math.floor(parent.clientWidth * 0.6)));
+    });
+    observer.observe(parent);
+    return () => observer.disconnect();
+  }, []);
+
 
   const [editingName, setEditingName] = useState(false);
   const [editingDesc, setEditingDesc] = useState(false);
@@ -114,9 +134,12 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
 
   const mediaItems = useMemo(() => {
     const unique = new Map<string, MessageAttachment>();
-    mediaMessages.forEach((message) => (message.attachments || []).forEach((attachment: MessageAttachment) => {
+    const newestFirst = [...mediaMessages].sort((a, b) =>
+      (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0));
+    newestFirst.forEach((message) => (message.attachments || []).forEach((attachment: MessageAttachment) => {
       if (attachment.fileUrl && attachment.mimeType !== 'application/x-vera-group-invite') {
-        unique.set(attachment.id || `${message.id}:${attachment.fileUrl}`, attachment);
+        const key = attachment.id || `${message.id}:${attachment.fileUrl}`;
+        if (!unique.has(key)) unique.set(key, attachment);
       }
     }));
     return Array.from(unique.values());
@@ -330,18 +353,76 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
   };
 
   return (
-    <Box sx={{
-      width: { xs: '100%', md: 300 },
-      height: { xs: '100dvh', md: '100%' },
+    <Box ref={panelRef} sx={{
+      width: '100%',
+      userSelect: resizing ? 'none' : undefined,
+      height: '100dvh',
       bgcolor: theme.bgHeader,
-      borderLeft: { xs: 'none', md: `1px solid ${theme.border}` },
+      borderLeft: 'none',
       display: 'flex', flexDirection: 'column',
       overflow: 'hidden',
-      position: { xs: 'fixed', md: 'relative' },
-      inset: { xs: 0, md: 'auto' },
-      zIndex: { xs: 1200, md: 'auto' },
-      paddingTop: { xs: 'env(safe-area-inset-top)', md: 0 },
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 1200,
+      paddingTop: 'env(safe-area-inset-top)',
+      '@media (min-width: 701px)': {
+        position: 'relative',
+        width: panelWidth,
+        flexShrink: 0,
+        height: '100%',
+        minHeight: 0,
+        zIndex: 'auto',
+        borderLeft: `1px solid ${theme.border}`,
+        paddingTop: 0,
+      },
     }}>
+      <Box
+        role="separator"
+        aria-label="Ширина информации о чате"
+        aria-orientation="vertical"
+        aria-valuemin={300}
+        aria-valuemax={maxWidth}
+        aria-valuenow={panelWidth}
+        tabIndex={0}
+        onPointerDown={event => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          dragRef.current = { x: event.clientX, width: panelWidth };
+          setResizing(true);
+        }}
+        onPointerMove={event => {
+          const drag = dragRef.current;
+          if (!drag) return;
+          setLayout('chatInfoWidth', Math.min(maxWidth, Math.max(300,
+            Math.round(drag.width + drag.x - event.clientX))));
+        }}
+        onPointerUp={event => {
+          dragRef.current = null;
+          setResizing(false);
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+        }}
+        onPointerCancel={() => { dragRef.current = null; setResizing(false); }}
+        onLostPointerCapture={() => { dragRef.current = null; setResizing(false); }}
+        onKeyDown={event => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+          event.preventDefault();
+          setLayout('chatInfoWidth', Math.min(maxWidth, Math.max(300,
+            panelWidth + (event.key === 'ArrowLeft' ? 20 : -20))));
+        }}
+        sx={{
+          display: 'none',
+          '@media (min-width: 701px)': { display: 'block' },
+          position: 'absolute', left: 0, top: 0, bottom: 0,
+          width: 6, zIndex: 1, cursor: 'col-resize', touchAction: 'none',
+          bgcolor: resizing ? theme.accent + '60' : 'transparent',
+          '&:hover, &:focus-visible': { bgcolor: theme.accent + '60' },
+        }}
+      />
       {/* Header */}
       <Box sx={{
         display: 'flex', alignItems: 'center', px: { xs: 1, md: 2 }, py: { xs: 0.75, md: 1.5 },
@@ -353,7 +434,11 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
         </Typography>
         <IconButton size="small" onClick={onClose}
           sx={{ color: theme.textSec, '&:hover': { color: theme.text } }}>
-          <ChevronRight sx={{ fontSize: 24, transform: { xs: 'rotate(180deg)', md: 'none' } }} />
+          <ChevronRight sx={{
+            fontSize: 24,
+            transform: 'rotate(180deg)',
+            '@media (min-width: 701px)': { transform: 'none' },
+          }} />
         </IconButton>
       </Box>
 
@@ -586,7 +671,17 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
               Здесь пока ничего нет
             </Typography>
           ) : (
-            <Box sx={{ display: mediaTab === 0 ? 'grid' : 'flex', gridTemplateColumns: mediaTab === 0 ? 'repeat(3, minmax(0, 1fr))' : undefined, flexDirection: mediaTab === 0 ? undefined : 'column', gap: 0.75, mt: 0.5 }}>
+            <Box key={`${chat.id}:${mediaTab}`} tabIndex={0} role="region" aria-label="Вложения чата" sx={{
+              display: 'flex', flexWrap: 'nowrap', gap: 0.75, mt: 0.5, pb: 0.75,
+              minWidth: 0, maxWidth: '100%', overflowX: 'auto', overflowY: 'hidden',
+              scrollSnapType: 'x proximity',
+              '& > *': {
+                flex: mediaTab === 0 ? '0 0 88px' : '0 0 min(260px, 100%)',
+                minWidth: 0, boxSizing: 'border-box', scrollSnapAlign: 'start',
+              },
+              '&::-webkit-scrollbar': { height: 6 },
+              '&::-webkit-scrollbar-thumb': { bgcolor: theme.accent + '60', borderRadius: 3 },
+            }}>
               {mediaGroups[mediaTab].map((item) => {
                 const url = resolveMediaUrl(item.fileUrl);
                 const name = item.fileName || 'Вложение';
@@ -596,7 +691,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
                   </Box>;
                 }
                 if (mediaTab === 1) {
-                  return <Box key={item.id} sx={{ bgcolor: theme.bgHover, borderRadius: 1.5, p: 0.75 }}><Box component="video" src={url} controls preload="metadata" sx={{ width: '100%', maxHeight: 150, display: 'block' }} /></Box>;
+                  return <Box key={item.id} sx={{ bgcolor: theme.bgHover, borderRadius: 1.5, p: 0.75 }}><Box component="video" src={url} controls preload="metadata" sx={{ width: '100%', height: 150, objectFit: 'contain', display: 'block' }} /></Box>;
                 }
                 if (mediaTab === 3) {
                   return <Box key={item.id} sx={{ bgcolor: theme.bgHover, borderRadius: 1.5, px: 1, py: 0.75 }}><Typography noWrap sx={{ color: theme.text, fontSize: 12, mb: 0.5 }}>{name}</Typography><Box component="audio" src={url} controls preload="metadata" sx={{ width: '100%', height: 34 }} /></Box>;
@@ -759,6 +854,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile }: Props) {
             </Box>
           </>
         )}
+        <div ref={onPlayerHost} />
       </Box>
 
       <Menu open={!!memberMenu && !!selectedMember} onClose={() => setMemberMenu(null)}

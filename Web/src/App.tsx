@@ -103,6 +103,7 @@ export default function App() {
     applyPinnedMessage, setTyping, updateChatList, setUserOnline, setUserOffline, clearOnlineUsers, markMessageRead,
   } = useChatStore();
   const listenersAttached = useRef(false);
+  const [playerHost, setPlayerHost] = useState<HTMLDivElement | null>(null);
   const [settingsOffer, setSettingsOffer] = useState<any | null>(null);
 
   useEffect(() => {
@@ -271,8 +272,8 @@ export default function App() {
         removeMessage(id, chatId);
       });
 
-      socket.on('message:pinned', ({ chatId, messageId, pinnedMessage }: { chatId: string; messageId: string | null; pinnedMessage?: any }) => {
-        applyPinnedMessage(chatId, messageId, pinnedMessage);
+      socket.on('message:pinned', ({ chatId, messageId, pinnedMessage, pinnedMessageIds, pinnedMessages }: { chatId: string; messageId: string | null; pinnedMessage?: any; pinnedMessageIds?: string[]; pinnedMessages?: any[] }) => {
+        applyPinnedMessage(chatId, messageId, pinnedMessage, pinnedMessageIds, pinnedMessages);
       });
 
       // Обновление реакций от сервера
@@ -478,7 +479,7 @@ export default function App() {
         <Route path="/contacts" element={isAuthenticated ? <ContactsPage /> : <Navigate to="/" />} />
         <Route path="/calls" element={isAuthenticated ? <CallLogPage /> : <Navigate to="/" />} />
         <Route path="/admin" element={isAuthenticated && user?.isAdmin ? <AdminToolsPage /> : <Navigate to="/" />} />
-        <Route path="/*" element={isAuthenticated ? <MainLayout /> : (
+        <Route path="/*" element={isAuthenticated ? <MainLayout onPlayerHost={setPlayerHost} /> : (
           <DeviceEntryPage />
         )} />
       </Routes>
@@ -498,7 +499,7 @@ export default function App() {
       />
 
       {/* Плеер рендерится глобально над всеми маршрутами — не размонтируется при навигации */}
-      {isAuthenticated && <MusicPlayer />}
+      {isAuthenticated && <MusicPlayer sideHost={playerHost} />}
 
       {/* Магазин — плашка-оверлей, открывается на любом экране */}
       {isAuthenticated && (

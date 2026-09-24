@@ -222,6 +222,8 @@ export const messagesApi = {
   markRead: (id: string, chatId: string) => api.post(`/messages/${id}/read`, { chatId }),
   pin: (id: string | null, chatId: string) =>
     api.post(`/messages/${id || 'none'}/pin`, { chatId, messageId: id }),
+  unpin: (id: string, chatId: string) =>
+    api.post(`/messages/${id}/unpin`, { chatId, messageId: id }),
   search: (chatId: string, q: string) =>
     api.get(`/messages/${chatId}/search`, { params: { q } }),
   addReaction: (chatId: string, messageId: string, emoji: string) =>

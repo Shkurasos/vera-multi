@@ -4,8 +4,8 @@
  * - Fallback: если сеть недоступна и есть кэш index.html — отдаём его,
  *   чтобы SPA работало оффлайн (данные подгрузятся из IndexedDB-архива).
  */
-const CACHE = 'vera-v3';
-const APP_SHELL = ['./', './index.html', './vera.svg', './manifest.webmanifest'];
+const CACHE = 'vera-v5';
+const APP_SHELL = ['./', './index.html', './vera.svg', './vera-icon.png', './favicon.ico', './icons/icon-192.png', './icons/icon-512.png', './manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

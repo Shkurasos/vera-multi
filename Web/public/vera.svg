@@ -1,18 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-  <rect x="2" y="2" width="60" height="60" rx="12" fill="#EDEDED"/>
-  <g fill="#252525">
-    <path d="M12 18 L52 18 L32 52 Z"/>
-    <circle cx="34" cy="28" r="14" fill="#EDEDED"/>
-    <circle cx="34" cy="28" r="14" fill="none" stroke="#252525" stroke-width="3"/>
-  </g>
-  <g fill="#252525">
-    <path d="M22 24 h20 l-2 4 h-16 z"/>
-    <rect x="24" y="30" width="16" height="3.6" rx="1.8"/>
-    <rect x="26" y="36" width="10" height="3.6" rx="1.8"/>
-  </g>
-  <g stroke="#EDEDED" stroke-width="2.2" stroke-linecap="round" fill="none">
-    <line x1="22" y1="26" x2="27" y2="26"/>
-    <line x1="24" y1="32" x2="29" y2="32"/>
-    <line x1="26" y1="38" x2="30" y2="38"/>
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect x="2" y="2" width="60" height="60" rx="12" fill="#EFEFEF"/><g fill="#2B2B2B"><polygon points="6,9 39,9 21,31 45,40 34,58"/><polygon points="47,9 60.5,9 52,29"/></g></svg>

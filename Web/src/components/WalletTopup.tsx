@@ -40,7 +40,7 @@ export default function WalletTopup() {
     </Box>
     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', sm: 'minmax(0, 200px) minmax(0, 1fr)' }, alignItems: 'start', gap: 1.5 }}>
     <TextField size="small" type="number" label="Сумма, ₽" value={rub} disabled={pending || !!order} onChange={e => setRub(e.target.value)} inputProps={{ min: 25, max: 25000, step: 1 }} />
-    {!order && <Button sx={{ minHeight: 40, textTransform: 'none', width: { xs: '100%', sm: 'auto' }, justifySelf: { sm: 'start' } }} disabled={!valid || pending} onClick={() => void create()}>Пополнить на {valid ? Number(rub) * 2 : '—'} ВП</Button>}
+    {!order && <Button sx={{ minHeight: 40, textTransform: 'none', width: { xs: '100%', sm: 'auto' }, justifySelf: { sm: 'start' } }} disabled={!valid || pending} onClick={() => void create()}>Пополнить на {valid ? `${Number(rub) * 2} ВП` : '—'}</Button>}
     </Box>
     {order && <Box component="form" action="https://yoomoney.ru/quickpay/confirm" method="POST" target="_blank" rel="noopener noreferrer" sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, '& .MuiButton-root': { minHeight: 40, textTransform: 'none', width: { xs: '100%', sm: 'auto' } } }}>
       {Object.entries(order.fields).map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}

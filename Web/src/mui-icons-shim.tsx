@@ -215,6 +215,10 @@ import _vKeyboardArrowDown from '@mui/icons-material/KeyboardArrowDown';
 import _vKeyboardArrowDownOutlined from '@mui/icons-material/KeyboardArrowDownOutlined';
 import _vKeyboardArrowDownRounded from '@mui/icons-material/KeyboardArrowDownRounded';
 import _vKeyboardArrowDownSharp from '@mui/icons-material/KeyboardArrowDownSharp';
+import _vKeyboardArrowUp from '@mui/icons-material/KeyboardArrowUp';
+import _vKeyboardArrowUpOutlined from '@mui/icons-material/KeyboardArrowUpOutlined';
+import _vKeyboardArrowUpRounded from '@mui/icons-material/KeyboardArrowUpRounded';
+import _vKeyboardArrowUpSharp from '@mui/icons-material/KeyboardArrowUpSharp';
 import _vLanguage from '@mui/icons-material/Language';
 import _vLanguageOutlined from '@mui/icons-material/LanguageOutlined';
 import _vLanguageRounded from '@mui/icons-material/LanguageRounded';
@@ -538,6 +542,7 @@ const MAP: Record<string, Record<string, React.ComponentType<SvgIconProps>>> = {
   Info: { filled: _vInfo, outlined: _vInfoOutlined, rounded: _vInfoRounded, sharp: _vInfoSharp },
   Inventory2: { filled: _vInventory2, outlined: _vInventory2Outlined, rounded: _vInventory2Rounded, sharp: _vInventory2Sharp },
   KeyboardArrowDown: { filled: _vKeyboardArrowDown, outlined: _vKeyboardArrowDownOutlined, rounded: _vKeyboardArrowDownRounded, sharp: _vKeyboardArrowDownSharp },
+  KeyboardArrowUp: { filled: _vKeyboardArrowUp, outlined: _vKeyboardArrowUpOutlined, rounded: _vKeyboardArrowUpRounded, sharp: _vKeyboardArrowUpSharp },
   Language: { filled: _vLanguage, outlined: _vLanguageOutlined, rounded: _vLanguageRounded, sharp: _vLanguageSharp },
   LibraryMusic: { filled: _vLibraryMusic, outlined: _vLibraryMusicOutlined, rounded: _vLibraryMusicRounded, sharp: _vLibraryMusicSharp },
   Link: { filled: _vLink, outlined: _vLinkOutlined, rounded: _vLinkRounded, sharp: _vLinkSharp },
@@ -674,6 +679,7 @@ export const Info = make('Info');
 export const InfoOutlined = make('Info');
 export const Inventory2 = make('Inventory2');
 export const KeyboardArrowDown = make('KeyboardArrowDown');
+export const KeyboardArrowUp = make('KeyboardArrowUp');
 export const Language = make('Language');
 export const LibraryMusic = make('LibraryMusic');
 export const Link = make('Link');
