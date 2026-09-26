@@ -18,6 +18,8 @@ import { useUserSettingsStore } from '../store/userSettingsStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { useEquipmentStore } from '../store/equipmentStore';
 import { useCustomEquipStore } from '../store/customEquipStore';
+import { useChatSkinStore } from '../store/chatSkinStore';
+import type { ChatSkinSlot, ChatSkinOverride } from '../store/chatSkinStore';
 import { specToStyle, specAnimationClass } from '../utils/customStyle';
 import { buildPlaqueSx, buildShopRingSx } from '../utils/rarityStyles';
 import { skinColors } from '../utils/skinColors';
@@ -71,13 +73,16 @@ const REACTION_EMOJIS = ['👍', '❤️', '🔥', '😂', '😮', '😢', '😡
 
 // Превращает относительный /uploads/... URL в абсолютный, чтобы фото грузилось
 // даже когда клиент открыт через туннель (ngrok / cloudflare / production).
+// SEC: значение может прийти из чужого сообщения — в href/src пропускаем только
+// http(s)/blob, data-медиа и относительные пути; javascript:/data:text/html → ''.
 function resolveFileUrl(url?: string): string {
   if (!url) return '';
-  if (/^(https?:|data:|blob:)/i.test(url)) return url;
-  if (url.startsWith('/')) {
-    return window.location.origin + url;
-  }
-  return url;
+  const value = String(url).trim();
+  if (/^https?:\/\//i.test(value)) return value;
+  if (/^blob:/i.test(value)) return value;
+  if (/^data:(?:image|audio|video)\//i.test(value)) return value;
+  if (value.startsWith('/')) return window.location.origin + value;
+  return '';
 }
 
 function formatTime(dateStr: string): string {
@@ -261,7 +266,7 @@ function ImageViewer({ src, border }: { src: string; border: string }) {
         overflow: 'hidden', borderRadius: 2,
         border: `1px solid ${border}`,
       }}>
-        <Box component="img" src={src} sx={{
+        <Box component="img" src={src} loading="lazy" decoding="async" sx={{
           width: '100%', height: 'auto', maxHeight: 420,
           objectFit: 'contain', display: 'block',
         }} />
@@ -424,18 +429,29 @@ function MessageBubble({
   isGroupStart = true,
   isGroupEnd = true,
 }: Props) {
-  const { user } = useAuthStore();
+  const user = useAuthStore((s) => s.user);
   const groupChat = useChatStore(s => s.chats.find(c => c.id === message.chatId));
   const channelPost = groupChat?.type === 'channel' && !message.replyToId;
   const canEdit = isOwn || hasGroupRight(groupChat?.members.find(m => m.userId === user?.id), 'editMessages');
   const canDelete = isOwn || hasGroupRight(groupChat?.members.find(m => m.userId === user?.id), 'deleteMessages');
   const senderTitle = groupChat?.members.find(m => m.userId === message.senderId && m.role === 'admin')?.adminTitle;
-  const { theme } = useThemeStore();
-  const { addReaction, pinMessage, unpinMessage, editMessage, deleteMessage, sendMessage, addMessage, updateMessage } = useChatStore();
-  const { fontSize, emojiSize } = useChatSettingsStore();
-  const { getChatFont } = useChatFontStore();
+  // Экшены стора стабильны: подписка только на них не вызывает лишних
+  // перерисовок при каждом изменении сообщений/печати/присутствия.
+  const addReaction = useChatStore((s) => s.addReaction);
+  const pinMessage = useChatStore((s) => s.pinMessage);
+  const unpinMessage = useChatStore((s) => s.unpinMessage);
+  const editMessage = useChatStore((s) => s.editMessage);
+  const deleteMessage = useChatStore((s) => s.deleteMessage);
+  const sendMessage = useChatStore((s) => s.sendMessage);
+  const addMessage = useChatStore((s) => s.addMessage);
+  const updateMessage = useChatStore((s) => s.updateMessage);
+  const theme = useThemeStore((s) => s.theme);
+  const fontSize = useChatSettingsStore((s) => s.fontSize);
+  const emojiSize = useChatSettingsStore((s) => s.emojiSize);
+  // Шрифт конкретного чата: при смене перерисовываются только пузыри этого чата.
+  const chatFont = useChatFontStore((s) => s.perChatFonts[message.chatId]);
   const globalFontFamily = useUserSettingsStore((s) => s.globalFontFamily);
-  const fontFamily = getChatFont(message.chatId) || globalFontFamily;
+  const fontFamily = chatFont || globalFontFamily;
 
   // На какой стороне показывать сообщение.
   // auto — как обычно (свои справа, чужие слева); left/right — все с одной стороны.
@@ -447,6 +463,14 @@ function MessageBubble({
   const shopActiveSelfCard = useShopStore((s) => s.activeSelfCard);
   const ringItem = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === shopActiveRing);
   const shopActiveBubble = useShopStore((s) => s.activeBubble);
+
+  // «Мои скины» этого чата (инфопанель): переопределяют глобальные скины
+  // ТОЛЬКО для моих собственных сообщений. Ключа нет — как в профиле,
+  // '' — без скина, id — конкретный свой скин.
+  const chatSkinOverride = useChatSkinStore((s) => (message.chatId ? s.overrides[message.chatId] : undefined));
+  const ownOverrideSet = (slot: ChatSkinSlot) => !!chatSkinOverride && slot in chatSkinOverride;
+  const ownSkinId = (slot: ChatSkinSlot, globalId: string) =>
+    ownOverrideSet(slot) ? (chatSkinOverride![slot] as string) : globalId;
 
   // Кастомные предметы от авторов (перебивают выбор из фиксированного каталога).
   const customProfileSpec = useCustomEquipStore((s) => s.equipped.profile ? s.items[s.equipped.profile]?.spec : undefined);
@@ -508,9 +532,21 @@ function MessageBubble({
   useEffect(() => {
     if (!channelPost && !isOwn && message.senderId) void useEquipmentStore.getState().refresh(message.senderId);
   }, [isOwn, message.senderId, message.chatId]);
-  const sender = freshSender && !channelPost && !isOwn && equipment ? { ...freshSender, ...equipment } : freshSender;
-  const selfCardItem = SHOP_CATALOG.find(i => i.applyKey === 'selfCard' && i.id === (isOwn ? shopActiveSelfCard : sender?.activeSelfCard));
-  const bubbleItem = SHOP_CATALOG.find(i => i.applyKey === 'bubbleStyle' && i.id === (isOwn ? shopActiveBubble : sender?.activeBubble));
+  // «Мои скины» отправителя в этом чате (настраиваются им в инфопанели):
+  // переопределяют глобальные скины на ЕГО сообщениях. '' — без скина,
+  // ключа нет — как в профиле.
+  const senderChatSkins = !isOwn && !channelPost
+    ? ((activeChatMembers?.find((mm: any) => mm.userId === message.senderId) as any)?.skins as ChatSkinOverride | undefined)
+    : undefined;
+  const baseSender = freshSender && !channelPost && !isOwn && equipment ? { ...freshSender, ...equipment } : freshSender;
+  const sender = baseSender && senderChatSkins ? {
+    ...baseSender,
+    activeRing: 'ring' in senderChatSkins ? senderChatSkins.ring : (baseSender as any).activeRing,
+    activeSelfCard: 'selfcard' in senderChatSkins ? senderChatSkins.selfcard : (baseSender as any).activeSelfCard,
+    activeBubble: 'bubble' in senderChatSkins ? senderChatSkins.bubble : (baseSender as any).activeBubble,
+  } : baseSender;
+  const selfCardItem = SHOP_CATALOG.find(i => i.applyKey === 'selfCard' && i.id === (isOwn ? ownSkinId('selfcard', shopActiveSelfCard) : sender?.activeSelfCard));
+  const bubbleItem = SHOP_CATALOG.find(i => i.applyKey === 'bubbleStyle' && i.id === (isOwn ? ownSkinId('bubble', shopActiveBubble) : sender?.activeBubble));
   const senderName = sender ? [sender.firstName, sender.lastName].filter(Boolean).join(' ') || sender.username : 'Бот';
   // Добавляем cache-busting параметр по themeVersion, чтобы браузер перечитал
   // картинку аватара после смены (иначе кэш держит старую).
@@ -632,7 +668,7 @@ function MessageBubble({
   }
   const equippedBubbleSx = {
     ...shopBubbleSx,
-    ...(isOwn && customBubbleSpec ? specToStyle(customBubbleSpec) : {}),
+    ...(isOwn && customBubbleSpec && !ownOverrideSet('bubble') ? specToStyle(customBubbleSpec) : {}),
   };
   // ── Цвет времени и «(изменено)» ──────────────────────────────────────
   // Приоритет: настройка темы (персональной темы чата, затем глобальной).
@@ -645,9 +681,9 @@ function MessageBubble({
   // ── Обводка аватара из магазина ──────────────────────────────────────
   // Обводка аватара: для своих сообщений — своя покупка; для чужих — обводка ОТПРАВИТЕЛЯ,
   // переданная сервером (sender.activeRing). Так обводка привязана к аккаунту покупателя.
-  const ownRingId = useShopStore((s) => s.activeRing);
+  const ownRingId = ownSkinId('ring', shopActiveRing);
   const ringIdForAvatar = isOwn ? ownRingId : (sender?.activeRing || '');
-  const ringItemForAvatar = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === (isOwn ? ownRingId : (sender?.activeRing || '')));
+  const ringItemForAvatar = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === ringIdForAvatar);
   const ringValForAvatar = ringItemForAvatar?.value as any;
   const avatarSx: Record<string, any> = {
     width: 34, height: 34, cursor: 'pointer', flexShrink: 0,
@@ -659,8 +695,9 @@ function MessageBubble({
     // Единый стиль обводки из магазина (с анимациями для gradient/glow/pulse/aurora).
     Object.assign(avatarSx, skinColors(buildShopRingSx(ringValForAvatar, accent, false, 1), ringItemForAvatar, accent, isOwn && colorModes[ringItemForAvatar!.id] === 'theme'));
   }
-  // Кастомная обводка (spec от авторов) — только для собственной аватарки.
-  if (isOwn && customProfileSpec) {
+  // Кастомная обводка (spec от авторов) — только для собственной аватарки
+  // и только если в этом чате не выбран явный свой скин.
+  if (isOwn && customProfileSpec && !ownOverrideSet('ring')) {
     const st = specToStyle(customProfileSpec);
     avatarSx.border = st.border || avatarSx.border;
     avatarSx.background = st.background;
@@ -695,9 +732,9 @@ function MessageBubble({
   }
   Object.assign(selfPlaqueSx, skinColors(selfPlaqueSx, selfCardItem, accent, !!selfCardItem && colorModes[selfCardItem.id] === 'theme'));
   if (selfVal?.pack) Object.assign(selfPlaqueSx, selfcardSkin(selfCardItem!, SHOP_CATALOG, accent, colorModes[selfCardItem!.id] === 'theme'));
-  // Кастомная плашка от авторов перебивает.
+  // Кастомная плашка от авторов перебивает, если в чате не выбран свой скин.
   let selfPlaqueClass = '';
-  if (isOwn && customSelfcardSpec) {
+  if (isOwn && customSelfcardSpec && !ownOverrideSet('selfcard')) {
     Object.assign(selfPlaqueSx, specToStyle(customSelfcardSpec));
     selfPlaqueClass = specAnimationClass(customSelfcardSpec);
   }
@@ -805,7 +842,7 @@ function MessageBubble({
             } else if (e.button === 2) setContextMenu({ x: e.clientX, y: e.clientY });
           }}
           onPointerDown={(e) => { if (e.pointerType === 'mouse') touchOrigin.current = null; }}
-          className={bubbleEnabled && isOwn && customBubbleSpec ? specAnimationClass(customBubbleSpec) : ''}
+          className={bubbleEnabled && isOwn && customBubbleSpec && !ownOverrideSet('bubble') ? specAnimationClass(customBubbleSpec) : ''}
           sx={{
             position: 'relative',
             '@media (pointer: coarse)': {

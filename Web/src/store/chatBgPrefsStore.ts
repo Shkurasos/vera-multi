@@ -29,6 +29,19 @@ export type WallpaperOverride = {
 export type ResolvedWallpaper = { type: 'stock' | 'photo' | 'live'; value: string };
 
 /**
+ * Свои обои пользователя (несколько на чат/глобально).
+ * photo — dataURL в value; live — ключ-скоуп в IndexedDB (chatLiveBgStorage),
+ * что позволяет хранить несколько видео одновременно.
+ */
+export interface UserWallpaperItem {
+  id: string;
+  name: string;
+  type: 'photo' | 'live';
+  value: string;
+  createdAt: number;
+}
+
+/**
  * Глобальные и per-chat настройки обоев/яркости.
  */
 export interface ChatBgPrefsState {
@@ -50,6 +63,10 @@ export interface ChatBgPrefsState {
   userPhotoWallpaper: string | null;
   /** Имя файла своего фото-обоев */
   userPhotoName: string;
+  /** Свои обои (несколько) по scope: chatId или 'global'. */
+  userWallpapers: Record<string, UserWallpaperItem[]>;
+  /** Storage-scope выбранного глобального видео (для нескольких своих видео). */
+  globalLiveValue: string;
   /** Счётчик версий живых обоев — чтобы клиент перезагрузить видео из IndexedDB */
   liveBgStamp: number;
 
@@ -58,6 +75,14 @@ export interface ChatBgPrefsState {
   setUserPhotoWallpaper: (dataUrl: string, name: string) => void;
   clearUserPhotoWallpaper: () => void;
   bumpLiveBg: () => void;
+  /** Добавить свои обои (фото/видео) в список scope. */
+  addUserWallpaper: (scope: string, item: UserWallpaperItem) => void;
+  /** Удалить свои обои из списка scope по id. */
+  removeUserWallpaper: (scope: string, id: string) => void;
+  /** Список своих обоев scope. */
+  getUserWallpapers: (scope: string) => UserWallpaperItem[];
+  /** Выбрать глобальное видео по его storage-scope. */
+  setGlobalLiveWallpaper: (value: string) => void;
   setChatWallpaper: (chatId: string, override: WallpaperOverride) => void;
   clearChatWallpaper: (chatId: string) => void;
   getChatWallpaper: (chatId: string) => ResolvedWallpaper | null;
@@ -77,6 +102,8 @@ export const useChatBgPrefsStore = create<ChatBgPrefsState>()(
       defaultBrightness: 0.65,
       userPhotoWallpaper: null,
       userPhotoName: '',
+      userWallpapers: {},
+      globalLiveValue: 'global',
       liveBgStamp: 0,
 
       setGlobalStockWallpaper: (id) => set({ globalStockWallpaper: id }),
@@ -84,6 +111,15 @@ export const useChatBgPrefsStore = create<ChatBgPrefsState>()(
       setUserPhotoWallpaper: (dataUrl, name) => set({ userPhotoWallpaper: dataUrl, userPhotoName: name }),
       clearUserPhotoWallpaper: () => set({ userPhotoWallpaper: null, userPhotoName: '' }),
       bumpLiveBg: () => set((s) => ({ liveBgStamp: s.liveBgStamp + 1 })),
+
+      addUserWallpaper: (scope, item) => set((s) => ({
+        userWallpapers: { ...s.userWallpapers, [scope]: [...(s.userWallpapers[scope] || []), item] },
+      })),
+      removeUserWallpaper: (scope, id) => set((s) => ({
+        userWallpapers: { ...s.userWallpapers, [scope]: (s.userWallpapers[scope] || []).filter((i) => i.id !== id) },
+      })),
+      getUserWallpapers: (scope) => get().userWallpapers[scope] || [],
+      setGlobalLiveWallpaper: (value) => set({ globalStockWallpaper: CUSTOM_LIVE_WALLPAPER_ID, globalLiveValue: value }),
 
       setChatWallpaper: (chatId, override) => set((s) => ({
         perChatOverrides: { ...s.perChatOverrides, [chatId]: override },
@@ -104,7 +140,7 @@ export const useChatBgPrefsStore = create<ChatBgPrefsState>()(
           return { type: 'photo', value: get().userPhotoWallpaper as string };
         }
         if (globalId === CUSTOM_LIVE_WALLPAPER_ID) {
-          return { type: 'live', value: 'global' };
+          return { type: 'live', value: get().globalLiveValue || 'global' };
         }
         if (!globalId || globalId === 'none') return null;
         return { type: 'stock', value: globalId };
@@ -119,7 +155,29 @@ export const useChatBgPrefsStore = create<ChatBgPrefsState>()(
         return typeof b === 'number' ? b : get().defaultBrightness;
       },
     }),
-    { name: 'vera-chat-bg-prefs', version: 2 }
+    {
+      name: 'vera-chat-bg-prefs',
+      version: 3,
+      // v3: одиночные «свои обои» превращаем в список (несколько обоев на чат).
+      migrate: (persisted: any) => {
+        const next = { ...(persisted || {}) };
+        if (!next.userWallpapers || typeof next.userWallpapers !== 'object') next.userWallpapers = {};
+        if (typeof next.globalLiveValue !== 'string') next.globalLiveValue = 'global';
+        if (next.userPhotoWallpaper && !(next.userWallpapers.global || []).length) {
+          next.userWallpapers = {
+            ...next.userWallpapers,
+            global: [{
+              id: 'legacy-photo',
+              name: next.userPhotoName || 'Моё фото',
+              type: 'photo',
+              value: next.userPhotoWallpaper,
+              createdAt: Date.now(),
+            }],
+          };
+        }
+        return next;
+      },
+    }
   )
 );
 

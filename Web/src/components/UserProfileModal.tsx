@@ -10,6 +10,7 @@ import { useAuthStore } from '../store/authStore';
 import { useProfileCustomizationStore } from '../store/profileCustomizationStore';
 import ProfileCommentsWall from './ProfileCommentsWall';
 import ActivityLine from './ActivityLine';
+import ProfilePinnedPlaylistBar from './ProfilePinnedPlaylistBar';
 import ReportUserDialog from './ReportUserDialog';
 import { SHOP_CATALOG, useShopStore } from '../store/shopStore';
 import { buildShopRingSx } from '../utils/rarityStyles';
@@ -46,13 +47,23 @@ export default function UserProfileModal({ user, open, onClose }: Props) {
   const ownRing = useShopStore(s => s.activeRing);
   const colorModes = useShopStore(s => s.colorModes);
   const [remoteRing, setRemoteRing] = React.useState<{ userId: string; id: string } | null>(null);
+  // Закреплённая музыка чужого профиля: свежие id берём с сервера, чтобы
+  // мини-плеер был виден другим (снапшот из сообщения может быть устаревшим).
+  const [remotePinned, setRemotePinned] = React.useState<{ userId: string; playlistId: string | null; trackId: string | null } | null>(null);
   React.useEffect(() => {
     setRemoteRing(null);
+    setRemotePinned(null);
     if (!open || !user || isMe) return;
     let cancelled = false;
     const userId = user.id;
     usersApi.getById(userId).then(({ data }) => {
-      if (!cancelled) setRemoteRing({ userId, id: data.activeRing || '' });
+      if (cancelled) return;
+      setRemoteRing({ userId, id: data.activeRing || '' });
+      setRemotePinned({
+        userId,
+        playlistId: data.pinnedPlaylistId ?? null,
+        trackId: data.pinnedTrackId ?? null,
+      });
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [open, user?.id, isMe]);
@@ -126,6 +137,15 @@ export default function UserProfileModal({ user, open, onClose }: Props) {
           }} />
         </Stack>
         <ActivityLine userId={user.id} />
+        <ProfilePinnedPlaylistBar
+          ownerId={user.id}
+          pinnedPlaylistId={isMe
+            ? user.pinnedPlaylistId
+            : remotePinned?.userId === user.id ? remotePinned.playlistId : user.pinnedPlaylistId}
+          pinnedTrackId={isMe
+            ? user.pinnedTrackId
+            : remotePinned?.userId === user.id ? remotePinned.trackId : user.pinnedTrackId}
+        />
       </Box>
       <Box sx={{ px: 3, py: 2 }}>
         {custom?.showcase && (

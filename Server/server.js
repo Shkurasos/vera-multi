@@ -123,13 +123,54 @@ if (db.users) {
   db.users.forEach(u => { u.isOnline = false; });
 }
 
-function saveDb() {
+// PERF/DoS: раньше КАЖДЫЙ вызов (включая read-receipt на каждое прочитанное
+// сообщение) синхронно сериализовал и писал всю БД на диск. Теперь записи
+// коалесцируются не чаще SAVE_DEBOUNCE_MS + принудительный сброс на exit/сигналы.
+// Ошибки записи больше не ловятся хендлерами как «откати операцию» — состояние
+// живёт в памяти и допишется таймером; vm-тесты подменяют saveDb сами.
+const SAVE_DEBOUNCE_MS = Number(process.env.DB_SAVE_DEBOUNCE_MS) || 300;
+let saveDbTimer = null;
+let saveDbDirty = false;
+
+function saveDbNow() {
   const temporary = DB_FILE + '.tmp';
   fs.writeFileSync(temporary, JSON.stringify(db, null, 2));
   fs.renameSync(temporary, DB_FILE);
 }
 
+function saveDb() {
+  saveDbDirty = true;
+  if (saveDbTimer) return;
+  saveDbTimer = setTimeout(() => {
+    saveDbTimer = null;
+    if (!saveDbDirty) return;
+    saveDbDirty = false;
+    try { saveDbNow(); } catch (e) { console.error('[db] save failed:', e); }
+  }, SAVE_DEBOUNCE_MS);
+}
+
+function flushDb() {
+  if (saveDbTimer) { clearTimeout(saveDbTimer); saveDbTimer = null; }
+  if (!saveDbDirty) return;
+  saveDbDirty = false;
+  try { saveDbNow(); } catch (e) { console.error('[db] flush failed:', e); }
+}
+
+// setTimeout не срабатывает после выхода из цикла событий — пишем синхронно.
+process.on('exit', () => {
+  if (!saveDbDirty) return;
+  saveDbDirty = false;
+  try { saveDbNow(); } catch {}
+});
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => { flushDb(); process.exit(0); });
+}
+
 function reloadDb() {
+  // Отменяем отложенную запись: pending-сохранение перезаписало бы заново
+  // загруженную с диска БД старым содержимым памяти.
+  if (saveDbTimer) { clearTimeout(saveDbTimer); saveDbTimer = null; }
+  saveDbDirty = false;
   if (fs.existsSync(DB_FILE)) {
     try {
       db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
@@ -1657,12 +1698,25 @@ app.get('/api/sync/stores/:name', authMiddleware, (req, res) => {
 // PUT /api/sync/stores/:name — сохранить/обновить store
 app.put('/api/sync/stores/:name', authMiddleware, (req, res) => {
   const storeName = req.params.name;
+  // SEC: имя — только «безопасный идентификатор», иначе спам-ключи скушают
+  // память/БД (каждый PUT ещё и O(все stores) по JSON.stringify при подсчёте).
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(storeName)) {
+    return res.status(400).json({ message: 'Некорректное имя store' });
+  }
   if (storeName === 'loot') return res.status(403).json({ message: 'Инвентарь изменяется только сервером' });
   const body = req.body?.data;
   const clientId = req.body?.clientId || null;
 
   if (!body || typeof body !== 'object') {
     return res.status(400).json({ message: 'data обязателен и должен быть объектом' });
+  }
+
+  if (!db.userStores) db.userStores = {};
+  if (!db.userStores[req.userId]) db.userStores[req.userId] = {};
+  const existingStores = Object.keys(db.userStores[req.userId]);
+  // SEC: ограничиваем количество store'ов на пользователя (защита от спам-ключей).
+  if (existingStores.length >= 100 && !existingStores.includes(storeName)) {
+    return res.status(413).json({ message: 'Слишком много хранилищ (максимум 100)' });
   }
 
   // Проверка размера этого store
@@ -2644,7 +2698,7 @@ app.get('/api/chats', authMiddleware, (req, res) => {
         role: cm.role || 'member', permissions: cm.permissions, adminTitle: cm.adminTitle, promotedBy: cm.promotedBy,
         joinedAt: cm.joinedAt,
         isMuted: cm.muted || false,
-        user: db.users.find(u => u.id === cm.userId) || null,
+        user: db.users.find(u => u.id === cm.userId) || null, skins: cm.skins,
       }));
     const lastMsg = db.messages
       .filter(msg => msg.chatId === chat.id && (chat.type !== 'channel' || !msg.replyToId))
@@ -2689,7 +2743,7 @@ app.post('/api/chats/direct', authMiddleware, (req, res) => {
     const members = db.chatMembers.filter(m => m.chatId === existing).map(m => ({
       id: m.id, chatId: m.chatId, userId: m.userId, role: m.role || 'member', permissions: m.permissions, adminTitle: m.adminTitle, promotedBy: m.promotedBy,
       joinedAt: m.joinedAt, isMuted: m.muted || false,
-      user: db.users.find(u => u.id === m.userId) || null,
+      user: db.users.find(u => u.id === m.userId) || null, skins: m.skins,
     }));
     return res.json({ ...chat, type: chat.type || 'direct', members });
   }
@@ -2710,7 +2764,7 @@ app.post('/api/chats/direct', authMiddleware, (req, res) => {
   const members = db.chatMembers.filter(m => m.chatId === chat.id).map(m => ({
     id: m.id, chatId: m.chatId, userId: m.userId, role: m.role || 'member', permissions: m.permissions, adminTitle: m.adminTitle, promotedBy: m.promotedBy,
     joinedAt: m.joinedAt, isMuted: false,
-    user: db.users.find(u => u.id === m.userId) || null,
+    user: db.users.find(u => u.id === m.userId) || null, skins: m.skins,
   }));
   res.json({ ...chat, members });
 });
@@ -2739,7 +2793,7 @@ app.post('/api/chats/group', authMiddleware, (req, res) => {
   const members = db.chatMembers.filter(m => m.chatId === chat.id).map(m => ({
     id: m.id, chatId: m.chatId, userId: m.userId, role: m.role, permissions: m.permissions, adminTitle: m.adminTitle, promotedBy: m.promotedBy,
     joinedAt: m.joinedAt,
-    user: db.users.find(u => u.id === m.userId) || null,
+    user: db.users.find(u => u.id === m.userId) || null, skins: m.skins,
   }));
   res.json({ ...chat, members });
 });
@@ -2764,7 +2818,7 @@ app.post('/api/chats/channel', authMiddleware, (req, res) => {
   const members = db.chatMembers.filter(m => m.chatId === chat.id).map(m => ({
     id: m.id, chatId: m.chatId, userId: m.userId, role: m.role || 'owner',
     joinedAt: m.joinedAt, isMuted: false,
-    user: db.users.find(u => u.id === m.userId) || null,
+    user: db.users.find(u => u.id === m.userId) || null, skins: m.skins,
   }));
   res.json({ ...chat, members });
 });
@@ -2824,7 +2878,7 @@ app.get('/api/chats/:id', authMiddleware, (req, res) => {
   const members = db.chatMembers.filter(m => m.chatId === chat.id).map(m => ({
     id: m.id, chatId: m.chatId, userId: m.userId, role: m.role || 'member', permissions: m.permissions, adminTitle: m.adminTitle, promotedBy: m.promotedBy,
     joinedAt: m.joinedAt, isMuted: m.muted || false,
-    user: db.users.find(u => u.id === m.userId) || null,
+    user: db.users.find(u => u.id === m.userId) || null, skins: m.skins,
   }));
   const lastMsg = db.messages
     .filter(msg => msg.chatId === chat.id)
@@ -2887,6 +2941,34 @@ app.get('/api/chats/:id/skins', authMiddleware, (req, res) => {
   res.json([...channelOwnedSkinIds(chat)]);
 });
 
+// PUT /api/chats/:id/my-skins — «мои скины» для моих сообщений в этом чате.
+// Хранятся на участнике чата: { ring, selfcard, bubble } ('' — без скина,
+// ключа нет — как в профиле). Видят все участники: значения приходят в
+// members (skins) и обновляются событием user:equipment с chatId.
+app.put('/api/chats/:id/my-skins', authMiddleware, (req, res) => {
+  const chatId = req.params.id;
+  const member = db.chatMembers.find(m => m.chatId === chatId && m.userId === req.userId);
+  if (!member) return res.status(403).json({ message: 'Нет доступа к чату' });
+  const user = db.users.find(u => u.id === req.userId);
+  if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
+  const owned = accountOwnedSkinIds(user);
+  const next = { ...(member.skins || {}) };
+  for (const slot of ['ring', 'selfcard', 'bubble']) {
+    const value = req.body?.[slot];
+    if (value === undefined) continue;
+    if (value === null) { delete next[slot]; continue; }
+    if (typeof value !== 'string' || (value && !owned.has(value))) {
+      return res.status(400).json({ message: 'Скин недоступен: его нет в вашем инвентаре' });
+    }
+    next[slot] = value;
+  }
+  if (Object.keys(next).length) member.skins = next;
+  else delete member.skins;
+  saveDb();
+  io.to(`chat:${chatId}`).emit('user:equipment', { id: user.id, chatId, skins: member.skins || {} });
+  res.json({ chatId, skins: member.skins || {} });
+});
+
 app.patch('/api/chats/:id', authMiddleware, (req, res) => {
   const chatId = req.params.id;
   const member = db.chatMembers.find(m => m.chatId === chatId && m.userId === req.userId);
@@ -2925,7 +3007,7 @@ app.patch('/api/chats/:id', authMiddleware, (req, res) => {
   const members = db.chatMembers.filter(m => m.chatId === chatId).map(m => ({
     id: m.id, chatId: m.chatId, userId: m.userId, role: m.role, permissions: m.permissions, adminTitle: m.adminTitle, promotedBy: m.promotedBy,
     joinedAt: m.joinedAt,
-    user: db.users.find(u => u.id === m.userId) || null,
+    user: db.users.find(u => u.id === m.userId) || null, skins: m.skins,
   }));
   io.to(`chat:${chatId}`).emit('chat:updated', { ...chat, members });
   res.json({ ...chat, members });
@@ -3110,7 +3192,7 @@ app.post('/api/group-invites/:token/accept', authMiddleware, (req, res) => {
     if (ts) ts.forEach((sid) => io.to(sid).socketsJoin('chat:' + data.groupId));
     const members = db.chatMembers.filter((m) => m.chatId === data.groupId).map((m) => ({
       id: m.id, chatId: m.chatId, userId: m.userId, role: m.role, permissions: m.permissions, adminTitle: m.adminTitle, promotedBy: m.promotedBy, joinedAt: m.joinedAt,
-      isMuted: m.muted || false, user: db.users.find((u) => u.id === m.userId) || null,
+      isMuted: m.muted || false, user: db.users.find((u) => u.id === m.userId) || null, skins: m.skins,
     }));
     io.to('chat:' + data.groupId).emit('chat:updated', { ...group, members });
     io.to('chat:' + data.groupId).emit('message:new', { ...joinMsg, sender: joiner });
@@ -3318,15 +3400,35 @@ app.get('/api/messages/:chatId', authMiddleware, (req, res) => {
   const isMember = db.chatMembers.find(m => m.chatId === req.params.chatId && m.userId === req.userId);
   if (!isMember) return res.status(403).json({ message: 'Нет доступа' });
 
-  const { limit = 50, before } = req.query;
-  let msgs = db.messages.filter(m => m.chatId === req.params.chatId);
-  if (db.chats.some(c => c.id === req.params.chatId && c.type === 'channel')) msgs = msgs.filter(m => !m.replyToId);
-  if (before) msgs = msgs.filter(m => new Date(m.createdAt) < new Date(before));
-  msgs = msgs.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)).slice(-parseInt(limit));
+  // SEC/PERF: limit ограничен [1..500] — иначе `?limit=999999` (или нечисловой
+  // ввод, превращающий slice в «всё сразу») отдавал бы всю историю одним запросом.
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 500);
+  const beforeRaw = req.query.before;
+  const beforeMs = beforeRaw ? Date.parse(beforeRaw) : NaN;
+  const chat = db.chats.find(c => c.id === req.params.chatId);
+  const isChannel = chat?.type === 'channel';
+
+  // PERF: один проход с предрасчётом меток времени (вместо Date-объектов в
+  // компараторе сортировки), кэш sender'ов и ОДИН вызов pinnedMessageIds на
+  // запрос: раньше он выполнялся для каждого сообщения и сканировал всю
+  // историю чата — O(n²·pins) на каждый GET.
+  const usersById = new Map(db.users.map(u => [u.id, u]));
+  const senderLookup = { chat, usersById };
+  const stamped = [];
+  for (const m of db.messages) {
+    if (m.chatId !== req.params.chatId) continue;
+    if (isChannel && m.replyToId) continue;
+    const ts = Date.parse(m.createdAt) || 0;
+    if (!Number.isNaN(beforeMs) && ts >= beforeMs) continue;
+    stamped.push([m, ts]);
+  }
+  stamped.sort((a, b) => a[1] - b[1]);
+  const page = stamped.slice(-limit);
+  const pinnedIds = chat ? new Set(pinnedMessageIds(chat)) : new Set();
 
   // Normalize fields for client (text→content, url→fileUrl)
-  const result = msgs.map(m => {
-    const sender = messageSender(m);
+  const result = page.map(([m]) => {
+    const sender = messageSender(m, senderLookup);
     const attachments = (m.attachments || []).map(a => ({
       id: a.id || m.id,
       fileUrl: a.url || a.fileUrl || '',
@@ -3341,10 +3443,7 @@ app.get('/api/messages/:chatId', authMiddleware, (req, res) => {
       attachments,
       sender,
       isEdited: !!(m.editedAt),
-      isPinned: (() => {
-        const chat = db.chats.find(c => c.id === m.chatId);
-        return chat ? pinnedMessageIds(chat).includes(m.id) : false;
-      })(),
+      isPinned: pinnedIds.has(m.id),
       isDeleted: false,
       type: m.type || (attachments.length > 0 ? 'document' : 'text'),
     };
@@ -3353,13 +3452,53 @@ app.get('/api/messages/:chatId', authMiddleware, (req, res) => {
 });
 
 // Общий обработчик отправки сообщения
-function messageSender(message) {
-  const chat = db.chats.find(c => c.id === message.chatId);
+// lookup (необязательный) — { chat, usersById } для пакетной нормализации:
+// без него это O(chats+users) на каждое сообщение в большом списке.
+function messageSender(message, lookup) {
+  const chat = lookup ? lookup.chat : db.chats.find(c => c.id === message.chatId);
   if (chat?.type === 'channel' && !message.replyToId) {
     return { id: chat.id, firstName: chat.name, username: chat.name, avatarUrl: chat.avatarUrl,
       activeRing: chat.activeRing, activeSelfCard: chat.activeSelfCard, activeBubble: chat.activeBubble };
   }
-  return db.users.find(u => u.id === message.senderId) || null;
+  const user = lookup
+    ? lookup.usersById.get(message.senderId)
+    : db.users.find(u => u.id === message.senderId);
+  return user || null;
+}
+
+// SEC: вложения от клиента — только безопасные относительные пути на нашем же
+// origin или data-URL медиа. Иначе в fileUrl мог попасть javascript:/data:text/html —
+// stored XSS через клик по «Вложению» в чужом сообщении (//evil.com и .. тоже
+// не пропускаем).
+const SAFE_RELATIVE_URL = /^\/(?!\/)[A-Za-z0-9._\-/]{1,200}$/;
+const SAFE_MEDIA_DATA_URL = /^data:(?:image\/(?:png|jpe?g|gif|webp)|audio\/[a-z0-9.+-]{1,40}|video\/[a-z0-9.+-]{1,40});base64,/i;
+const SAFE_ATTACH_MIME = /^(?:image\/(?:png|jpe?g|gif|webp)|audio\/[a-z0-9.+-]{1,40}|video\/[a-z0-9.+-]{1,40}|application\/(?:pdf|zip|x-7z-compressed|x-rar-compressed|msword|octet-stream|vnd\.[a-z0-9.+-]{1,80})|text\/plain)$/i;
+
+function safeAttachmentUrl(raw) {
+  const url = String(raw || '');
+  if (SAFE_RELATIVE_URL.test(url) && !url.includes('..')) return url;
+  if (url.length <= 6 * 1024 * 1024 && SAFE_MEDIA_DATA_URL.test(url)) {
+    const payload = url.slice(url.indexOf(',') + 1);
+    if (/^[A-Za-z0-9+/=\s]+$/.test(payload)) return url;
+  }
+  return '';
+}
+
+function normalizeClientAttachment(a) {
+  const fileUrl = safeAttachmentUrl(a?.url || a?.fileUrl);
+  if (!fileUrl) return null;
+  const mime = String(a?.mimeType || '').toLowerCase().slice(0, 120);
+  const fileName = String(a?.originalName || a?.fileName || '')
+    .replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 200);
+  const sizeRaw = Number(a?.size ?? a?.fileSize);
+  return {
+    id: String(a?.id || uuidv4()).slice(0, 64),
+    fileUrl,
+    fileName,
+    fileSize: Number.isFinite(sizeRaw) && sizeRaw >= 0 ? Math.min(sizeRaw, 200 * 1024 * 1024) : 0,
+    mimeType: SAFE_ATTACH_MIME.test(mime) ? mime : '',
+    data: null,
+  };
 }
 
 function handleSendMessage(chatId, userId, body, res) {
@@ -3439,14 +3578,25 @@ function handleSendMessage(chatId, userId, body, res) {
     : attachments;
   const safeAttachments = Array.isArray(attachmentsToStore) ? attachmentsToStore.slice(0, 20) : [];
 
-  const normAttachments = safeAttachments.map(a => ({
-    id: a.id || uuidv4(),
-    fileUrl: a.url || a.fileUrl || '',
-    fileName: a.originalName || a.fileName || '',
-    fileSize: a.size || a.fileSize || 0,
-    mimeType: a.mimeType || '',
-    data: a.data || null,
-  }));
+  // Клиентские вложения проходят строгую валидацию URL/MIME/размеров;
+  // пересылка берёт уже проверенные данные из исходного сообщения.
+  const normAttachments = (forwardedMessage
+    ? safeAttachments.map(a => ({
+        id: a.id || uuidv4(),
+        fileUrl: a.url || a.fileUrl || '',
+        fileName: a.originalName || a.fileName || '',
+        fileSize: a.size || a.fileSize || 0,
+        mimeType: a.mimeType || '',
+        data: a.data || null,
+      }))
+    : safeAttachments.map(normalizeClientAttachment).filter(Boolean)
+  );
+
+  // Если после валидации не осталось ни текста, ни вложений — сообщение пустое
+  // (например, все URL вложений оказались опасными и были отброшены).
+  if (!msgContent && normAttachments.length === 0 && !poll) {
+    return res.status(400).json({ message: 'Пустое сообщение' });
+  }
 
   const message = {
     id: uuidv4(),
@@ -4609,14 +4759,12 @@ io.on('connection', (socket) => {
     if (!msgContent && safeAttachments.length === 0) {
       return callback && callback({ error: 'Пустое сообщение' });
     }
-    const normAttachments = safeAttachments.map(a => ({
-      id: a.id || uuidv4(),
-      fileUrl: a.url || a.fileUrl || '',
-      fileName: a.originalName || a.fileName || '',
-      fileSize: a.size || a.fileSize || 0,
-      mimeType: a.mimeType || '',
-      data: a.data || null,
-    }));
+    // SEC: этот сокет-путь не идёт через handleSendMessage, поэтому применяем
+    // тот же валидатор: javascript:/data:text/html в fileUrl → stored XSS.
+    const normAttachments = safeAttachments.map(normalizeClientAttachment).filter(Boolean);
+    if (!msgContent && normAttachments.length === 0) {
+      return callback && callback({ error: 'Пустое сообщение' });
+    }
 
     const message = {
       id: uuidv4(),

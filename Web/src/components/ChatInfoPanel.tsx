@@ -18,7 +18,16 @@ import { peer, isPeerAvailable } from '../services/peer';
 import { useNavigate } from 'react-router-dom';
 import { ChatMember } from '../types';
 import { GROUP_RIGHTS, GroupRight, hasGroupRight } from '../services/groupPermissions';
-import { SHOP_CATALOG } from '../store/shopStore';
+import { SHOP_CATALOG, useShopStore } from '../store/shopStore';
+import { useChatSkinStore } from '../store/chatSkinStore';
+import type { ChatSkinSlot } from '../store/chatSkinStore';
+
+/** Слоты «моих скинов» для инфопанели: store-ключ, applyKey каталога, подпись. */
+const CHAT_SKIN_SLOTS = [
+  ['ring', 'avatarRing', 'Обводка аватара'],
+  ['selfcard', 'selfCard', 'Плашка моих сообщений'],
+  ['bubble', 'bubbleStyle', 'Пузырь моих сообщений'],
+] as const satisfies ReadonlyArray<readonly [ChatSkinSlot, string, string]>;
 
 function getInitials(name: string): string {
   if (!name) return '?';
@@ -33,11 +42,21 @@ interface Props {
 }
 
 export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHost }: Props) {
-  const { user } = useAuthStore();
+  const user = useAuthStore((s) => s.user);
   const [channelSkins, setChannelSkins] = useState<{ chatId: string; ids: string[] } | null>(null);
   const [skinError, setSkinError] = useState('');
-  const { loadChats, updateChatList, onlineUsers, chats, messages } = useChatStore();
-  const { theme } = useThemeStore();
+  const [mySkinError, setMySkinError] = useState('');
+  const loadChats = useChatStore((s) => s.loadChats);
+  const updateChatList = useChatStore((s) => s.updateChatList);
+  const onlineUsers = useChatStore((s) => s.onlineUsers);
+  const chats = useChatStore((s) => s.chats);
+  const messages = useChatStore((s) => s.messages);
+  const theme = useThemeStore((s) => s.theme);
+  // «Мои скины» чата: применяются только к моим сообщениям (см. MessageBubble).
+  const chatSkins = useChatSkinStore((s) => s.overrides[chat.id]);
+  const setChatSkin = useChatSkinStore((s) => s.setChatSkin);
+  const clearChatSkins = useChatSkinStore((s) => s.clearChatSkins);
+  const ownedSkins = useShopStore((s) => s.owned);
   const navigate = useNavigate();
   const savedWidth = useUserSettingsStore(s => s.layout.chatInfoWidth);
   const setLayout = useUserSettingsStore(s => s.setLayout);
@@ -557,6 +576,40 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
           </TextField>)}
           {skinError && <Typography color="error">{skinError}</Typography>}
         </Box>}
+
+        {/* Мои скины — только на мои сообщения в этом чате */}
+        <Box sx={{ p: 2 }}>
+          <Typography fontWeight={600}>Мои скины в этом чате</Typography>
+          <Typography variant="caption">
+            Применяются только к вашим сообщениям. «Как в профиле» — общий выбор из инвентаря.
+          </Typography>
+          {CHAT_SKIN_SLOTS.map(([slot, applyKey, label]) => {
+            const value = !chatSkins || !(slot in chatSkins) ? 'profile' : chatSkins[slot] === '' ? 'none' : chatSkins[slot];
+            return <TextField key={slot} select fullWidth margin="dense" label={label}
+              value={value}
+              onChange={async e => {
+                const v = e.target.value;
+                const next = v === 'profile' ? undefined : v === 'none' ? '' : v;
+                // Мгновенно применяем у себя и сообщаем серверу, чтобы скины
+                // видели остальные участники (members.skins + user:equipment).
+                setChatSkin(chat.id, slot, next);
+                setMySkinError('');
+                try { await chatsApi.setMySkins(chat.id, { [slot]: next === undefined ? null : next }); }
+                catch (error: any) { setMySkinError(error.response?.data?.message || 'Не удалось сохранить скин для чата'); }
+              }}>
+              <MenuItem value="profile">Как в профиле</MenuItem>
+              <MenuItem value="none">Без скина</MenuItem>
+              {SHOP_CATALOG.filter(i => i.applyKey === applyKey && !i.stock && ownedSkins[i.id]).map(i => <MenuItem key={i.id} value={i.id}>{i.name}</MenuItem>)}
+            </TextField>;
+          })}
+          {!!chatSkins && !!Object.keys(chatSkins).length && (
+            <Button size="small" sx={{ mt: 1, color: theme.textSec }} onClick={() => clearChatSkins(chat.id)}>
+              Сбросить для этого чата
+            </Button>
+          )}
+          {mySkinError && <Typography color="error" sx={{ mt: 1 }}>{mySkinError}</Typography>}
+        </Box>
+
         <Divider sx={{ borderColor: theme.border }} />
 
         {/* Description (groups) */}

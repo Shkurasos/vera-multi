@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { Box, CircularProgress } from '@mui/material';
 import { useAuthStore } from './store/authStore';
@@ -8,15 +8,18 @@ import { useChatSoundStore } from './store/chatSoundStore';
 import { getSocket } from './services/socket';
 import { requestNotificationPermission, showMessageNotification } from './services/notifications';
 import MainLayout from './pages/MainLayout';
-import ProfilePage from './pages/ProfilePage';
-import DevicesPage from './pages/DevicesPage';
-import AcceptLinkPage from './pages/AcceptLinkPage';
+// Код-сплиттинг: страницы профиля/устройств/админки и т.п. подгружаются при
+// навигации — начальный бандл несёт только первый экран (чат/экран входа).
+// DeviceEntryPage остаётся статическим: это первый экран без авторизации.
 import DeviceEntryPage from './pages/DeviceEntryPage';
-import DownloadPage from './pages/DownloadPage';
-import ContactsPage from './pages/ContactsPage';
-import CallLogPage from './pages/CallLogPage';
-import BotFatherPage from './pages/BotFatherPage';
-import AdminToolsPage from './pages/AdminToolsPage';
+const ProfilePage = React.lazy(() => import('./pages/ProfilePage'));
+const DevicesPage = React.lazy(() => import('./pages/DevicesPage'));
+const AcceptLinkPage = React.lazy(() => import('./pages/AcceptLinkPage'));
+const DownloadPage = React.lazy(() => import('./pages/DownloadPage'));
+const ContactsPage = React.lazy(() => import('./pages/ContactsPage'));
+const CallLogPage = React.lazy(() => import('./pages/CallLogPage'));
+const BotFatherPage = React.lazy(() => import('./pages/BotFatherPage'));
+const AdminToolsPage = React.lazy(() => import('./pages/AdminToolsPage'));
 import MusicPlayer from './components/MusicPlayer';
 import MobileBottomNav from './components/MobileBottomNav';
 import CallOverlay from './components/CallOverlay';
@@ -32,7 +35,8 @@ import { useLootStore } from './store/lootStore';
 import { useCustomEquipStore } from './store/customEquipStore';
 import { useChatThemeStore } from './store/chatThemeStore';
 import { useChatBgPrefsStore } from './store/chatBgPrefsStore';
-import { saveLiveBgDataUrl } from './services/chatLiveBgStorage';
+import { saveLiveBg } from './services/chatLiveBgStorage';
+import { savePhotoBg, isPhotoBgKey, startPhotoWallpaperMigration } from './services/chatBgPhotoStorage';
 import ChatSettingsOfferDialog from './components/ChatSettingsOfferDialog';
 import Store, { StoreOpen } from './components/Store';
 import AppLockGate from './components/AppLockGate';
@@ -96,15 +100,33 @@ interface IncomingCallState {
 void ({} as IncomingCallState);
 
 export default function App() {
-  const { checkAuth, isAuthenticated, isLoading, user, isPeerMode } = useAuthStore();
+  const checkAuth = useAuthStore((s) => s.checkAuth);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isLoading = useAuthStore((s) => s.isLoading);
+  const user = useAuthStore((s) => s.user);
+  const isPeerMode = useAuthStore((s) => s.isPeerMode);
   const navigate = useNavigate();
-  const {
-    addMessage, replaceOrAddMessage, updateMessage, removeMessage,
-    applyPinnedMessage, setTyping, updateChatList, setUserOnline, setUserOffline, clearOnlineUsers, markMessageRead,
-  } = useChatStore();
+  // Экшены стора стабильны — подписка только на них не вызывает лишних перерисовок App.
+  const addMessage = useChatStore((s) => s.addMessage);
+  const replaceOrAddMessage = useChatStore((s) => s.replaceOrAddMessage);
+  const updateMessage = useChatStore((s) => s.updateMessage);
+  const removeMessage = useChatStore((s) => s.removeMessage);
+  const applyPinnedMessage = useChatStore((s) => s.applyPinnedMessage);
+  const setTyping = useChatStore((s) => s.setTyping);
+  const updateChatList = useChatStore((s) => s.updateChatList);
+  const setUserOnline = useChatStore((s) => s.setUserOnline);
+  const setUserOffline = useChatStore((s) => s.setUserOffline);
+  const clearOnlineUsers = useChatStore((s) => s.clearOnlineUsers);
+  const markMessageRead = useChatStore((s) => s.markMessageRead);
   const listenersAttached = useRef(false);
   const [playerHost, setPlayerHost] = useState<HTMLDivElement | null>(null);
   const [settingsOffer, setSettingsOffer] = useState<any | null>(null);
+  const [settingsOfferApplying, setSettingsOfferApplying] = useState(false);
+
+  // Переносим старые dataURL-фото-обои из localStorage в IndexedDB (один раз).
+  useEffect(() => {
+    startPhotoWallpaperMigration(useChatBgPrefsStore);
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated || !user?.isAdmin) return;
@@ -394,16 +416,36 @@ export default function App() {
   const appTheme = useThemeStore((s) => s.theme);
   const applySettingsOffer = async () => {
     const offer = settingsOffer;
-    if (!offer) return;
+    // Защита от повторного тапа «Принять»: иначе видео качалось бы параллельно
+    // несколько раз, и телефон вставал колом.
+    if (!offer || settingsOfferApplying) return;
+    setSettingsOfferApplying(true);
     const { chatId, settings, senderId } = offer;
     try {
       if (settings.theme) useChatThemeStore.getState().setChatTheme(chatId, settings.theme);
       else useChatThemeStore.getState().removeChatTheme(chatId);
-      if (settings.wallpaper) useChatBgPrefsStore.getState().setChatWallpaper(chatId, settings.wallpaper);
-      else useChatBgPrefsStore.getState().setChatWallpaper(chatId, { type: 'stock', value: 'none' });
+      if (settings.wallpaper) {
+        let wallpaper = settings.wallpaper;
+        if (wallpaper.type === 'photo' && !isPhotoBgKey(wallpaper.value)) {
+          // Ссылка или dataURL от собеседника → качаем Blob в IndexedDB и храним ключ:
+          // в localStorage строка картинки жить не должна.
+          try {
+            const blob = await (await fetch(String(wallpaper.value))).blob();
+            const key = `${chatId}:offer-photo`;
+            await savePhotoBg(blob, key);
+            wallpaper = { ...wallpaper, value: key };
+          } catch {
+            // Не скачалось — оставляем ссылку: рендер умеет https/относительные URL.
+          }
+        }
+        useChatBgPrefsStore.getState().setChatWallpaper(chatId, wallpaper);
+      } else useChatBgPrefsStore.getState().setChatWallpaper(chatId, { type: 'stock', value: 'none' });
       if (typeof settings.brightness === 'number') useChatBgPrefsStore.getState().setBrightness(chatId, settings.brightness);
-      if (settings.videoDataUrl) {
-        await saveLiveBgDataUrl(settings.videoDataUrl, chatId);
+      const videoSource = settings.videoUrl || settings.videoDataUrl;
+      if (videoSource) {
+        // Скачиваем потоком без base64 в памяти (раньше это вешало телефон).
+        const blob = await (await fetch(String(videoSource))).blob();
+        await saveLiveBg(blob, chatId);
         useChatBgPrefsStore.getState().setChatWallpaper(chatId, { type: 'live', value: chatId });
         useChatBgPrefsStore.getState().bumpLiveBg();
       }
@@ -412,6 +454,7 @@ export default function App() {
       console.error('settings offer apply error:', error);
       getSocket()?.emit('chat:settings_offer_response', { chatId, senderId, accepted: false });
     } finally {
+      setSettingsOfferApplying(false);
       setSettingsOffer(null);
     }
   };
@@ -471,21 +514,28 @@ export default function App() {
           '.vera-anim-float':   { animation: 'vera-float 3s ease-in-out infinite' },
         }}
       />
-      <Routes>
-        <Route path="/link" element={<AcceptLinkPage />} />
-        <Route path="/download" element={<DownloadPage />} />
-        <Route path="/profile" element={isAuthenticated ? <ProfilePage /> : <Navigate to="/" />} />
-        <Route path="/devices" element={isAuthenticated ? <DevicesPage /> : <Navigate to="/" />} />
-        <Route path="/contacts" element={isAuthenticated ? <ContactsPage /> : <Navigate to="/" />} />
-        <Route path="/calls" element={isAuthenticated ? <CallLogPage /> : <Navigate to="/" />} />
-        <Route path="/admin" element={isAuthenticated && user?.isAdmin ? <AdminToolsPage /> : <Navigate to="/" />} />
-        <Route path="/*" element={isAuthenticated ? <MainLayout onPlayerHost={setPlayerHost} /> : (
-          <DeviceEntryPage />
-        )} />
-      </Routes>
+      <Suspense fallback={
+        <Box sx={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <CircularProgress sx={{ color: appTheme.accent }} />
+        </Box>
+      }>
+        <Routes>
+          <Route path="/link" element={<AcceptLinkPage />} />
+          <Route path="/download" element={<DownloadPage />} />
+          <Route path="/profile" element={isAuthenticated ? <ProfilePage /> : <Navigate to="/" />} />
+          <Route path="/devices" element={isAuthenticated ? <DevicesPage /> : <Navigate to="/" />} />
+          <Route path="/contacts" element={isAuthenticated ? <ContactsPage /> : <Navigate to="/" />} />
+          <Route path="/calls" element={isAuthenticated ? <CallLogPage /> : <Navigate to="/" />} />
+          <Route path="/admin" element={isAuthenticated && user?.isAdmin ? <AdminToolsPage /> : <Navigate to="/" />} />
+          <Route path="/*" element={isAuthenticated ? <MainLayout onPlayerHost={setPlayerHost} /> : (
+            <DeviceEntryPage />
+          )} />
+        </Routes>
+      </Suspense>
 
       <ChatSettingsOfferDialog
         open={!!settingsOffer}
+        busy={settingsOfferApplying}
         senderName={settingsOffer?.sender
           ? [settingsOffer.sender.firstName, settingsOffer.sender.lastName].filter(Boolean).join(' ') || settingsOffer.sender.username || 'Собеседник'
           : 'Собеседник'}

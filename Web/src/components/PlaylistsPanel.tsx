@@ -39,7 +39,9 @@ export default function PlaylistsPanel({ initialPlaylistId }: PlaylistsPanelProp
     playlists, publicPlaylists, loading, load, create, remove, rename,
     removeTrack, addTrack, reorderTracks, getPlaylistTracks, searchPublic, copyPublic,
   } = usePlaylistStore();
-  const { tracks: allTracks, play, loadTracks: loadAllTracks } = useMusicStore();
+  const allTracks = useMusicStore((s) => s.tracks);
+  const play = useMusicStore((s) => s.play);
+  const loadAllTracks = useMusicStore((s) => s.loadTracks);
 
   const [selected, setSelected] = useState<Playlist | null>(null);
   const [creating, setCreating] = useState(false);

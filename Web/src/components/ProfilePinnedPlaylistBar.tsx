@@ -25,8 +25,18 @@ interface Props {
  * - Владельцу профиля показывает кнопку «Закрепить», открывающую диалог со списком его плейлистов.
  */
 export default function ProfilePinnedPlaylistBar({ ownerId, pinnedPlaylistId, pinnedTrackId }: Props) {
-  const { user, setUser } = useAuthStore();
-  const { currentTrack, isPlaying, play, togglePlay, next, prev, progress, duration, tracks: myTracks, loadTracks } = useMusicStore();
+  const user = useAuthStore((s) => s.user);
+  const setUser = useAuthStore((s) => s.setUser);
+  const currentTrack = useMusicStore((s) => s.currentTrack);
+  const isPlaying = useMusicStore((s) => s.isPlaying);
+  const play = useMusicStore((s) => s.play);
+  const togglePlay = useMusicStore((s) => s.togglePlay);
+  const next = useMusicStore((s) => s.next);
+  const prev = useMusicStore((s) => s.prev);
+  const progress = useMusicStore((s) => s.progress);
+  const duration = useMusicStore((s) => s.duration);
+  const myTracks = useMusicStore((s) => s.tracks);
+  const loadTracks = useMusicStore((s) => s.loadTracks);
   const { playlists, load: loadPlaylists } = usePlaylistStore();
 
   const [tracks, setTracks] = useState<Track[]>([]);

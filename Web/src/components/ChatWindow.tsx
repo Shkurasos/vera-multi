@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useMemo, useCallback, Component, ErrorInfo } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback, Component, ErrorInfo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box, Typography, Avatar, IconButton, TextField,
@@ -43,6 +43,7 @@ import { useCustomEquipStore } from '../store/customEquipStore';
 import { specToStyle, specAnimationClass } from '../utils/customStyle';
 import { resolveChatTheme } from '../utils/chatTheme';
 import { saveLiveBg, loadLiveBgUrl, clearLiveBg, getLiveBgBlob } from '../services/chatLiveBgStorage';
+import { isPhotoBgKey, loadPhotoBgUrl, getPhotoBgBlob } from '../services/chatBgPhotoStorage';
 import ChatWallpaper, { type WallpaperSpec } from './ChatWallpaper';
 
 // Крупные разные тайлы не дают SVG-паттернам превращаться в мелкую сетку.
@@ -183,14 +184,29 @@ function getInitials(name: string): string {
 
 // Превращает относительный /uploads/... URL в абсолютный, чтобы фото грузилось
 // даже когда клиент открыт через туннель (ngrok / cloudflare / production).
+// SEC: в href/src пропускаем только http(s)/blob, data-медиа и относительные пути —
+// значения вроде javascript:/data:text/html не должны попадать в DOM.
 function resolveFileUrl(url?: string): string {
   if (!url) return '';
-  if (/^(https?:|data:|blob:)/i.test(url)) return url;
-  if (url.startsWith('/')) {
-    return window.location.origin + url;
-  }
-  return url;
+  const value = String(url).trim();
+  if (/^https?:\/\//i.test(value)) return value;
+  if (/^blob:/i.test(value)) return value;
+  if (/^data:(?:image|audio|video)\//i.test(value)) return value;
+  if (value.startsWith('/')) return window.location.origin + value;
+  return '';
 }
+
+// Стабильный объект по умолчанию: селектор не должен создавать новый
+// объект на каждый вызов, иначе компонент перерисовывается при любом
+// изменении стора (классическая ошибка zustand v4).
+type BubblePrefsShape = { enabled?: boolean; maxWidth?: number; textSize?: number; padding?: number };
+const EMPTY_BUBBLE_PREFS: BubblePrefsShape = {};
+// Стабильный пустой список «печатает…» — чтобы селектор не создавал новый массив.
+const EMPTY_TYPING_LIST: string[] = [];
+// Сколько сообщений держим в DOM. Полная история (архив бывает на тысячи
+// сообщений) остаётся в памяти, но рендерится порциями — иначе браузер
+// захлёбывается на layout/paint и любые hover-эффекты тормозят.
+const RENDER_CHUNK = 200;
 
 interface ChatWindowProps {
   onPlayerHost: (node: HTMLDivElement | null) => void;
@@ -199,17 +215,33 @@ interface ChatWindowProps {
 function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const {
-    chats, messages, activeChat, setActiveChat, updateChatList,
-    sendMessage, sendMessageWithFile, typingUsers,
-    leaveChat, onlineUsers, pinMessage, unpinMessage,
-  } = useChatStore();
-  const {
-    toggleMute, isMuted, pinnedMessages,
-  } = useChatPrefsStore();
-  const mutedChats = { has: (id: string) => isMuted(id) };
-  const { user } = useAuthStore();
-    const { theme: baseTheme, setChatPhoto, setChatBgImage, chatPhoto: chatPhotoGlobal, themeVersion } = useThemeStore();
+  // Точечные селекторы: окно чата перерисовывается только при изменениях,
+  // которые реально влияют на него (а не на каждый чих в сторе).
+  const chats = useChatStore((s) => s.chats);
+  const messages = useChatStore((s) => s.messages);
+  const activeChat = useChatStore((s) => s.activeChat);
+  const setActiveChat = useChatStore((s) => s.setActiveChat);
+  const updateChatList = useChatStore((s) => s.updateChatList);
+  const sendMessage = useChatStore((s) => s.sendMessage);
+  const sendMessageWithFile = useChatStore((s) => s.sendMessageWithFile);
+  // Печатает ли кто-то именно в этом чате: typing в других чатах больше
+  // не перерисовывает открытое окно.
+  const typingList = useChatStore((s) => s.typingUsers[id || ''] || EMPTY_TYPING_LIST);
+  const leaveChat = useChatStore((s) => s.leaveChat);
+  const pinMessage = useChatStore((s) => s.pinMessage);
+  const unpinMessage = useChatStore((s) => s.unpinMessage);
+  const toggleMute = useChatPrefsStore((s) => s.toggleMute);
+  const isMuted = useChatPrefsStore((s) => s.isMuted);
+  const pinnedMessages = useChatPrefsStore((s) => s.pinnedMessages);
+  const user = useAuthStore((s) => s.user);
+  const baseTheme = useThemeStore((s) => s.theme);
+  const themeVersion = useThemeStore((s) => s.themeVersion);
+  // Онлайн ровно того собеседника, чей чат открыт: presence остальных
+  // пользователей больше не вызывает перерисовку окна чата.
+  const partnerUserId = (activeChat?.type === 'private' || (activeChat as any)?.type === 'direct')
+    ? activeChat?.members?.find((m) => m.userId !== user?.id)?.user?.id
+    : undefined;
+  const partnerOnline = useChatStore((s) => (partnerUserId ? s.onlineUsers.has(partnerUserId) : false));
   const chatBgBrightness = useChatBgPrefsStore((s) => id ? s.getBrightness(id) : s.defaultBrightness);
   const setBgBrightness = useChatBgPrefsStore((s) => s.setBrightness);
   const getChatWallpaper = useChatBgPrefsStore((s) => s.getChatWallpaper);
@@ -220,11 +252,17 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const clearChatWallpaper = useChatBgPrefsStore((s) => s.clearChatWallpaper);
   const liveBgStamp = useChatBgPrefsStore((s) => s.liveBgStamp);
 
-  const { getDraft, setDraft, clearDraft } = useDraftsStore();
-  const { getChatFont, setChatFont, clearChatFont } = useChatFontStore();
+  // Только функции/значения, а не стор целиком: черновики и шрифты не должны
+  // перерисовывать окно чата при каждом изменении.
+  const getDraft = useDraftsStore((s) => s.getDraft);
+  const setDraft = useDraftsStore((s) => s.setDraft);
+  const clearDraft = useDraftsStore((s) => s.clearDraft);
+  const setChatFont = useChatFontStore((s) => s.setChatFont);
+  const clearChatFont = useChatFontStore((s) => s.clearChatFont);
+  const chatFontValue = useChatFontStore((s) => s.perChatFonts[id || '']);
   const globalFontFamily = useUserSettingsStore((s) => s.globalFontFamily);
   const chatLayout = useUserSettingsStore((s) => s.layout);
-  const bubblePrefs = useChatPrefsStore((s) => s.bubbleSettings[id || ''] || {});
+  const bubblePrefs: BubblePrefsShape = useChatPrefsStore((s) => s.bubbleSettings[id || ''] || EMPTY_BUBBLE_PREFS);
   const setBubbleSettings = useChatPrefsStore((s) => s.setBubbleSettings);
   const effectiveBubble = {
     enabled: bubblePrefs.enabled ?? chatLayout.bubbleEnabled ?? true,
@@ -294,10 +332,12 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     finally { pollSubmittingRef.current = false; setPollSubmitting(false); }
   };
 
-  const {
-    fontSize, emojiSize, fontFamily,
-    setFontSize, setEmojiSize, setFontFamily,
-  } = useChatSettingsStore();
+  const fontSize = useChatSettingsStore((s) => s.fontSize);
+  const emojiSize = useChatSettingsStore((s) => s.emojiSize);
+  const fontFamily = useChatSettingsStore((s) => s.fontFamily);
+  const setFontSize = useChatSettingsStore((s) => s.setFontSize);
+  const setEmojiSize = useChatSettingsStore((s) => s.setEmojiSize);
+  const setFontFamily = useChatSettingsStore((s) => s.setFontFamily);
   const layout = useUserSettingsStore((st) => st.layout);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -310,11 +350,40 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const [liveBgUrl, setLiveBgUrl] = useState<string | null>(null);
   const [loadedLiveBgKey, setLoadedLiveBgKey] = useState<string | null>(null);
   const [liveBgVersion, setLiveBgVersion] = useState(0);
+  const liveBgVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  // На телефоне постоянное декодирование видео греет устройство и жрёт батарею:
+  // ставим обои на паузу, пока вкладка скрыта, и возобновляем при возврате.
+  useEffect(() => {
+    const video = liveBgVideoRef.current;
+    if (!video) return;
+    const sync = () => {
+      if (document.hidden) video.pause();
+      else void video.play().catch(() => {});
+    };
+    document.addEventListener('visibilitychange', sync);
+    return () => document.removeEventListener('visibilitychange', sync);
+  }, [liveBgUrl]);
   const [settingsOfferSent, setSettingsOfferSent] = useState(false);
+  const [settingsOfferBusy, setSettingsOfferBusy] = useState(false);
   
   // Состояние для кнопки "прокрутить вниз"
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [unreadAtBottom, setUnreadAtBottom] = useState(0);
+
+  // Окно рендера истории: в DOM только последние renderLimit сообщений.
+  // При скролле вверх порция растёт, позиция сохраняется через
+  // keepFromBottomRef (расстояние от низа контента до низа окрана).
+  const [renderLimit, setRenderLimit] = useState(RENDER_CHUNK);
+  const keepFromBottomRef = useRef<number | null>(null);
+  useEffect(() => { setRenderLimit(RENDER_CHUNK); }, [id]);
+  useLayoutEffect(() => {
+    const container = messagesContainerRef.current;
+    if (container && keepFromBottomRef.current != null) {
+      container.scrollTop = container.scrollHeight - keepFromBottomRef.current;
+      keepFromBottomRef.current = null;
+    }
+  }, [renderLimit]);
 
   const currentWallpaper = useMemo(() => {
     if (!id) return null;
@@ -346,7 +415,20 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const prevMsgCountRef = useRef<number>(0);
 
 
-  // URL для рендера: stock из каталога, photo из per-chat override, или live video
+  // Фото-обои из IndexedDB: value — ключ, резолвим в object URL асинхронно.
+  const photoWallpaperValue = currentWallpaper?.type === 'photo' && isPhotoBgKey(currentWallpaper.value)
+    ? currentWallpaper.value : null;
+  const [photoBgUrl, setPhotoBgUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!photoWallpaperValue) { setPhotoBgUrl(null); return; }
+    void loadPhotoBgUrl(photoWallpaperValue).then((url) => {
+      if (!cancelled) setPhotoBgUrl(url);
+    });
+    return () => { cancelled = true; };
+  }, [photoWallpaperValue]);
+
+  // URL для рендера: stock из каталога, photo (dataURL/URL или ключ IndexedDB), или live video
   const wallpaperPhotoUrl = useMemo(() => {
     if (!currentWallpaper) return null;
     if (currentWallpaper.type === 'stock') {
@@ -354,10 +436,11 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       return stock?.url || null;
     }
     if (currentWallpaper.type === 'photo') {
+      if (isPhotoBgKey(currentWallpaper.value)) return photoBgUrl; // ключ IndexedDB
       return resolveFileUrl(currentWallpaper.value); // dataURL или URL
     }
     return null;
-  }, [currentWallpaper]);
+  }, [currentWallpaper, photoBgUrl]);
 
   const hasLiveWallpaper = currentWallpaper?.type === 'live' && loadedLiveBgKey === liveWallpaperKey;
 
@@ -366,6 +449,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       setToast({ message: 'Собеседник недоступен для предложения', severity: 'warning' });
       return;
     }
+    if (settingsOfferBusy) return;
+    setSettingsOfferBusy(true);
     try {
       const wallpaper = currentWallpaper ? { ...currentWallpaper } : null;
       const settings: any = {
@@ -373,15 +458,28 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
         wallpaper,
         brightness: useChatBgPrefsStore.getState().getBrightness(id),
       };
+      // Обои отправляем ссылкой на сервер, а не base64: видео в base64 — это
+      // фризы на телефоне (буфер сокета 12 МБ), а сервер всё равно молча режет
+      // офферы больше 512 КБ. Файл грузим через /files/upload, собеседник скачает.
+      const uploadWallpaperFile = async (blob: Blob, name: string) => {
+        const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
+        const res = await filesApi.upload(file);
+        return String((res.data as any)?.url || '');
+      };
       if (wallpaper?.type === 'live') {
         const blob = await getLiveBgBlob(wallpaper.value);
         if (blob) {
-          settings.videoDataUrl = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result || ''));
-            reader.onerror = () => reject(reader.error);
-            reader.readAsDataURL(blob);
-          });
+          const url = await uploadWallpaperFile(blob, 'wallpaper-video.mp4');
+          if (url) settings.videoUrl = url;
+        }
+      } else if (wallpaper?.type === 'photo') {
+        let blob: Blob | null = null;
+        if (isPhotoBgKey(wallpaper.value)) blob = await getPhotoBgBlob(wallpaper.value);
+        else if (/^data:/i.test(wallpaper.value)) blob = await (await fetch(wallpaper.value)).blob();
+        // Если значение — уже ссылка, отправляем как есть.
+        if (blob) {
+          const url = await uploadWallpaperFile(blob, 'wallpaper-photo.jpg');
+          if (url) settings.wallpaper = { ...wallpaper, value: url };
         }
       }
       getSocket()?.emit('chat:settings_offer', { chatId: id, settings });
@@ -390,6 +488,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     } catch (error) {
       console.error('settings offer error:', error);
       setToast({ message: 'Не удалось подготовить настройки', severity: 'error' });
+    } finally {
+      setSettingsOfferBusy(false);
     }
   };
 
@@ -427,7 +527,17 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   }, [chats, id]);
 
   const channelReadOnly = activeChat?.type === 'channel' && !activeChat.members.some(m => m.userId === user?.id && (m.role === 'owner' || m.role === 'admin'));
-  const chatMessages = (messages[id || ''] || []).filter(m => activeChat?.type !== 'channel' || !m.replyToId);
+  // useMemo: новый массив на каждый рендер сбрасывал бы memo у groupedMessages
+  // и пересчитывался бы при любом локальном состоянии (hover, поиск и т.п.).
+  const chatMessages = useMemo(
+    () => (messages[id || ''] || []).filter(m => activeChat?.type !== 'channel' || !m.replyToId),
+    [messages, id, activeChat?.type],
+  );
+
+  // Рендерим только последние renderLimit сообщений (см. RENDER_CHUNK).
+  const windowedMessages = chatMessages.length > renderLimit
+    ? chatMessages.slice(chatMessages.length - renderLimit)
+    : chatMessages;
 
   // Звук при новом сообщении от другого пользователя обрабатывается глобально
   // в App.tsx (слушатель socket 'message-new'). Здесь только сбрасываем счётчик
@@ -494,12 +604,35 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     }, 50);
 
     // 3) MutationObserver — в DOM добавились новые сообщения/медиа — дожать низ.
+    //    Реагируем только на реальные добавления узлов и подгрузку картинок (src):
+    //    раньше слушались ВСЕ изменения class/style в поддереве, и анимации
+    //    (hover/MuiRipple/прогресс аудио) постоянно перезапускали скролл.
     let observer: MutationObserver | null = null;
+    let pinScheduled = false;
+    const schedulePin = () => {
+      if (pinScheduled) return;
+      pinScheduled = true;
+      requestAnimationFrame(() => {
+        pinScheduled = false;
+        if (atBottomRef.current && messagesContainerRef.current === container) pinToBottom();
+      });
+    };
     if (typeof MutationObserver !== 'undefined') {
-      observer = new MutationObserver(() => { if (atBottomRef.current) pinToBottom(); });
+      observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          if (mutation.type === 'childList' && (mutation.addedNodes.length || mutation.removedNodes.length)) {
+            schedulePin();
+            return;
+          }
+          if (mutation.type === 'attributes' && mutation.attributeName === 'src') {
+            schedulePin();
+            return;
+          }
+        }
+      });
       observer.observe(container, {
         childList: true, subtree: true,
-        attributes: true, attributeFilter: ['src', 'style', 'class'],
+        attributes: true, attributeFilter: ['src'],
       });
     }
 
@@ -538,6 +671,15 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       atBottomRef.current = distanceFromBottom < 40;
       setShowScrollButton(distanceFromBottom > 200);
 
+      // Догрузка окна вверх: пользователь у верхней кромки — показываем ещё порцию
+      // истории, сохраняя текущую позицию (контент добавляется выше окна).
+      // Только для реально прокручиваемого контента, иначе окно раздулось бы до
+      // всей истории, когда сообщения ещё помещаются в экран.
+      if (scrollTop < 80 && chatMessages.length > renderLimit && scrollHeight > clientHeight + 200) {
+        keepFromBottomRef.current = container.scrollHeight - container.scrollTop;
+        setRenderLimit((n) => Math.min(chatMessages.length, n + RENDER_CHUNK));
+      }
+
       if (distanceFromBottom > 200) {
         const lastReadIndex = chatMessages.findIndex(msg => msg.senderId !== user?.id && !msg.readBy?.includes(user?.id || ''));
         if (lastReadIndex !== -1) {
@@ -555,7 +697,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
 
     container.addEventListener('scroll', handleScroll, { passive: true });
     return () => container.removeEventListener('scroll', handleScroll);
-  }, [chatMessages, user?.id]);
+  }, [chatMessages, user?.id, renderLimit]);
 
   // Память позиции не храним — чат всегда открывается на последнем сообщении.
 
@@ -568,8 +710,6 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     setShowScrollButton(false);
     setUnreadAtBottom(0);
   };
-
-  const typingList = typingUsers[id || ''] || [];
 
   const getChatName = () => {
     if (!activeChat) return '';
@@ -603,12 +743,6 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const getPartnerUser = (): User | null => {
     if (activeChat?.type !== 'private' && activeChat?.type !== 'direct') return null;
     return activeChat.members?.find((m) => m.userId !== user?.id)?.user || null;
-  };
-
-  const getPartnerOnline = () => {
-    const partner = getPartnerUser();
-    if (!partner) return false;
-    return onlineUsers.has(partner.id);
   };
 
   const handleSend = async () => {
@@ -818,7 +952,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     : chatMessages;
   const visibleMessages = showSearch && searchQuery.trim()
     ? (serverSearchResults.length ? serverSearchResults.slice().reverse() : localSearchResults)
-    : chatMessages;
+    : windowedMessages;
 
   const groupedMessages = useMemo(() => {
     if (!visibleMessages.length) return [];
@@ -846,14 +980,21 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const handleForward = useCallback((m: Message) => { setForwardError(''); setForwardMsg(m); }, []);
   const handleSetProfileUser = useCallback((u: User) => setProfileUser(u), []);
   const handleScrollToMessage = useCallback((msgId: string) => {
-    const el = document.getElementById(`msg-${msgId}`);
-    if (el) {
+    const jump = () => {
+      const el = document.getElementById(`msg-${msgId}`);
+      if (!el) return;
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       el.style.transition = 'background 0.3s';
       el.style.background = theme.accent + '30';
       setTimeout(() => { el.style.background = ''; }, 1500);
-    }
-  }, [baseTheme.accent]);
+    };
+    if (document.getElementById(`msg-${msgId}`)) { jump(); return; }
+    // Сообщение вне окна рендера — расширяем окно до него и прыгаем после рендера.
+    const idx = chatMessages.findIndex((m) => m.id === msgId);
+    if (idx === -1) return;
+    setRenderLimit((n) => Math.max(n, chatMessages.length - idx + 20));
+    requestAnimationFrame(() => requestAnimationFrame(jump));
+  }, [baseTheme.accent, chatMessages]);
 
   const handleAvatarClick = () => {
     const partner = getPartnerUser();
@@ -981,7 +1122,6 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
 
   const chatName = getChatName();
   const chatAvatar = getChatAvatar();
-  const partnerOnline = getPartnerOnline();
   const isLightTheme = (() => {
     const m = String(theme.bg).match(/#([0-9a-f]{6})/i);
     if (!m) return false;
@@ -1058,7 +1198,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
         {/* ── Живые обои (видео-слой, приоритет выше фото) ── */}
         {hasLiveWallpaper && liveBgUrl && (
           <>
-            <Box component="video" src={liveBgUrl}
+            <Box component="video" src={liveBgUrl} ref={liveBgVideoRef}
               autoPlay muted loop playsInline
               sx={{
                 position: 'absolute', inset: 0, zIndex: 0,
@@ -1252,7 +1392,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
                 color: theme.text, fontSize: 14, fontWeight: 500,
                 '&:hover': { bgcolor: theme.bgHover },
               }}>
-              {(id && mutedChats.has(id))
+              {(id && isMuted(id))
                 ? <><NotificationsOff sx={{ fontSize: 18, color: theme.textSec }} />Уведомления чата</>
                 : <><NotificationsActive sx={{ fontSize: 18, color: theme.textSec }} />Уведомления чата</>
               }
@@ -1277,9 +1417,10 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
               Персональная тема чата
             </MenuItem>
             <MenuItem onClick={() => { setAnchorEl(null); void offerChatSettings(); }}
+              disabled={settingsOfferBusy}
               sx={{ gap: 1.5, py: 1.2, px: 2, color: theme.text, fontSize: 14, fontWeight: 500, '&:hover': { bgcolor: theme.bgHover } }}>
               <Palette sx={{ fontSize: 18, color: theme.textSec }} />
-              {settingsOfferSent ? 'Предложение отправлено' : 'Предложить настройки собеседнику'}
+              {settingsOfferBusy ? 'Отправляем…' : settingsOfferSent ? 'Предложение отправлено' : 'Предложить настройки собеседнику'}
             </MenuItem>
             <MuiDivider sx={{ borderColor: theme.border, my: 0.5 }} />
             <MenuItem onClick={() => { setAnchorEl(null); setLeaveConfirmOpen(true); }}
@@ -1448,7 +1589,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
               </Typography>
               <Box sx={{ mb: 2 }}>
                 <FontPicker
-                  value={id ? (getChatFont(id) || 'default') : 'default'}
+                  value={id ? (chatFontValue || 'default') : 'default'}
                   onChange={(value) => {
                     if (!id) return;
                     if (value === 'default') clearChatFont(id);
@@ -1612,7 +1753,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           backgroundImage: theme.chatPattern,
           backgroundSize: patternBackgroundSize(theme.chatPattern, theme.chatPatternSizeMin, theme.chatPatternSizeMax),
           backgroundBlendMode: 'screen',
-          fontFamily: id ? (getChatFont(id) || globalFontFamily) : globalFontFamily,
+          fontFamily: id ? (chatFontValue || globalFontFamily) : globalFontFamily,
           '&::-webkit-scrollbar': { width: { xs: 0, md: 5 } },
           '&::-webkit-scrollbar-track': { bgcolor: theme.bgChat ? theme.bgChat + '55' : 'rgba(255,255,255,0.04)' },
           '&::-webkit-scrollbar-thumb': {

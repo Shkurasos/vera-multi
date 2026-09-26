@@ -253,6 +253,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               role: m.role || 'member',
               isMuted: m.muted || false,
               joinedAt: m.joinedAt || chat.createdAt,
+              skins: m.skins || undefined,
             } as import('../types').ChatMember;
           }
           return {

@@ -147,6 +147,7 @@ Vera_Multi/
 | `ВП / кошелёк` | `NOWPayments` крипто-шлюз (mock-режим без ключей), баланс/пополнение |
 | `CREATOR / CUSTOM SHOP` | мастерская авторов: items, публикация, revenue |
 | `CHATS routes` | список/создание/изменение чатов, участники, invite-ссылки групп |
+| `Мои скины в чате` | `PUT /api/chats/:id/my-skins` — свои скины участника для его сообщений в конкретном чате (`chatMember.skins`, `''` — без скина); рассылка `user:equipment` с `chatId`, значения приходят в `members[].skins` |
 | `Приглашения в группы` | `ensureDirectChat`, `/api/chats/:id/invite`, групповые invite accept/decline |
 | `MESSAGES routes` | сообщения. **Лимит: `MESSAGE_MAX_LEN = 10000` символов** |
 | `FILES routes` | `POST /api/files/upload` (multipart), прикрепление к сообщениям |
@@ -297,10 +298,10 @@ Vera_Multi/
 | `WelcomeScreen.tsx` | Заглушка «Нет сообщений. Напишите первым!» при пустом чате | `chatStore` |
 | `ChatWindow.tsx` | **Главный экран чата**: шапка (имя/аватар/поиск/инфо/меню), лента сообщений (группировка по датам), поле ввода (текст/файлы/голос/emoji), кнопки звонка, обои, поиск, reply/forward. **Скролл: всегда открывается на последнем сообщении (pin-to-bottom + rAF + MutationObserver до 6с); скроллбар справа всегда виден (`overflowY:'scroll'` + `scrollbarGutter:'stable'`); лимит ввода — 10 000 символов** | `chatStore`, `chatPrefsStore`, `chatFontStore`, `chatSettingsStore`, `chatSoundStore`, `chatThemeStore`, `chatBgPrefsStore`, `authStore`, `themeStore`, `draftsStore`, `MessageBubble`, `CallModal`, `ChatInfoPanel`, `ChatWallpaper` |
 | `MessageBubble.tsx` | Пузырь сообщения: текст/медиа/аудио/голос/документы, hover-меню (reply/forward/edit/delete/pin/reactions), аватар из живого `authStore`/`activeChat.members`, полноэкранный просмотр фото/видео через `createPortal(…, document.body)` | `chatStore`, `themeStore`, `authStore`, `customEquipStore`, `rarityStyles` |
-| `ChatInfoPanel.tsx` | Панель «Информация о чате»: участники, имя/фото, приглашения, медиа, выход | `chatsApi`, `filesApi`, `usersApi`, `chatStore` |
+| `ChatInfoPanel.tsx` | Панель «Информация о чате»: участники, имя/фото, приглашения, медиа, выход; **«Мои скины в этом чате»** — свои скины только для своих сообщений (обводка/плашка/пузырь) | `chatsApi`, `filesApi`, `usersApi`, `chatStore`, `chatSkinStore` |
 | `ChatWallpaper.tsx` | Движок обоев: 15 типов (time, parallax, touch, gradient, particles, waves, grid, aurora, matrix, snow, rain, stars, noise, blob) | `wallpaperSpec` → CSS |
 | `ChatThemeDialog.tsx` | Диалог персональной темы чата (пресеты + свои) | `chatThemeStore` |
-| `WallpaperSettingsDialog.tsx` | Обои чата: стоковые фото, своё фото/видео (IndexedDB) | `chatBgPrefsStore`, `chatLiveBgStorage` |
+| `WallpaperSettingsDialog.tsx` | Обои чата: стоковые фото + **несколько своих фото/видео** (галерея, выбор любого, удаление); легаси-одиночные обои мигрируют в список | `chatBgPrefsStore`, `chatLiveBgStorage` |
 | `NotificationSettingsDialog.tsx` | Звук/громкость уведомлений чата | `chatSoundStore`, `chatPrefsStore` |
 | `GlobalSoundSettingsDialog.tsx` | Глобальный звук уведомлений + громкость | `chatSoundStore` |
 | `LayoutDesignerDialog.tsx` | Конструктор раскладки: стороны сайдбара/плеера/шапки/инпута, плотность, радиусы, ширина сообщений | `userSettingsStore` |
@@ -364,7 +365,7 @@ Vera_Multi/
 | `botsApi.ts` | `botsApi` (боты) + `aiApi` (ИИ: модели, train, chat, генератор тем) |
 | `notifications.ts` | Нативные push-уведомления (Web Notifications API) + звук |
 | `localArchive.ts` | Локальный зеркальный архив в IndexedDB (`vera-archive-<userId>`, `chats`/`messages`) — история переживает рестарт сервера |
-| `chatLiveBgStorage.ts` | Живые обои (видео) в IndexedDB + blob-URL |
+| `chatLiveBgStorage.ts` | Живые обои (видео) в IndexedDB + blob-URL; **несколько видео**: у каждого свой ключ-скоуп (`<scope>:<id>`), легаси-ключи поддерживаются |
 | `customFontStorage.ts` | Свои шрифты (.ttf/.otf/.woff/.woff2) в IndexedDB: `saveFontFile/loadFontFiles/deleteFontFile` + `injectFontFace/removeFontFace` (`@font-face` со ссылкой на Blob) |
 | `peer.ts` | **P2P-мост в `window.vera`** (legacy-режим). `isPeerAvailable()`, `peer.*`. Без `window.vera` вызовы падают с понятной ошибкой |
 | `storeSync.ts` | Универсальный `syncedStore()` — middleware синка Zustand-стора (server + socket, last-write-wins) |
@@ -397,7 +398,8 @@ Vera_Multi/
 | `customFontsStore.ts` | **Свои шрифты пользователя** (один список на приложение): `fonts`, `hydrate/addFont/removeFont`, файлы в IndexedDB, `@font-face` на Blob, сброс выбранного шрифта при удалении | — (локально, IndexedDB) |
 | `chatSoundStore.ts` | Звуки уведомлений (data URL) и громкости на чат + глобальный звук | `enableStoreSync` |
 | `chatThemeStore.ts` | Персональные темы чатов (`CHAT_THEME_PRESETS`), overrides | `enableStoreSync` |
-| `chatBgPrefsStore.ts` | Обои: `STOCK_WALLPAPERS`, глобальные/per-chat, яркость фона | — |
+| `chatSkinStore.ts` | **«Мои скины» по чатам**: `overrides[chatId] = { ring?, selfcard?, bubble? }` (`''` — без скина, ключа нет — как в профиле); на сервер уходит через `PUT /api/chats/:id/my-skins` | `enableStoreSync` |
+| `chatBgPrefsStore.ts` | Обои: `STOCK_WALLPAPERS`, глобальные/per-chat, яркость фона; **`userWallpapers[scope]`** — список своих обоев (фото/видео), `globalLiveValue` — выбранное глобальное видео | — |
 | `themeStore.ts` | **Темы**: `THEMES` (каталог), `setTheme`, finish (solid/glass/matte/metal), `themeToLink/themeFromLink` (в `utils/themeLink.ts`), `CUSTOM_THEME_ID_START`, `getFinishStyles`, отдельные цвета времени (`messageTimeColor` на сообщениях, `chatTimeColor` в списке чатов) | persist + сервер |
 | `musicStore.ts` | Библиотека треков, очередь, currentTrack, play/pause/next/prev, volume, repeat, shuffle | — |
 | `musicVisualizerStore.ts` | Настройки визуализатора (цвет, стиль, режимы, размещение) | — |

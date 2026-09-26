@@ -191,7 +191,25 @@ function mergeSyncedState(storeName: string, current: any, incoming: any): any {
       activeBubble: current?.activeBubble || '',
     };
   }
-  if (storeName !== 'chat-prefs') return incoming;
+  if (storeName !== 'chat-prefs') {
+    if (storeName === 'chat-bg-prefs') {
+      // Пустой или легаси-серверный снапшот (без списка своих обоев) не должен
+      // затирать локальные фото-обои: синк dataURL-фотов никогда не проходил
+      // (413 > 128 КБ), поэтому на сервере лежат только лёгкие снапшоты.
+      const merged: any = { ...incoming };
+      if (!merged.userWallpapers || typeof merged.userWallpapers !== 'object' || !Object.keys(merged.userWallpapers).length) {
+        if (current.userWallpapers && Object.keys(current.userWallpapers).length) {
+          merged.userWallpapers = current.userWallpapers;
+        }
+      }
+      if (merged.userPhotoWallpaper == null && current.userPhotoWallpaper) {
+        merged.userPhotoWallpaper = current.userPhotoWallpaper;
+        if (merged.userPhotoName == null) merged.userPhotoName = current.userPhotoName;
+      }
+      return merged;
+    }
+    return incoming;
+  }
   return {
     ...incoming,
     pinnedIds: incoming.pinnedIds ?? current.pinnedIds,

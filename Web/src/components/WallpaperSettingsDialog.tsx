@@ -10,7 +10,11 @@ import {
   useChatBgPrefsStore, STOCK_WALLPAPERS,
   CUSTOM_PHOTO_WALLPAPER_ID, CUSTOM_LIVE_WALLPAPER_ID,
 } from '../store/chatBgPrefsStore';
+import type { UserWallpaperItem } from '../store/chatBgPrefsStore';
 import { saveLiveBg, clearLiveBg, hasLiveBg, getLiveBgBlob } from '../services/chatLiveBgStorage';
+import {
+  isPhotoBgKey, savePhotoBg, clearPhotoBg, loadPhotoBgUrl,
+} from '../services/chatBgPhotoStorage';
 
 interface Props {
   open: boolean;
@@ -46,6 +50,11 @@ function resizeImage(rawUrl: string, maxSide = 1920): Promise<string> {
     img.onerror = () => resolve(rawUrl);
     img.src = rawUrl;
   });
+}
+
+/** Уникальный id своих обоев в списке. */
+function newId(): string {
+  return (crypto as any)?.randomUUID?.() || `wp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 /**
@@ -94,12 +103,24 @@ export default function WallpaperSettingsDialog({ open, onClose }: Props) {
         const blob = await getLiveBgBlob(wallpaper.value);
         if (!blob) throw new Error('Видео этого чата не найдено. Загрузите его заново.');
         await saveLiveBg(blob, 'global');
-        prefs.setGlobalStockWallpaper(CUSTOM_LIVE_WALLPAPER_ID);
+        // Легаси-ключ 'global' — на него смотрит плитка «Моё видео».
+        prefs.setGlobalLiveWallpaper('global');
         bumpLiveBg();
         setLiveExists(true);
       } else if (wallpaper?.type === 'photo') {
-        prefs.setUserPhotoWallpaper(wallpaper.value, 'Фото чата');
+        let photoValue = wallpaper.value;
+        if (!isPhotoBgKey(photoValue)) {
+          // dataURL (например, присланный из чата) переносим в IndexedDB.
+          const key = `global:${newId()}`;
+          await savePhotoBg(photoValue, key);
+          photoValue = key;
+        }
+        prefs.setUserPhotoWallpaper(photoValue, 'Фото чата');
         prefs.setGlobalStockWallpaper(CUSTOM_PHOTO_WALLPAPER_ID);
+        // Дублируем в список «Своих обоев», чтобы фото можно было выбрать снова.
+        if (!(prefs.userWallpapers.global || []).some((i) => i.type === 'photo' && i.value === photoValue)) {
+          prefs.addUserWallpaper('global', { id: newId(), name: 'Фото чата', type: 'photo', value: photoValue, createdAt: Date.now() });
+        }
       } else {
         prefs.setGlobalStockWallpaper(wallpaper?.value || 'none');
       }
@@ -110,24 +131,86 @@ export default function WallpaperSettingsDialog({ open, onClose }: Props) {
     }
   };
 
-  const handlePhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    setErr(null);
-    if (file.size > 8 * 1024 * 1024) {
-      setErr('Файл слишком большой. Максимум 8 МБ.');
-      return;
+  /** Что выбрано сейчас из «своих» обоев — для подсветки плиток. */
+  const selectedUserPhotoValue = chatId
+    ? (override?.type === 'photo' ? override.value : null)
+    : (prefs.globalStockWallpaper === CUSTOM_PHOTO_WALLPAPER_ID ? prefs.userPhotoWallpaper : null);
+  const selectedUserLiveValue = chatId
+    ? (override?.type === 'live' ? override.value : null)
+    : (prefs.globalStockWallpaper === CUSTOM_LIVE_WALLPAPER_ID ? (prefs.globalLiveValue || 'global') : null);
+
+  /** Свои обои текущего scope + легаси-одиночные (загруженные до списка). */
+  const myWallpapers: UserWallpaperItem[] = (() => {
+    const items = prefs.userWallpapers[scope] || [];
+    const legacy: UserWallpaperItem[] = [];
+    if (!chatId && prefs.userPhotoWallpaper && !items.some((i) => i.type === 'photo' && i.value === prefs.userPhotoWallpaper)) {
+      legacy.push({ id: 'legacy-photo', name: prefs.userPhotoName || 'Моё фото', type: 'photo', value: prefs.userPhotoWallpaper, createdAt: 0 });
     }
-    try {
-      setBusy(true);
-      const raw = await readAsDataURL(file);
-      const url = await resizeImage(raw, 1920);
-      if (chatId) prefs.setChatWallpaper(chatId, { type: 'photo', value: url });
+    if (liveExists && !items.some((i) => i.value === scope)) {
+      legacy.push({ id: 'legacy-live', name: 'Моё видео', type: 'live', value: scope, createdAt: 0 });
+    }
+    return [...legacy, ...items];
+  })();
+
+  // Превью фото, лежащих в IndexedDB (value — ключ, а не dataURL).
+  const [photoPreviews, setPhotoPreviews] = useState<Record<string, string>>({});
+  const photoKeys = myWallpapers
+    .filter((i) => i.type === 'photo' && isPhotoBgKey(i.value))
+    .map((i) => i.value)
+    .join('|');
+  useEffect(() => {
+    let cancelled = false;
+    const keys = photoKeys ? photoKeys.split('|') : [];
+    if (!keys.length) return;
+    (async () => {
+      for (const key of keys) {
+        const url = await loadPhotoBgUrl(key);
+        if (cancelled) return;
+        if (url) setPhotoPreviews((prev) => (prev[key] === url ? prev : { ...prev, [key]: url }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [photoKeys]);
+
+  /** Применить выбранные из списка обои (сохраняется сразу, как и стоковые). */
+  const selectUserWallpaper = (item: UserWallpaperItem) => {
+    setErr(null);
+    if (item.type === 'photo') {
+      if (chatId) prefs.setChatWallpaper(chatId, { type: 'photo', value: item.value });
       else {
-        setUserPhotoWallpaper(url, file.name);
+        setUserPhotoWallpaper(item.value, item.name);
         setGlobalStockWallpaper(CUSTOM_PHOTO_WALLPAPER_ID);
       }
+    } else {
+      if (chatId) prefs.setChatWallpaper(chatId, { type: 'live', value: item.value });
+      else prefs.setGlobalLiveWallpaper(item.value);
+      bumpLiveBg();
+    }
+  };
+
+  const handlePhotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (!files.length) return;
+    setErr(null);
+    setBusy(true);
+    try {
+      let last: UserWallpaperItem | null = null;
+      for (const file of files) {
+        if (file.size > 8 * 1024 * 1024) {
+          setErr('Файл слишком большой. Максимум 8 МБ.');
+          continue;
+        }
+        const raw = await readAsDataURL(file);
+        const url = await resizeImage(raw, 1920);
+        const id = newId();
+        // Фото живёт в IndexedDB — в сторе/localStorage остаётся только ключ.
+        const key = `${scope}:${id}`;
+        await savePhotoBg(url, key);
+        last = { id, name: file.name || 'Фото', type: 'photo', value: key, createdAt: Date.now() };
+        prefs.addUserWallpaper(scope, last);
+      }
+      if (last) selectUserWallpaper(last);
     } catch (ex: any) {
       setErr(ex?.message || 'Не удалось загрузить фото');
     } finally {
@@ -135,21 +218,31 @@ export default function WallpaperSettingsDialog({ open, onClose }: Props) {
     }
   };
 
-  const handleVideo = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const handleVideos = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
     e.target.value = '';
-    if (!file) return;
+    if (!files.length) return;
     setErr(null);
-    if (file.size > 30 * 1024 * 1024) {
-      setErr('Видео слишком большое. Максимум 30 МБ.');
-      return;
-    }
+    setBusy(true);
     try {
-      setBusy(true);
-      await saveLiveBg(file, scope);
-      setLiveExists(true);
-      setGlobalStockWallpaper(CUSTOM_LIVE_WALLPAPER_ID);
-      bumpLiveBg(); // заставит открытые чаты перезагрузить видео
+      let last: UserWallpaperItem | null = null;
+      for (const file of files) {
+        if (file.size > 30 * 1024 * 1024) {
+          setErr('Видео слишком большое. Максимум 30 МБ.');
+          continue;
+        }
+        const id = newId();
+        // У каждого видео свой ключ в IndexedDB — можно хранить несколько сразу.
+        const storageScope = `${scope}:${id}`;
+        await saveLiveBg(file, storageScope);
+        last = { id, name: file.name || 'Видео', type: 'live', value: storageScope, createdAt: Date.now() };
+        prefs.addUserWallpaper(scope, last);
+      }
+      if (last) {
+        setLiveExists(hasLiveBg(scope));
+        selectUserWallpaper(last);
+        bumpLiveBg(); // заставит открытые чаты перезагрузить видео
+      }
     } catch (ex: any) {
       setErr(ex?.message || 'Не удалось сохранить видео');
     } finally {
@@ -157,16 +250,33 @@ export default function WallpaperSettingsDialog({ open, onClose }: Props) {
     }
   };
 
-  const handleRemoveLive = async () => {
-    await clearLiveBg(scope);
-    setLiveExists(false);
-    if (globalStockWallpaper === CUSTOM_LIVE_WALLPAPER_ID) setGlobalStockWallpaper('none');
-    bumpLiveBg();
-  };
-
-  const handleRemovePhoto = () => {
-    if (!chatId) clearUserPhotoWallpaper();
-    if (globalStockWallpaper === CUSTOM_PHOTO_WALLPAPER_ID) setGlobalStockWallpaper('none');
+  /** Убрать свои обои; если они были выбраны — вернуть «без обоев». */
+  const removeMyWallpaper = async (item: UserWallpaperItem) => {
+    const isLegacy = item.id === 'legacy-photo' || item.id === 'legacy-live';
+    const wasSelected = item.type === 'photo'
+      ? selectedUserPhotoValue === item.value
+      : selectedUserLiveValue === item.value;
+    if (item.type === 'live') {
+      await clearLiveBg(item.value);
+      setLiveExists(hasLiveBg(scope));
+      bumpLiveBg();
+    }
+    if (!isLegacy) prefs.removeUserWallpaper(scope, item.id);
+    if (item.type === 'photo' && !chatId && (isLegacy || wasSelected)) clearUserPhotoWallpaper();
+    if (wasSelected) {
+      if (chatId) prefs.setChatWallpaper(chatId, { type: 'stock', value: 'none' });
+      else prefs.setGlobalStockWallpaper('none');
+    }
+    if (item.type === 'photo' && isPhotoBgKey(item.value)) {
+      // Удаляем blob только если на ключ больше никто не ссылается
+      // (одно фото может быть и в общем списке, и в per-chat оверрайде).
+      const st = useChatBgPrefsStore.getState();
+      const referenced =
+        st.userPhotoWallpaper === item.value ||
+        Object.values(st.perChatOverrides).some((o) => o && o.type === 'photo' && o.value === item.value) ||
+        Object.values(st.userWallpapers).some((list) => (list || []).some((i) => i.value === item.value));
+      if (!referenced) await clearPhotoBg(item.value);
+    }
   };
 return (
     <Dialog
@@ -210,20 +320,22 @@ return (
           Общий фон используется в чатах без индивидуальных обоев.
         </Typography>
 
-        {/* Скрытые input'ы для загрузки файлов */}
+        {/* Скрытые input'ы для загрузки файлов (можно выбрать несколько сразу) */}
         <input
           ref={photoInputRef}
           type="file"
+          multiple
           accept="image/*,.png,.jpg,.jpeg,.webp"
           style={{ display: 'none' }}
-          onChange={handlePhoto}
+          onChange={handlePhotos}
         />
         <input
           ref={videoInputRef}
           type="file"
+          multiple
           accept="video/*,.mp4,.webm,.mov"
           style={{ display: 'none' }}
-          onChange={handleVideo}
+          onChange={handleVideos}
         />
 
         {/* Кнопки загрузки своих обоев */}
@@ -235,7 +347,7 @@ return (
             disabled={busy}
             sx={{ color: theme.accent, borderColor: theme.accent, '&:hover': { borderColor: theme.accent, bgcolor: theme.accent + '14' } }}
           >
-            Загрузить своё фото
+            Загрузить фото (можно несколько)
           </Button>
           <Button
             variant="outlined"
@@ -244,81 +356,66 @@ return (
             disabled={busy}
             sx={{ color: theme.accent, borderColor: theme.accent, '&:hover': { borderColor: theme.accent, bgcolor: theme.accent + '14' } }}
           >
-            Загрузить своё видео (MP4)
+            Загрузить видео (можно несколько)
           </Button>
         </Box>
 
         {err && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setErr(null)}>{err}</Alert>}
         {busy && <Typography sx={{ color: theme.textSec, fontSize: 13, mb: 1 }}>⏳ Обработка…</Typography>}
-<Typography sx={{ color: theme.textSec, fontSize: 12, mb: 1, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+        <Typography sx={{ color: theme.textSec, fontSize: 12, mb: 1, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>
           Ваши обои
         </Typography>
+        <Typography sx={{ color: theme.textSec, fontSize: 12, mb: 1.5 }}>
+          Можно загрузить несколько обоев и переключаться между ними — выбранные применяются сразу.
+        </Typography>
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 1.5, mb: 2 }}>
-          {/* Своё фото */}
-          {userPhotoWallpaper && (
-            <Box
-              onClick={() => setGlobalStockWallpaper(CUSTOM_PHOTO_WALLPAPER_ID)}
-              sx={{
-                position: 'relative',
-                aspectRatio: '16/10',
-                borderRadius: 2,
-                overflow: 'hidden',
-                cursor: 'pointer',
-                border: globalStockWallpaper === CUSTOM_PHOTO_WALLPAPER_ID
-                  ? `3px solid ${theme.accent}` : `1px solid ${theme.border}`,
-                transition: 'all 0.2s ease',
-                '&:hover': { transform: 'scale(1.03)', boxShadow: `0 4px 16px ${theme.accent}40` },
-              }}
-            >
-              <Box sx={{ width: '100%', height: '100%', backgroundImage: `url(${userPhotoWallpaper})`, backgroundSize: 'cover', backgroundPosition: 'center' }} />
-              <Box sx={{ position: 'absolute', bottom: 0, left: 0, right: 0, bgcolor: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: 11, fontWeight: 600, py: 0.5, px: 1, textAlign: 'center', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
-                {userPhotoName || 'Моё фото'}
+          {myWallpapers.map((item) => {
+            const isSelected = item.type === 'photo'
+              ? selectedUserPhotoValue === item.value
+              : selectedUserLiveValue === item.value;
+            return (
+              <Box
+                key={`${item.type}-${item.id}`}
+                onClick={() => selectUserWallpaper(item)}
+                sx={{
+                  position: 'relative',
+                  aspectRatio: '16/10',
+                  borderRadius: 2,
+                  overflow: 'hidden',
+                  cursor: 'pointer',
+                  border: isSelected ? `3px solid ${theme.accent}` : `1px solid ${theme.border}`,
+                  transition: 'all 0.2s ease',
+                  '&:hover': { transform: 'scale(1.03)', boxShadow: `0 4px 16px ${theme.accent}40` },
+                }}
+              >
+                {item.type === 'photo' ? (
+                  <Box sx={{ width: '100%', height: '100%', backgroundImage: `url(${isPhotoBgKey(item.value) ? (photoPreviews[item.value] || '') : item.value})`, backgroundSize: 'cover', backgroundPosition: 'center', bgcolor: theme.bg }} />
+                ) : (
+                  <Box sx={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 0.5, bgcolor: theme.bg, color: theme.textSec }}>
+                    <Videocam sx={{ fontSize: 28 }} />
+                    <Typography sx={{ fontSize: 10, fontWeight: 600 }}>Видео</Typography>
+                  </Box>
+                )}
+                <Box sx={{ position: 'absolute', bottom: 0, left: 0, right: 0, bgcolor: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: 11, fontWeight: 600, py: 0.5, px: 1, textAlign: 'center', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                  {item.name}
+                </Box>
+                <IconButton
+                  size="small"
+                  onClick={(e) => { e.stopPropagation(); void removeMyWallpaper(item); }}
+                  sx={{ position: 'absolute', top: 2, right: 2, bgcolor: 'rgba(0,0,0,0.6)', color: '#fff', '&:hover': { bgcolor: 'rgba(255,60,60,0.8)' } }}
+                >
+                  <DeleteOutline sx={{ fontSize: 15 }} />
+                </IconButton>
+                {isSelected && (
+                  <Box sx={{ position: 'absolute', top: 4, left: 4, width: 22, height: 22, borderRadius: '50%', bgcolor: theme.accent, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 'bold' }}>✓</Box>
+                )}
               </Box>
-              <IconButton
-                size="small"
-                onClick={(e) => { e.stopPropagation(); handleRemovePhoto(); }}
-                sx={{ position: 'absolute', top: 2, right: 2, bgcolor: 'rgba(0,0,0,0.6)', color: '#fff', '&:hover': { bgcolor: 'rgba(255,60,60,0.8)' } }}
-              >
-                <DeleteOutline sx={{ fontSize: 15 }} />
-              </IconButton>
-              {globalStockWallpaper === CUSTOM_PHOTO_WALLPAPER_ID && (
-                <Box sx={{ position: 'absolute', top: 4, left: 4, width: 22, height: 22, borderRadius: '50%', bgcolor: theme.accent, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 'bold' }}>✓</Box>
-              )}
-            </Box>
-          )}
-          {/* Своё видео */}
-          {liveExists && (
-            <Box
-              onClick={() => setGlobalStockWallpaper(CUSTOM_LIVE_WALLPAPER_ID)}
-              sx={{
-                position: 'relative',
-                aspectRatio: '16/10',
-                borderRadius: 2,
-                overflow: 'hidden',
-                cursor: 'pointer',
-                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                gap: 0.5,
-                bgcolor: theme.bg,
-                color: theme.textSec,
-                border: globalStockWallpaper === CUSTOM_LIVE_WALLPAPER_ID
-                  ? `3px solid ${theme.accent}` : `1px solid ${theme.border}`,
-                transition: 'all 0.2s ease',
-                '&:hover': { transform: 'scale(1.03)', boxShadow: `0 4px 16px ${theme.accent}40` },
-              }}
-            >
-              <Videocam sx={{ fontSize: 32 }} />
-              <Typography sx={{ fontSize: 11, fontWeight: 600 }}>Моё видео</Typography>
-              <IconButton
-                size="small"
-                onClick={(e) => { e.stopPropagation(); handleRemoveLive(); }}
-                sx={{ position: 'absolute', top: 2, right: 2, bgcolor: 'rgba(0,0,0,0.6)', color: '#fff', '&:hover': { bgcolor: 'rgba(255,60,60,0.8)' } }}
-              >
-                <DeleteOutline sx={{ fontSize: 15 }} />
-              </IconButton>
-              {globalStockWallpaper === CUSTOM_LIVE_WALLPAPER_ID && (
-                <Box sx={{ position: 'absolute', top: 4, left: 4, width: 22, height: 22, borderRadius: '50%', bgcolor: theme.accent, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 'bold' }}>✓</Box>
-              )}
-            </Box>
+            );
+          })}
+          {!myWallpapers.length && (
+            <Typography sx={{ color: theme.textSec, fontSize: 12, gridColumn: '1 / -1' }}>
+              Пока нет своих обоев — загрузите фото или видео выше.
+            </Typography>
           )}
         </Box>
 <Typography sx={{ color: theme.textSec, fontSize: 12, mb: 1, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>

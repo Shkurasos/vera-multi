@@ -20,9 +20,12 @@ const PLAYER_SIDE_MIN = 280;
 const PLAYER_SIDE_COLLAPSED = 44;
 
 export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTMLDivElement | null) => void }) {
-  const { loadChats } = useChatStore();
-  const { theme } = useThemeStore();
-  const { currentTrack, playerCollapsed } = useMusicStore();
+  // Точечные селекторы: смена трека/панели плеера не должна перерисовывать
+  // всё дерево (Sidebar + окно чата) при каждом обновлении musicStore.
+  const loadChats = useChatStore((s) => s.loadChats);
+  const theme = useThemeStore((s) => s.theme);
+  const currentTrack = useMusicStore((s) => s.currentTrack);
+  const playerCollapsed = useMusicStore((s) => s.playerCollapsed);
   const layout = useUserSettingsStore((s) => s.layout);
   const location = useLocation();
   const isMobile = useMediaQuery('(max-width: 700px)');

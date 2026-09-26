@@ -36,10 +36,14 @@ export interface VeraPlaylistPayload {
  */
 export default function PlaylistMessageCard({ payload }: { payload: VeraPlaylistPayload }) {
   const theme = useThemeStore((s) => s.theme);
-  const {
-    currentTrack, isPlaying, togglePlay, next, prev, progress, duration,
-    play,
-  } = useMusicStore();
+  const currentTrack = useMusicStore((s) => s.currentTrack);
+  const isPlaying = useMusicStore((s) => s.isPlaying);
+  const togglePlay = useMusicStore((s) => s.togglePlay);
+  const next = useMusicStore((s) => s.next);
+  const prev = useMusicStore((s) => s.prev);
+  const progress = useMusicStore((s) => s.progress);
+  const duration = useMusicStore((s) => s.duration);
+  const play = useMusicStore((s) => s.play);
   const [savedMsg, setSavedMsg] = useState('');
   const [fullTracks, setFullTracks] = useState<Track[] | null>(null);
 

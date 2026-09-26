@@ -57,6 +57,11 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
   const [queueAnchor, setQueueAnchor] = useState<HTMLElement | null>(null);
   const [vizOpen, setVizOpen] = useState(false);
   const [vizSignal, setVizSignal] = useState({ level: 0, bass: 0, beat: 0 });
+  // Позиция трека: локально (для слайдера) + редкая запись в стор.
+  // Раньше timeupdate писал progress в глобальный стор ~4 раза/сек, из-за чего
+  // MainLayout (подписанный на стор) перерисовывал ВСЁ дерево без остановки.
+  const [localProgress, setLocalProgress] = useState(0);
+  const lastProgressSyncRef = useRef(0);
   const systemAudioReactive = useMusicVisualizerStore((s) => s.systemAudioReactive);
   const setSystemAudioReactive = useMusicVisualizerStore((s) => s.setSystemAudioReactive);
 
@@ -131,6 +136,18 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
     audio.load();
     return unbind;
   }, [currentTrack?.id, currentTrack?.fileUrl, setDuration]);
+
+  // Новая песня — берём стартовую позицию из стора (обычно 0).
+  useEffect(() => {
+    setLocalProgress(useMusicStore.getState().progress);
+  }, [currentTrack?.id]);
+
+  // На паузе фиксируем позицию в сторе, чтобы мини-плееры (профиль и т.п.) не «зависали».
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || isPlaying) return;
+    setProgress(audio.currentTime || 0);
+  }, [isPlaying, setProgress]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -217,6 +234,7 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
         let smoothLevel = 0;
         let smoothBass = 0;
         let smoothBeat = 0;
+        let lastVizEmit = 0;
         const tick = () => {
           analyser.getByteFrequencyData(data);
           const avg = (from: number, to: number) => {
@@ -237,7 +255,13 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
           smoothBass = smooth(smoothBass, Math.min(1, rawBass * 1.65), 0.38, 0.065);
           smoothBeat = smooth(smoothBeat, Math.min(1, rawBeat), 0.58, 0.10);
 
-          setVizSignal({ level: smoothLevel, bass: smoothBass, beat: smoothBeat });
+          // В React-состояние пишем ~20 раз/сек вместо каждого кадра (60/сек):
+          // визуализатору этого достаточно, а плеер не перерисовывается постоянно.
+          const now = performance.now();
+          if (now - lastVizEmit >= 50) {
+            lastVizEmit = now;
+            setVizSignal({ level: smoothLevel, bass: smoothBass, beat: smoothBeat });
+          }
           rafRef.current = requestAnimationFrame(tick);
         };
         tick();
@@ -285,7 +309,21 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
   const handleSeek = (_: unknown, val: number | number[]) => {
     const t = Array.isArray(val) ? val[0] : val;
     if (audioRef.current) audioRef.current.currentTime = t;
+    setLocalProgress(t);
     setProgress(t);
+  };
+
+  // Слайдер двигаем на каждом timeupdate (локальный ререндер только плеера),
+  // а в глобальный стор пишем не чаще раза в секунду — остальным компонентам
+  // (профиль, карточки плейлистов) этого достаточно.
+  const handleTimeUpdate = () => {
+    const t = audioRef.current?.currentTime || 0;
+    setLocalProgress(t);
+    const now = Date.now();
+    if (now - lastProgressSyncRef.current >= 1000) {
+      lastProgressSyncRef.current = now;
+      setProgress(t);
+    }
   };
 
   if (!currentTrack) return null;
@@ -296,7 +334,7 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
     <audio
       ref={audioRef}
       src={currentTrack ? resolveAudioUrl(currentTrack.fileUrl) : ''}
-      onTimeUpdate={() => setProgress(audioRef.current?.currentTime || 0)}
+      onTimeUpdate={handleTimeUpdate}
       onEnded={next}
       style={{ display: 'none' }}
     />
@@ -466,7 +504,7 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
                 <Typography sx={{ color: theme.textSec, fontSize: 12 }} noWrap>{currentTrack.artist || 'Неизвестный'}</Typography>
               </Box>
             </Box>
-            <Slider size="small" min={0} max={duration || 1} value={progress} onChange={handleSeek} sx={{ color: theme.accent }} />
+            <Slider size="small" min={0} max={duration || 1} value={localProgress} onChange={handleSeek} sx={{ color: theme.accent }} />
             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 0.5 }}>
               <IconButton size="small" onClick={toggleShuffle} sx={{ color: shuffle ? theme.accent : theme.textSec }}><Shuffle /></IconButton>
               <IconButton onClick={prev} sx={{ color: theme.textSec }}><SkipPrevious /></IconButton>
@@ -540,9 +578,9 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
         </Box>
 
         <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
-          <Typography sx={{ fontSize: 11, color: theme.textSec, flexShrink: 0, minWidth: 32, textAlign: 'right' }}>{fmt(progress)}</Typography>
+          <Typography sx={{ fontSize: 11, color: theme.textSec, flexShrink: 0, minWidth: 32, textAlign: 'right' }}>{fmt(localProgress)}</Typography>
           <Slider
-            size="small" min={0} max={duration || 1} value={progress}
+            size="small" min={0} max={duration || 1} value={localProgress}
             onChange={handleSeek}
             sx={{ color: theme.accent, flex: 1,
               '& .MuiSlider-thumb': { width: 10, height: 10 },

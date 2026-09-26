@@ -95,6 +95,8 @@ export interface ChatMember {
   isMuted: boolean;
   lastReadMessageId?: string;
   joinedAt: string;
+  /** «Мои скины» участника для этого чата: '' — без скина, ключа нет — как в профиле. */
+  skins?: { ring?: string; selfcard?: string; bubble?: string };
 }
 
 export interface MessageAttachment {

@@ -17,10 +17,24 @@ export const connectSocket = (token: string): Socket => {
   socket.on('connect', () => console.log('🔌 WebSocket подключён'));
   socket.on('disconnect', () => console.log('🔌 WebSocket отключён'));
   socket.on('connect_error', (err) => console.error('WebSocket ошибка:', err.message));
-  socket.on('user:equipment', async (equipment: Pick<User, 'id' | 'activeRing' | 'activeSelfCard' | 'activeBubble'>) => {
+  socket.on('user:equipment', async (equipment: Pick<User, 'id' | 'activeRing' | 'activeSelfCard' | 'activeBubble'> & { chatId?: string; skins?: { ring?: string; selfcard?: string; bubble?: string } }) => {
     if (!equipment?.id) return;
-    useEquipmentStore.getState().update(equipment);
     const { useChatStore } = await import('../store/chatStore');
+    // «Мои скины» для конкретного чата (payload с chatId): правим только
+    // skins участника в этом чате, глобальный образ не трогаем.
+    if (equipment.chatId) {
+      const applySkins = (chat: Chat): Chat => chat.id !== equipment.chatId ? chat : {
+        ...chat,
+        members: chat.members.map(member => member.userId === equipment.id
+          ? { ...member, skins: equipment.skins || undefined } : member),
+      };
+      useChatStore.setState(state => ({
+        chats: state.chats.map(applySkins),
+        activeChat: state.activeChat ? applySkins(state.activeChat) : null,
+      }));
+      return;
+    }
+    useEquipmentStore.getState().update(equipment);
     const updateChat = (chat: Chat): Chat => ({
       ...chat,
       members: chat.members.map(member => member.userId === equipment.id && member.user

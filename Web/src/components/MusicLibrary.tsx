@@ -14,7 +14,19 @@ function formatDuration(s: number): string {
 }
 
 export default function MusicLibrary() {
-  const { tracks, currentTrack, isPlaying, loadTracks, search, play, playShuffled, togglePlay, uploadTrack, updateTrack, deleteTrack, importUrl, importZip } = useMusicStore();
+  const tracks = useMusicStore((s) => s.tracks);
+  const currentTrack = useMusicStore((s) => s.currentTrack);
+  const isPlaying = useMusicStore((s) => s.isPlaying);
+  const loadTracks = useMusicStore((s) => s.loadTracks);
+  const search = useMusicStore((s) => s.search);
+  const play = useMusicStore((s) => s.play);
+  const playShuffled = useMusicStore((s) => s.playShuffled);
+  const togglePlay = useMusicStore((s) => s.togglePlay);
+  const uploadTrack = useMusicStore((s) => s.uploadTrack);
+  const updateTrack = useMusicStore((s) => s.updateTrack);
+  const deleteTrack = useMusicStore((s) => s.deleteTrack);
+  const importUrl = useMusicStore((s) => s.importUrl);
+  const importZip = useMusicStore((s) => s.importZip);
   const { playlists, load: loadPlaylists, addTrack, create } = usePlaylistStore();
   const { theme } = useThemeStore();
   const [tab, setTab] = useState(0);

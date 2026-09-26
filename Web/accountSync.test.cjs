@@ -64,3 +64,39 @@ test('queued writes cannot cross an account switch', async () => {
   for (const callback of env.timers.values()) await callback();
   assert.equal(env.writes.length, 0);
 });
+
+test('empty remote chat-bg snapshot does not wipe local wallpapers', async () => {
+  // Серверный снапшот без списка фото-обоев (dataURL-синк падал с 413)
+  // не должен затирать локальные userWallpapers/userPhotoWallpaper.
+  const env = setup({ brightness: {}, userWallpapers: {}, userPhotoWallpaper: null });
+  const store = createStore(() => ({
+    brightness: {},
+    userWallpapers: { global: [{ id: 'a', name: 'Закат', type: 'photo', value: 'global:a', createdAt: 1 }] },
+    userPhotoWallpaper: 'global:a',
+    userPhotoName: 'Закат',
+    perChatOverrides: {},
+  }));
+  env.sync.enableStoreSync('chat-bg-prefs', store);
+  await env.sync.initStoreSyncOnLogin('owner');
+  assert.equal(store.getState().userPhotoWallpaper, 'global:a');
+  assert.equal(store.getState().userWallpapers.global.length, 1);
+  assert.equal(store.getState().userWallpapers.global[0].value, 'global:a');
+});
+
+test('remote snapshot with wallpapers replaces local list', async () => {
+  const env = setup({
+    userWallpapers: { global: [{ id: 'b', name: 'Море', type: 'photo', value: 'global:b', createdAt: 2 }] },
+    userPhotoWallpaper: 'global:b',
+    userPhotoName: 'Море',
+  });
+  const store = createStore(() => ({
+    userWallpapers: { global: [{ id: 'a', name: 'Закат', type: 'photo', value: 'global:a', createdAt: 1 }] },
+    userPhotoWallpaper: 'global:a',
+    userPhotoName: 'Закат',
+    perChatOverrides: {},
+  }));
+  env.sync.enableStoreSync('chat-bg-prefs', store);
+  await env.sync.initStoreSyncOnLogin('owner');
+  assert.equal(store.getState().userWallpapers.global[0].id, 'b');
+  assert.equal(store.getState().userPhotoWallpaper, 'global:b');
+});

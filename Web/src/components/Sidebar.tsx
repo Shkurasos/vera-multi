@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, lazy, Suspense } from 'react';
+﻿import React, { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
 const ThemeEditor = lazy(() => import('./ThemeEditor').then(m => ({ default: m.ThemeEditor })));
 const ThemeMarketplace = lazy(() => import('./ThemeMarketplace').then(m => ({ default: m.ThemeMarketplace })));
 import {
@@ -63,11 +63,26 @@ const TABS: { id: SidebarTab; label: string }[] = [
 const SIDEBAR_MIN = 72;
 
 export default function Sidebar({ open, onToggle, mobile }: Props) {
-  const { chats, activeChat, setActiveChat, loadChats, onlineUsers } = useChatStore();
-  const { togglePin, toggleArchive, toggleMute, isPinned, isArchived, isMuted } = useChatPrefsStore();
-  const { user } = useAuthStore();
-  const { theme } = useThemeStore();
-  const { getDraft } = useDraftsStore();
+  // Точечные селекторы: перерисовка только при изменениях, влияющих на список чатов.
+  const chats = useChatStore((s) => s.chats);
+  const activeChat = useChatStore((s) => s.activeChat);
+  const setActiveChat = useChatStore((s) => s.setActiveChat);
+  const loadChats = useChatStore((s) => s.loadChats);
+  const onlineUsers = useChatStore((s) => s.onlineUsers);
+  const togglePin = useChatPrefsStore((s) => s.togglePin);
+  const toggleArchive = useChatPrefsStore((s) => s.toggleArchive);
+  const toggleMute = useChatPrefsStore((s) => s.toggleMute);
+  // Подписка на сами списки закрепов/архива/мутов: перерисовка — только при их изменении.
+  const pinnedIds = useChatPrefsStore((s) => s.pinnedIds);
+  const archivedIds = useChatPrefsStore((s) => s.archivedIds);
+  const mutedIds = useChatPrefsStore((s) => s.mutedIds);
+  const isPinned = useCallback((chatId: string) => pinnedIds.includes(chatId), [pinnedIds]);
+  const isArchived = useCallback((chatId: string) => archivedIds.includes(chatId), [archivedIds]);
+  const isMuted = useCallback((chatId: string) => mutedIds.includes(chatId), [mutedIds]);
+  const user = useAuthStore((s) => s.user);
+  const theme = useThemeStore((s) => s.theme);
+  const drafts = useDraftsStore((s) => s.drafts);
+  const getDraft = useCallback((chatId: string) => drafts[chatId] || '', [drafts]);
   const navigate = useNavigate();
 
   // Обводка аватара из магазина VERA — применяем к своей аватарке (в футере/шапке).
@@ -247,24 +262,28 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
     scrollTimerRef.current = window.setTimeout(() => setScrollPulse(false), 170);
   }
 
-  const filtered = chats.filter(c => {
-    if (!c || !c.id) return false;
-    const otherMember = c.members?.find(m => m.userId !== user?.id);
-    const name = c.name || [otherMember?.user?.firstName, otherMember?.user?.lastName].filter(Boolean).join(' ') || otherMember?.user?.username || '';
-    const matchSearch = name.toLowerCase().includes(search.toLowerCase());
-    if (tab === 'archive') return matchSearch && isArchived(c.id);
-    if (tab === 'groups') return matchSearch && (c.type === 'group' || c.type === 'channel');
-    return matchSearch && !isArchived(c.id);
-  });
+  // Фильтрация + сортировка пересчитываются только при реальных изменениях
+  // (раньше выполнялись на каждый рендер списка).
+  const sorted = useMemo(() => {
+    const filtered = chats.filter(c => {
+      if (!c || !c.id) return false;
+      const otherMember = c.members?.find(m => m.userId !== user?.id);
+      const name = c.name || [otherMember?.user?.firstName, otherMember?.user?.lastName].filter(Boolean).join(' ') || otherMember?.user?.username || '';
+      const matchSearch = name.toLowerCase().includes(search.toLowerCase());
+      if (tab === 'archive') return matchSearch && isArchived(c.id);
+      if (tab === 'groups') return matchSearch && (c.type === 'group' || c.type === 'channel');
+      return matchSearch && !isArchived(c.id);
+    });
 
-  const sorted = [...filtered].sort((a, b) => {
-    const ap = isPinned(a.id) ? 1 : 0;
-    const bp = isPinned(b.id) ? 1 : 0;
-    if (ap !== bp) return bp - ap;
-    const at = a.lastMessage?.createdAt || a.createdAt;
-    const bt = b.lastMessage?.createdAt || b.createdAt;
-    return new Date(bt).getTime() - new Date(at).getTime();
-  });
+    return [...filtered].sort((a, b) => {
+      const ap = isPinned(a.id) ? 1 : 0;
+      const bp = isPinned(b.id) ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      const at = a.lastMessage?.createdAt || a.createdAt;
+      const bt = b.lastMessage?.createdAt || b.createdAt;
+      return new Date(bt).getTime() - new Date(at).getTime();
+    });
+  }, [chats, search, tab, user?.id, isPinned, isArchived]);
 
   async function handleSearchUser() {
     const query = searchUser.trim();
@@ -524,7 +543,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
         {sorted.map(chat => {
           const name = getChatName(chat);
           const active = activeChat?.id === chat.id;
-           return <Tooltip key={chat.id} title={avatarOnly ? name : ''} placement="right"><ListItem onClick={() => { setActiveChat(chat); navigate(`/chat/${chat.id}`); }} onContextMenu={(e) => handleContextMenu(e, chat)} sx={{ cursor: 'pointer', ...(horizontal ? { flexDirection: 'column', width: 84, minWidth: 84, mr: .5, py: 1, px: .5, alignItems: 'center', textAlign: 'center' } : avatarOnly ? { justifyContent: 'center', px: .5, py: .65, mb: .4 } : { px: open ? 1.15 : .65, py: .85, mb: .55 }), borderRadius: 3.5, bgcolor: active ? theme.bgActive : 'rgba(255,255,255,0.026)', border: `1px solid ${active ? theme.accent + '66' : 'rgba(255,255,255,0.045)'}`, boxShadow: active ? `0 12px 34px ${theme.accent}22` : 'none', backdropFilter: 'blur(14px)', overflow: 'hidden', '&:hover': { bgcolor: theme.bgHover, transform: 'translateY(-1px)' }, transition: `background .22s ${motion.easeOut}, transform .28s ${motion.spring}, box-shadow .22s ${motion.easeOut}` }}>
+           return <Tooltip key={chat.id} title={avatarOnly ? name : ''} placement="right"><ListItem onClick={() => { setActiveChat(chat); navigate(`/chat/${chat.id}`); }} onContextMenu={(e) => handleContextMenu(e, chat)} sx={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 64px', ...(horizontal ? { flexDirection: 'column', width: 84, minWidth: 84, mr: .5, py: 1, px: .5, alignItems: 'center', textAlign: 'center' } : avatarOnly ? { justifyContent: 'center', px: .5, py: .65, mb: .4 } : { px: open ? 1.15 : .65, py: .85, mb: .55 }), borderRadius: 3.5, bgcolor: active ? theme.bgActive : 'rgba(255,255,255,0.026)', border: `1px solid ${active ? theme.accent + '66' : 'rgba(255,255,255,0.045)'}`, boxShadow: active ? `0 12px 34px ${theme.accent}22` : 'none', backdropFilter: 'blur(14px)', overflow: 'hidden', '&:hover': { bgcolor: theme.bgHover, transform: 'translateY(-1px)' }, transition: `background .22s ${motion.easeOut}, transform .28s ${motion.spring}, box-shadow .22s ${motion.easeOut}` }}>
              <Badge color={avatarOnly && chat.unreadCount ? 'primary' : 'success'} variant={avatarOnly && chat.unreadCount ? 'standard' : 'dot'} badgeContent={avatarOnly ? chat.unreadCount : undefined} invisible={!isChatOnline(chat) && !(avatarOnly && chat.unreadCount)} overlap="circular">
                {avatarOnly || layout.showAvatarsInList ? (
                  chat.type === 'saved' ? (

@@ -187,6 +187,9 @@ export const chatsApi = {
   getAll: () => api.get('/chats'),
   getById: (id: string) => api.get(`/chats/${id}`),
   getChannelSkins: (id: string) => api.get<string[]>(`/chats/${id}/skins`),
+  /** «Мои скины» для моих сообщений в чате (null — вернуть «как в профиле»). */
+  setMySkins: (id: string, skins: { ring?: string | null; selfcard?: string | null; bubble?: string | null }) =>
+    api.put(`/chats/${id}/my-skins`, skins),
   createDirect: (targetUserId: string) => api.post('/chats/direct', { targetUserId }),
   createGroup: (name: string, memberIds: string[]) => api.post('/chats/group', { name, memberIds }),
   createChannel: (name: string, description?: string) => api.post('/chats/channel', { name, description }),
