@@ -38,10 +38,15 @@ import { useChatBgPrefsStore } from './store/chatBgPrefsStore';
 import { saveLiveBg } from './services/chatLiveBgStorage';
 import { savePhotoBg, isPhotoBgKey, startPhotoWallpaperMigration } from './services/chatBgPhotoStorage';
 import ChatSettingsOfferDialog from './components/ChatSettingsOfferDialog';
-import Store, { StoreOpen } from './components/Store';
 import AppLockGate from './components/AppLockGate';
 import DevInspector from './components/DevInspector';
 import { GlobalStyles } from '@mui/material';
+
+// Магазин/инвентарь/кейсы — тяжёлый оверлей (арт паков, каталоги кейсов,
+// кошелёк). Открывается редко, поэтому грузим его по требованию, а не в
+// начальном бандле: StoreOpen смонтирован всегда, но рендерит Store только
+// когда open === true.
+const StoreOpen = React.lazy(() => import('./components/Store').then((m) => ({ default: m.StoreOpen })));
 
 // Звук уведомления
 let audioCtx: AudioContext | null = null;
@@ -553,7 +558,9 @@ export default function App() {
 
       {/* Магазин — плашка-оверлей, открывается на любом экране */}
       {isAuthenticated && (
-        <StoreOpen />
+        <Suspense fallback={null}>
+          <StoreOpen />
+        </Suspense>
       )}
 
       {/* Мобильная нижняя навигация — глобально на всех авторизованных экранах */}

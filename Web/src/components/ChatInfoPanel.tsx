@@ -50,7 +50,9 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
   const updateChatList = useChatStore((s) => s.updateChatList);
   const onlineUsers = useChatStore((s) => s.onlineUsers);
   const chats = useChatStore((s) => s.chats);
-  const messages = useChatStore((s) => s.messages);
+  // Только сообщения этого чата: раньше панель перерисовывалась на каждое
+  // сообщение в любом чате (подписка на всю карту messages).
+  const chatMessages = useChatStore((s) => s.messages[chat.id]);
   const theme = useThemeStore((s) => s.theme);
   // «Мои скины» чата: применяются только к моим сообщениям (см. MessageBubble).
   const chatSkins = useChatSkinStore((s) => s.overrides[chat.id]);
@@ -121,7 +123,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
       try {
         const collected: Message[] = [];
         if (isPeerAvailable()) {
-          collected.push(...(messages[chat.id] || []));
+          collected.push(...(chatMessages || []));
         } else {
           let before: string | undefined;
           for (;;) {
@@ -134,7 +136,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
             before = oldest;
           }
           // Keep locally archived messages too, including files uploaded while offline.
-          collected.push(...(messages[chat.id] || []));
+          collected.push(...(chatMessages || []));
         }
         const unique = new Map<string, Message>();
         collected.forEach((message) => {
@@ -142,14 +144,14 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
         });
         if (!cancelled) setMediaMessages(Array.from(unique.values()));
       } catch {
-        if (!cancelled) setMediaMessages(messages[chat.id] || []);
+        if (!cancelled) setMediaMessages(chatMessages || []);
       } finally {
         if (!cancelled) setMediaLoading(false);
       }
     }
     loadMediaHistory();
     return () => { cancelled = true; };
-  }, [chat.id, messages[chat.id]?.length]);
+  }, [chat.id, chatMessages?.length]);
 
   const mediaItems = useMemo(() => {
     const unique = new Map<string, MessageAttachment>();

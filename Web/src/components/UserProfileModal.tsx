@@ -33,10 +33,14 @@ function InfoRow({ icon, label, value, theme, pre }: any) {
 }
 
 export default function UserProfileModal({ user, open, onClose }: Props) {
-  const { theme } = useThemeStore();
+  const theme = useThemeStore((s) => s.theme);
   const navigate = useNavigate();
-  const { setActiveChat, loadChats, onlineUsers } = useChatStore();
-  const { user: me } = useAuthStore();
+  // Только нужные поля: профиль открывается поверх чата и раньше перерисовывался
+  // на каждое сообщение в любом чате (подписка на весь chatStore).
+  const setActiveChat = useChatStore((s) => s.setActiveChat);
+  const loadChats = useChatStore((s) => s.loadChats);
+  const onlineUsers = useChatStore((s) => s.onlineUsers);
+  const me = useAuthStore((s) => s.user);
   const myCustom = useProfileCustomizationStore();
   const [remoteCustom, setRemoteCustom] = React.useState<any>(null);
   const [reportOpen, setReportOpen] = React.useState(false);

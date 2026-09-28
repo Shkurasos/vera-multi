@@ -55,22 +55,36 @@ export default function ChatWallpaper({ spec, isLight = false }: ChatWallpaperPr
   const [tilt, setTilt] = useState({ x: 0, y: 0 });
   const [ripples, setRipples] = useState<{ id: number; x: number; y: number }[]>([]);
   const rippleId = useRef(0);
+  // mousemove летит сотни раз в секунду, а setTilt перерисовывает весь слой
+  // обоев вместе со всеми частицами — коалесцируем до одного апдейта на кадр.
+  const tiltRafRef = useRef<number | null>(null);
+  const tiltNextRef = useRef({ x: 0, y: 0 });
 
   // Параллакс от мыши / наклона устройства.
   useEffect(() => {
     if (!spec || (spec.type !== 'parallax' && spec.type !== 'touch')) return;
+    const scheduleTilt = (x: number, y: number) => {
+      tiltNextRef.current = { x, y };
+      if (tiltRafRef.current !== null) return;
+      tiltRafRef.current = requestAnimationFrame(() => {
+        tiltRafRef.current = null;
+        setTilt(tiltNextRef.current);
+      });
+    };
     const onMove = (e: MouseEvent) => {
-      const x = (e.clientX / window.innerWidth - 0.5) * 2;
-      const y = (e.clientY / window.innerHeight - 0.5) * 2;
-      setTilt({ x, y });
+      scheduleTilt((e.clientX / window.innerWidth - 0.5) * 2, (e.clientY / window.innerHeight - 0.5) * 2);
     };
     const onOrient = (e: DeviceOrientationEvent) => {
       if (e.gamma == null || e.beta == null) return;
-      setTilt({ x: Math.max(-1, Math.min(1, e.gamma / 45)), y: Math.max(-1, Math.min(1, (e.beta - 45) / 45)) });
+      scheduleTilt(Math.max(-1, Math.min(1, e.gamma / 45)), Math.max(-1, Math.min(1, (e.beta - 45) / 45)));
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('deviceorientation', onOrient);
-    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('deviceorientation', onOrient); };
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('deviceorientation', onOrient);
+      if (tiltRafRef.current !== null) { cancelAnimationFrame(tiltRafRef.current); tiltRafRef.current = null; }
+    };
   }, [spec]);
 
   // «Жидкое стекло»: круги по касанию.

@@ -36,9 +36,11 @@ function parsePayload(attachment: any): GroupInvitePayload | null {
 }
 
 export default function GroupInviteCard({ attachment }: { attachment: any }) {
-  const { theme } = useThemeStore();
-  const { user } = useAuthStore();
-  const { loadChats } = useChatStore();
+  // Точечные селекторы: карточка рендерится внутри сообщения и не должна
+  // перерисовываться на любое изменение чатов/пользователя.
+  const theme = useThemeStore((s) => s.theme);
+  const user = useAuthStore((s) => s.user);
+  const loadChats = useChatStore((s) => s.loadChats);
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   const payload = parsePayload(attachment);

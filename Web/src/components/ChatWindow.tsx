@@ -218,8 +218,16 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   // Точечные селекторы: окно чата перерисовывается только при изменениях,
   // которые реально влияют на него (а не на каждый чих в сторе).
   const chats = useChatStore((s) => s.chats);
-  const messages = useChatStore((s) => s.messages);
+  // Только сообщения открытого чата: любое сообщение в ЛЮБОМ чате заменяет
+  // identity всей карты messages, из-за чего окно чата перерисовывалось и
+  // заново собирало группы по датам. Массивы отдельных чатов сохраняют identity.
+  const chatMessagesForId = useChatStore((s) => s.messages[id || '']);
   const activeChat = useChatStore((s) => s.activeChat);
+  // Закреплённые могут относиться к activeChat, который на миг расходится с id
+  // при переключении чатов, — держим отдельную (обычно пустую) подписку.
+  const activeChatFallbackMessages = useChatStore(
+    (s) => (activeChat && activeChat.id !== id ? s.messages[activeChat.id] : undefined),
+  );
   const setActiveChat = useChatStore((s) => s.setActiveChat);
   const updateChatList = useChatStore((s) => s.updateChatList);
   const sendMessage = useChatStore((s) => s.sendMessage);
@@ -530,14 +538,35 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   // useMemo: новый массив на каждый рендер сбрасывал бы memo у groupedMessages
   // и пересчитывался бы при любом локальном состоянии (hover, поиск и т.п.).
   const chatMessages = useMemo(
-    () => (messages[id || ''] || []).filter(m => activeChat?.type !== 'channel' || !m.replyToId),
-    [messages, id, activeChat?.type],
+    () => (chatMessagesForId || []).filter(m => activeChat?.type !== 'channel' || !m.replyToId),
+    [chatMessagesForId, activeChat?.type],
   );
 
   // Рендерим только последние renderLimit сообщений (см. RENDER_CHUNK).
-  const windowedMessages = chatMessages.length > renderLimit
-    ? chatMessages.slice(chatMessages.length - renderLimit)
-    : chatMessages;
+  // useMemo обязателен: slice() каждый рендер создавал новый массив, из-за чего
+  // сбрасывался memo группировки по датам и Intl-форматирование дат выполнялось
+  // для всех видимых сообщений на любой локальный рендер (hover, набор текста...).
+  const windowedMessages = useMemo(
+    () => (chatMessages.length > renderLimit
+      ? chatMessages.slice(chatMessages.length - renderLimit)
+      : chatMessages),
+    [chatMessages, renderLimit],
+  );
+
+  // Непрочитанные «снизу» считаем один раз на изменение истории, а не на каждое
+  // событие скролла: раньше это был findIndex + slice + filter по всем сообщениям
+  // чата на каждый тик скролла (O(n) × десятки вызовов в секунду).
+  const unreadMessageCount = useMemo(() => {
+    const meId = user?.id || '';
+    const isUnread = (msg: Message) => msg.senderId !== meId && !msg.readBy?.includes(meId);
+    const from = chatMessages.findIndex(isUnread);
+    if (from === -1) return 0;
+    let count = 0;
+    for (let i = from; i < chatMessages.length; i += 1) {
+      if (isUnread(chatMessages[i])) count += 1;
+    }
+    return count;
+  }, [chatMessages, user?.id]);
 
   // Звук при новом сообщении от другого пользователя обрабатывается глобально
   // в App.tsx (слушатель socket 'message-new'). Здесь только сбрасываем счётчик
@@ -680,24 +709,13 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
         setRenderLimit((n) => Math.min(chatMessages.length, n + RENDER_CHUNK));
       }
 
-      if (distanceFromBottom > 200) {
-        const lastReadIndex = chatMessages.findIndex(msg => msg.senderId !== user?.id && !msg.readBy?.includes(user?.id || ''));
-        if (lastReadIndex !== -1) {
-          const unreadCount = chatMessages.slice(lastReadIndex).filter(msg =>
-            msg.senderId !== user?.id && !msg.readBy?.includes(user?.id || '')
-          ).length;
-          setUnreadAtBottom(unreadCount);
-        } else {
-          setUnreadAtBottom(0);
-        }
-      } else {
-        setUnreadAtBottom(0);
-      }
+      // Значение берём из memo выше — на скролле никаких проходов по истории.
+      setUnreadAtBottom(distanceFromBottom > 200 ? unreadMessageCount : 0);
     };
 
     container.addEventListener('scroll', handleScroll, { passive: true });
     return () => container.removeEventListener('scroll', handleScroll);
-  }, [chatMessages, user?.id, renderLimit]);
+  }, [chatMessages, user?.id, renderLimit, unreadMessageCount]);
 
   // Память позиции не храним — чат всегда открывается на последнем сообщении.
 
@@ -957,12 +975,22 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const groupedMessages = useMemo(() => {
     if (!visibleMessages.length) return [];
     const groups: { date: string; messages: Message[] }[] = [];
-    let currentDate = '';
+    // Кэш подписей по календарному дню: toLocaleDateString (Intl) — самая
+    // дорогая часть группировки, а раньше она вызывалась для КАЖДОГО сообщения
+    // на каждый пересчёт. Теперь — один раз на уникальный день.
+    const labels = new Map<string, string>();
+    let currentKey = '';
     for (const msg of visibleMessages) {
-      const date = new Date(msg.createdAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
-      if (date !== currentDate) {
-        groups.push({ date, messages: [msg] });
-        currentDate = date;
+      const d = new Date(msg.createdAt);
+      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      let label = labels.get(key);
+      if (label === undefined) {
+        label = d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+        labels.set(key, label);
+      }
+      if (key !== currentKey) {
+        groups.push({ date: label, messages: [msg] });
+        currentKey = key;
       } else {
         groups[groups.length - 1].messages.push(msg);
       }
@@ -1034,7 +1062,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     : '';
   const pinnedList = useMemo(() => {
     if (!activeChat || !pinnedKey) return [] as Message[];
-    const msgs = messages[activeChat.id] || [];
+    const msgs = (activeChat.id === id ? chatMessagesForId : activeChatFallbackMessages) || [];
     const fromServer = activeChat.pinnedMessages || [];
     const legacy = pinnedMessages[activeChat.id];
     return pinnedKey.split('|')
@@ -1042,7 +1070,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
         || fromServer.find((m) => m.id === pid)
         || (legacy && legacy.id === pid ? legacy : null))
       .filter(Boolean) as Message[];
-  }, [activeChat?.id, activeChat?.pinnedMessages, pinnedKey, messages, pinnedMessages]);
+  }, [activeChat?.id, activeChat?.pinnedMessages, pinnedKey, chatMessagesForId, activeChatFallbackMessages, pinnedMessages, id]);
   const pinnedCount = pinnedList.length;
   const pinnedAt = pinnedCount ? Math.min(pinnedIndex, pinnedCount - 1) : 0;
   const currentPinned = pinnedList[pinnedAt] || null;

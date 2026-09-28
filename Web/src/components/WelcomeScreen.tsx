@@ -5,8 +5,11 @@ import { useNavigate } from 'react-router-dom';
 import { useThemeStore } from '../store/themeStore';
 
 export default function WelcomeScreen() {
-  const { chats, setActiveChat } = useChatStore();
-  const { theme } = useThemeStore();
+  // Точечные селекторы: экран открыт, пока чат не выбран, — он не должен
+  // перерисовываться на каждое обновление непрочитанных/сообщений в сторе.
+  const chats = useChatStore((s) => s.chats);
+  const setActiveChat = useChatStore((s) => s.setActiveChat);
+  const theme = useThemeStore((s) => s.theme);
   const navigate = useNavigate();
 
   return (

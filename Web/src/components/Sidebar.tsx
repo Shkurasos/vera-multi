@@ -93,23 +93,29 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   const ringVal = ringItem?.value as any;
   const colorModes = useShopStore(s => s.colorModes);
   const customProfileSpec = useCustomEquipStore((s) => s.equipped.profile ? s.items[s.equipped.profile]?.spec : undefined);
-  const buildRingSx = (active: boolean): Record<string, any> => {
-    const base: Record<string, any> = {
-      boxShadow: `0 0 0 2px ${active ? theme.accent + '55' : 'rgba(255,255,255,0.08)'}`,
+  // Стиль обводки зависит только от «активен ли чат», поэтому считаем обе
+  // вариации один раз на смену темы/скина, а не для каждой строки списка на
+  // каждый рендер (раньше это были skinColors + buildShopRingSx ×N чатов).
+  const ringSx = useMemo(() => {
+    const build = (active: boolean): Record<string, any> => {
+      const base: Record<string, any> = {
+        boxShadow: `0 0 0 2px ${active ? theme.accent + '55' : 'rgba(255,255,255,0.08)'}`,
+      };
+      if (ringVal) {
+        // Единый стиль обводки из магазина (с анимациями для gradient/glow/pulse/aurora).
+        Object.assign(base, skinColors(buildShopRingSx(ringVal, theme.accent, active, 1), ringItem, theme.accent, !!ringItem && colorModes[ringItem.id] === 'theme'));
+      }
+      // Кастомный «профиль» от авторов — только для собственной аватарки.
+      if (active && customProfileSpec) {
+        const st = specToStyle(customProfileSpec);
+        if (st.border) base.border = st.border;
+        if (st.background) base.background = st.background;
+        if (st.boxShadow) base.boxShadow = st.boxShadow;
+      }
+      return base;
     };
-    if (ringVal) {
-      // Единый стиль обводки из магазина (с анимациями для gradient/glow/pulse/aurora).
-      Object.assign(base, skinColors(buildShopRingSx(ringVal, theme.accent, active, 1), ringItem, theme.accent, !!ringItem && colorModes[ringItem.id] === 'theme'));
-    }
-    // Кастомный «профиль» от авторов — только для собственной аватарки.
-    if (active && customProfileSpec) {
-      const st = specToStyle(customProfileSpec);
-      if (st.border) base.border = st.border;
-      if (st.background) base.background = st.background;
-      if (st.boxShadow) base.boxShadow = st.boxShadow;
-    }
-    return base;
-  };
+    return [build(false), build(true)];
+  }, [theme.accent, ringVal, ringItem, colorModes, customProfileSpec]);
 
   const [tab, setTab] = useState<SidebarTab>('chats');
   const [search, setSearch] = useState('');
@@ -551,7 +557,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
                      width: horizontal ? 52 : 46, 
                      height: horizontal ? 52 : 46, 
                      bgcolor: theme.accent, 
-                     ...buildRingSx(active), 
+                     ...ringSx[active ? 1 : 0], 
                      transform: scrollPulse ? 'scale(.88)' : 'scale(1)', 
                      transition: `transform ${scrollPulse ? 120 : 520}ms ${scrollPulse ? motion.easeIn : motion.spring}, box-shadow .3s ease, border-color .3s ease`, 
                      willChange: 'transform' 
@@ -563,7 +569,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
                      width: horizontal ? 52 : 46, 
                      height: horizontal ? 52 : 46, 
                      bgcolor: theme.accent, 
-                     ...buildRingSx(active), 
+                     ...ringSx[active ? 1 : 0], 
                      transform: scrollPulse ? 'scale(.88)' : 'scale(1)', 
                      transition: `transform ${scrollPulse ? 120 : 520}ms ${scrollPulse ? motion.easeIn : motion.spring}, box-shadow .3s ease, border-color .3s ease`, 
                      willChange: 'transform' 

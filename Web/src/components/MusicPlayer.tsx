@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { Box, IconButton, Slider, Typography, Tooltip, Popover, List, ListItemButton, Avatar, Button, TextField, useMediaQuery } from '@mui/material';
 import {
@@ -12,6 +12,7 @@ import { useThemeStore } from '../store/themeStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
 import { usePlaylistStore } from '../store/playlistStore';
 import { useMusicVisualizerStore } from '../store/musicVisualizerStore';
+import type { MusicVisualizerSettings } from '../store/musicVisualizerStore';
 import MusicVisualizerOverlay from './MusicVisualizerOverlay';
 import MusicVisualizerSettingsDialog from './MusicVisualizerSettingsDialog';
 
@@ -24,6 +25,33 @@ const resolveAudioUrl = (url: string): string => {
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
 
+/**
+ * Сигналы визуализатора обновляются ~20 раз в секунду. Раньше они лежали в
+ * useState плеера, и каждый апдейт перерисовывал весь MusicPlayer: очередь,
+ * плейлисты, слайдеры, попапы. Держим их в отдельном мини-сторе и подписываем
+ * только сам оверлей — плеер при воспроизведении больше не перерисовывается.
+ */
+const vizSignalStore = (() => {
+  let snapshot = { level: 0, bass: 0, beat: 0 };
+  const listeners = new Set<() => void>();
+  return {
+    getSnapshot: () => snapshot,
+    set: (next: { level: number; bass: number; beat: number }) => {
+      snapshot = next;
+      listeners.forEach((listener) => listener());
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+  };
+})();
+
+function ReactiveVisualizerOverlay({ settings }: { settings: MusicVisualizerSettings }) {
+  const signal = useSyncExternalStore(vizSignalStore.subscribe, vizSignalStore.getSnapshot);
+  return <MusicVisualizerOverlay settings={settings} {...signal} />;
+}
+
 // Минимальная ширина боковой панели плеера.
 const PLAYER_SIDE_MIN = 280;
 const PLAYER_SIDE_COLLAPSED = 44;
@@ -35,17 +63,38 @@ interface Props {
 }
 
 export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Props = {}) {
-  const {
-    currentTrack, isPlaying, volume, progress, duration, queue, currentIndex,
-    repeat, shuffle, togglePlay, next, prev,
-    setVolume, setProgress, setDuration, toggleRepeat, toggleShuffle,
-    playerCollapsed, setPlayerCollapsed, playQueueIndex, removeFromQueue, clearQueue,
-    loadTracks,
-  } = useMusicStore();
-  const { theme } = useThemeStore();
+  // Точечные селекторы вместо подписки на весь стор: перерисовка только при
+  // изменениях реально используемых полей (раньше любой setState в musicStore —
+  // например progress из мини-плеера профиля — тянул перерисовку всего плеера).
+  const currentTrack = useMusicStore((s) => s.currentTrack);
+  const isPlaying = useMusicStore((s) => s.isPlaying);
+  const volume = useMusicStore((s) => s.volume);
+  const duration = useMusicStore((s) => s.duration);
+  const queue = useMusicStore((s) => s.queue);
+  const currentIndex = useMusicStore((s) => s.currentIndex);
+  const repeat = useMusicStore((s) => s.repeat);
+  const shuffle = useMusicStore((s) => s.shuffle);
+  const togglePlay = useMusicStore((s) => s.togglePlay);
+  const next = useMusicStore((s) => s.next);
+  const prev = useMusicStore((s) => s.prev);
+  const setVolume = useMusicStore((s) => s.setVolume);
+  const setProgress = useMusicStore((s) => s.setProgress);
+  const setDuration = useMusicStore((s) => s.setDuration);
+  const toggleRepeat = useMusicStore((s) => s.toggleRepeat);
+  const toggleShuffle = useMusicStore((s) => s.toggleShuffle);
+  const playerCollapsed = useMusicStore((s) => s.playerCollapsed);
+  const setPlayerCollapsed = useMusicStore((s) => s.setPlayerCollapsed);
+  const playQueueIndex = useMusicStore((s) => s.playQueueIndex);
+  const removeFromQueue = useMusicStore((s) => s.removeFromQueue);
+  const clearQueue = useMusicStore((s) => s.clearQueue);
+  const loadTracks = useMusicStore((s) => s.loadTracks);
+  const theme = useThemeStore((s) => s.theme);
   const playerPos = useUserSettingsStore((s) => s.layout.playerPos);
-  const { playlists, getPlaylistTracks } = usePlaylistStore();
-  const { settings: visualizerMap, getSettings, setSettings } = useMusicVisualizerStore();
+  const playlists = usePlaylistStore((s) => s.playlists);
+  const getPlaylistTracks = usePlaylistStore((s) => s.getPlaylistTracks);
+  const visualizerMap = useMusicVisualizerStore((s) => s.settings);
+  const getSettings = useMusicVisualizerStore((s) => s.getSettings);
+  const setSettings = useMusicVisualizerStore((s) => s.setSettings);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -56,7 +105,6 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
   const rafRef = useRef<number | null>(null);
   const [queueAnchor, setQueueAnchor] = useState<HTMLElement | null>(null);
   const [vizOpen, setVizOpen] = useState(false);
-  const [vizSignal, setVizSignal] = useState({ level: 0, bass: 0, beat: 0 });
   // Позиция трека: локально (для слайдера) + редкая запись в стор.
   // Раньше timeupdate писал progress в глобальный стор ~4 раза/сек, из-за чего
   // MainLayout (подписанный на стор) перерисовывал ВСЁ дерево без остановки.
@@ -65,10 +113,12 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
   const systemAudioReactive = useMusicVisualizerStore((s) => s.systemAudioReactive);
   const setSystemAudioReactive = useMusicVisualizerStore((s) => s.setSystemAudioReactive);
 
-  const currentPlaylist = playlists.find((p) => {
+  // Поиск «играющего» плейлиста перебирает все плейлисты и их треки — раньше это
+  // выполнялось на каждый рендер (в т.ч. на каждый сигнал визуализатора).
+  const currentPlaylist = useMemo(() => playlists.find((p) => {
     const ids = getPlaylistTracks(p).map((t) => t.id);
     return ids.length === queue.length && ids.every((id, i) => queue[i]?.id === id);
-  });
+  }), [playlists, getPlaylistTracks, queue]);
   const playerWidth = useUserSettingsStore((s) => s.layout.playerWidth);
   const setLayout = useUserSettingsStore((s) => s.setLayout);
   const isDesktop = useMediaQuery('(min-width: 701px)');
@@ -260,7 +310,8 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
           const now = performance.now();
           if (now - lastVizEmit >= 50) {
             lastVizEmit = now;
-            setVizSignal({ level: smoothLevel, bass: smoothBass, beat: smoothBeat });
+            // Пишем в мини-стор: перерисовывается только оверлей, а не плеер.
+            vizSignalStore.set({ level: smoothLevel, bass: smoothBass, beat: smoothBeat });
           }
           rafRef.current = requestAnimationFrame(tick);
         };
@@ -404,7 +455,7 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
   return (
     <>
       {audioNode}
-      <MusicVisualizerOverlay settings={activeViz} {...vizSignal} />
+      <ReactiveVisualizerOverlay settings={activeViz} />
       {showSidePanel && renderSide(
         <Box
           sx={{
