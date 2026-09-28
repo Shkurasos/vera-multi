@@ -75,6 +75,73 @@ test('без персональных цветов пузыри остаются
   assert.equal(theme.bgBubbleOwn, '#6C5CE7');
   assert.equal(theme.bubbleOwnGradient, 'linear-gradient(135deg, #6C5CE7 0%, #4A3F9F 100%)');
   assert.equal(theme.accent, '#ffb347');
+
+// ── Сброс до стандартной темы (кнопка «Сбросить на стандартную») ───────────────
+// Кнопка вызывает removeChatTheme(chatId): запись чата удаляется, и чат снова
+// следует за общей темой. Проверяем на настоящем сторе, а не на заглушке.
+function loadChatThemeStore() {
+  const storeSource = fs.readFileSync(path.join(__dirname, 'src/store/chatThemeStore.ts'), 'utf8');
+  const c = vm.createContext({
+    console,
+    exports: {},
+    module: { exports: {} },
+    require: (name) => {
+      if (name === 'zustand') {
+        // Минимальный zustand: create() возвращает стор с getState/setState.
+        return {
+          create: () => (factory) => {
+            const api = {};
+            const set = (update) => {
+              const next = typeof update === 'function' ? update(api.state) : update;
+              Object.assign(api.state, next);
+            };
+            api.state = factory(set, () => api.state);
+            api.getState = () => api.state;
+            api.setState = set;
+            return api;
+          },
+        };
+      }
+      if (name === 'zustand/middleware') return { persist: (factory) => factory };
+      if (name.includes('storeSyncSimple')) return { enableStoreSync: () => {} };
+      throw new Error('unexpected require: ' + name);
+    },
+  });
+  vm.runInContext(
+    ts.transpileModule(storeSource, {
+      compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS },
+    }).outputText,
+    c,
+  );
+  return c.exports.useChatThemeStore;
+}
+
+test('removeChatTheme возвращает чат к общей теме, не трогая темы других чатов', () => {
+  const useChatThemeStore = loadChatThemeStore();
+  const base = baseTheme();
+
+  // Персональные темы на двух чатах.
+  useChatThemeStore.getState().setChatTheme('chat-1', preset);
+  useChatThemeStore.getState().setChatTheme('chat-2', { enabled: true, accent: '#67e68f' });
+  assert.equal(resolveChatTheme(base, useChatThemeStore.getState().getTheme('chat-1')).accent, '#ff8fb1');
+
+  // Сброс чата 1 — то, что делает кнопка.
+  useChatThemeStore.getState().removeChatTheme('chat-1');
+
+  const after = useChatThemeStore.getState();
+  assert.equal(after.getTheme('chat-1'), undefined, 'персональная тема чата удалена');
+  // Чат снова следует за общей темой — это и есть «сброс до стандартной».
+  assert.equal(resolveChatTheme(base, after.getTheme('chat-1')), base);
+
+  // Тема второго чата не задето.
+  assert.equal(after.getTheme('chat-2').accent, '#67e68f');
+  assert.equal(resolveChatTheme(base, after.getTheme('chat-2')).accent, '#67e68f');
+
+  // Повторный сброс не падает и не трогает остальное.
+  useChatThemeStore.getState().removeChatTheme('chat-1');
+  assert.equal(useChatThemeStore.getState().getTheme('chat-2').accent, '#67e68f');
+});
+
 });
 
 test('выключенная и отсутствующая персональная тема возвращает общую', () => {

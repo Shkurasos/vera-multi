@@ -5,12 +5,15 @@ import {
   Menu, MenuItem, Tooltip, LinearProgress, Popover,
   Dialog, DialogTitle, DialogContent, DialogActions, Button,
   Slider, Divider as MuiDivider, Snackbar, Alert, Checkbox, FormControlLabel,
+  createTheme, ThemeProvider, useTheme as useMuiTheme,
 } from '@mui/material';
 import {
   Send, Send as SendIcon, AttachFile, MoreVert, Search,
   EmojiEmotions, InfoOutlined, Close, PushPin,
   Call, Videocam, NotificationsOff, NotificationsActive,
   FormatSize, ExitToApp, ArrowBack, Palette, KeyboardArrowDown, KeyboardArrowUp,
+  // Send и RestartAlt есть в шиме иконок (mui-icons-shim); Handshake там нет.
+  RestartAlt,
 } from '@mui/icons-material';
 import HowToVote from '@mui/icons-material/HowToVote';
 import { CallModal } from './CallModal';
@@ -21,6 +24,8 @@ import { useChatSoundStore } from '../store/chatSoundStore';
 import NotificationSettingsDialog from './NotificationSettingsDialog';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore, getFinishStyles } from '../store/themeStore';
+import type { Theme } from '../store/themeStore';
+import { muiPaletteFromTheme } from '../utils/muiPalette';
 import { useChatSettingsStore, BUILTIN_FONTS } from '../store/chatSettingsStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
 import { useDraftsStore } from '../store/draftsStore';
@@ -1076,7 +1081,22 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   // Персональная тема имеет приоритет только внутри текущего окна чата.
   // Цвет своих пузырей из персональной темы не должен следовать за общей темой
   // (см. resolveChatTheme) — иначе смена общей темы перекрашивает свои пузыри.
-  const theme = resolveChatTheme(baseTheme, chatThemeOverride);
+  // Мемоизация обязательна: без неё resolveChatTheme возвращал новый объект на
+  // каждом рендере, а от theme зависят все sx и useMemo ниже по дереву.
+  const theme = React.useMemo(
+    () => resolveChatTheme(baseTheme, chatThemeOverride),
+    [baseTheme, chatThemeOverride],
+  );
+  // Сброс персональной темы чата: удаляем переопределение, и чат снова
+  // следует за общей темой. Кнопка «Сбросить» живёт в меню «⋮» рядом с
+  // «Предложить», а не в диалоге редактора.
+  const removeChatTheme = useChatThemeStore((s) => s.removeChatTheme);
+  const canResetChatTheme = !!chatThemeOverride && chatThemeOverride.enabled !== false;
+  const resetChatTheme = () => {
+    if (!id || !canResetChatTheme) return;
+    removeChatTheme(id);
+    setToast({ message: 'Персональная тема чата сброшена', severity: 'info' });
+  };
   const smartWpActiveId = useShopStore((s) => s.activeWallpaper);
   const smartWpOwned = useShopStore((s) => s.owned);
   const smartWpItem = React.useMemo(() => {
@@ -1198,6 +1218,28 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     const r = (v >> 16) & 255, g = (v >> 8) & 255, b = v & 255;
     return (r * 299 + g * 587 + b * 114) / 1000 > 140;
   })();
+
+  // Пункт меню с явным цветом. Палитра MUI собрана в режиме 'dark', поэтому
+  // MenuItem без своего `color` берёт светлый #F5F7FF — на светлом фоне
+  // темы (theme.bgHeader) надписи вроде «Фото чата» или «Убрать обои из
+  // этого чата» становились нечитаемыми.
+  const menuItemSx = {
+    gap: 1.5, py: 1.2, px: 2,
+    color: theme.text, fontSize: 14, fontWeight: 500,
+    '&:hover': { bgcolor: theme.bgHover },
+  } as const;
+  // Пара кнопок в одну строку («Предложить» / «Сбросить»): одинаковая ширина,
+  // чтобы меню не прыгало при смене подписей («Предложение отправлено»).
+  const menuActionSx = {
+    flex: 1, minWidth: 0, gap: 0.75, py: 0.9, px: 1,
+    fontSize: 13, fontWeight: 600, textTransform: 'none', lineHeight: 1.2,
+    color: theme.text, borderColor: theme.border,
+    '& .MuiButton-startIcon': { margin: 0 },
+    // Длинные подписи («Отправка…») не должны выталкивать вторую кнопку.
+    overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
+    '&:hover': { bgcolor: theme.bgHover, borderColor: theme.accent },
+    '&.Mui-disabled': { color: theme.textSec, borderColor: theme.border },
+  } as const;
 
   return (
     <Box sx={{ display: 'flex', height: '100%', overflow: 'hidden', background: theme.bgChat, position: 'relative', perspective: 1200 }}>
@@ -1485,12 +1527,33 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
               <Palette sx={{ fontSize: 18, color: theme.textSec }} />
               Персональная тема чата
             </MenuItem>
-            <MenuItem onClick={() => { setAnchorEl(null); void offerChatSettings(); }}
-              disabled={settingsOfferBusy}
-              sx={{ gap: 1.5, py: 1.2, px: 2, color: theme.text, fontSize: 14, fontWeight: 500, '&:hover': { bgcolor: theme.bgHover } }}>
-              <Palette sx={{ fontSize: 18, color: theme.textSec }} />
-              {settingsOfferBusy ? 'Отправляем…' : settingsOfferSent ? 'Предложение отправлено' : 'Предложить настройки собеседнику'}
-            </MenuItem>
+            {/* Два действия в одну строку: предложить настройки / сбросить тему.
+                minWidth держит меню достаточно широким, иначе flex-кнопки
+                сожмутся и подписи обрежутся. */}
+            <Box sx={{ display: 'flex', gap: 1, px: 2, py: 0.75, minWidth: 272 }}>
+              <Button
+                variant="outlined"
+                onClick={() => { setAnchorEl(null); void offerChatSettings(); }}
+                disabled={settingsOfferBusy}
+                title="Отправить собеседнику свои текущие настройки чата"
+                sx={menuActionSx}
+              >
+                <Send sx={{ fontSize: 16, color: theme.textSec }} />
+                {settingsOfferBusy ? 'Отправка…' : settingsOfferSent ? 'Отправлено' : 'Предложить'}
+              </Button>
+              <Button
+                variant="outlined"
+                onClick={() => { setAnchorEl(null); resetChatTheme(); }}
+                disabled={!canResetChatTheme}
+                title={canResetChatTheme
+                  ? `Вернуть общую тему «${baseTheme.name}»`
+                  : 'У этого чата нет персональной темы'}
+                sx={menuActionSx}
+              >
+                <RestartAlt sx={{ fontSize: 16, color: theme.textSec }} />
+                Сбросить
+              </Button>
+            </Box>
             <MuiDivider sx={{ borderColor: theme.border, my: 0.5 }} />
             <MenuItem onClick={() => { setAnchorEl(null); setLeaveConfirmOpen(true); }}
               sx={{
@@ -1501,23 +1564,32 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
               <ExitToApp sx={{ fontSize: 18, color: '#f44336' }} />
               Покинуть чат
             </MenuItem>
-            <MenuItem onClick={() => { setAnchorEl(null); setTimeout(() => chatBgInputRef.current?.click(), 0); }}>
+            <MenuItem
+              onClick={() => { setAnchorEl(null); setTimeout(() => chatBgInputRef.current?.click(), 0); }}
+              sx={menuItemSx}
+            >
               🖼 Фото чата
             </MenuItem>
-            <MenuItem onClick={() => { setAnchorEl(null); setTimeout(() => liveBgInputRef.current?.click(), 0); }}>
+            <MenuItem
+              onClick={() => { setAnchorEl(null); setTimeout(() => liveBgInputRef.current?.click(), 0); }}
+              sx={menuItemSx}
+            >
               🎬 Живые обои (видео)
             </MenuItem>
-            <MenuItem onClick={async () => {
-              setAnchorEl(null);
-              if (!id) return;
-              await clearLiveBg(id);
-              setLiveBgVersion((v) => v + 1);
-              if (id) {
-                setChatWallpaper(id, { type: 'stock', value: 'none' });
-                chatsApi.update(id, { wallpaper: { type: 'stock', value: 'none' } }).then((res) => updateChatList(res.data)).catch((err) => console.error('clear wallpaper error:', err));
-              }
-              setToast({ message: 'Живые обои убраны из этого чата', severity: 'info' });
-            }}>
+            <MenuItem
+              onClick={async () => {
+                setAnchorEl(null);
+                if (!id) return;
+                await clearLiveBg(id);
+                setLiveBgVersion((v) => v + 1);
+                if (id) {
+                  setChatWallpaper(id, { type: 'stock', value: 'none' });
+                  chatsApi.update(id, { wallpaper: { type: 'stock', value: 'none' } }).then((res) => updateChatList(res.data)).catch((err) => console.error('clear wallpaper error:', err));
+                }
+                setToast({ message: 'Живые обои убраны из этого чата', severity: 'info' });
+              }}
+              sx={menuItemSx}
+            >
               🗑 Убрать живые обои
             </MenuItem>
             <MuiDivider sx={{ borderColor: theme.border, my: 0.5 }} />
@@ -1540,14 +1612,17 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
               />
             </Box>
             <MuiDivider sx={{ borderColor: theme.border, my: 0.5 }} />
-            <MenuItem onClick={() => { 
-              setAnchorEl(null); 
-              if (id) {
-                setChatWallpaper(id, { type: 'stock', value: 'none' });
-                chatsApi.update(id, { wallpaper: { type: 'stock', value: 'none' } }).then((res) => updateChatList(res.data)).catch((err) => console.error('clear wallpaper error:', err));
-              }
-              setToast({ message: 'Обои убраны из этого чата', severity: 'info' }); 
-            }}>
+            <MenuItem
+              onClick={() => {
+                setAnchorEl(null);
+                if (id) {
+                  setChatWallpaper(id, { type: 'stock', value: 'none' });
+                  chatsApi.update(id, { wallpaper: { type: 'stock', value: 'none' } }).then((res) => updateChatList(res.data)).catch((err) => console.error('clear wallpaper error:', err));
+                }
+                setToast({ message: 'Обои убраны из этого чата', severity: 'info' });
+              }}
+              sx={menuItemSx}
+            >
               🗑 Убрать обои из этого чата
             </MenuItem>
           </Menu>
@@ -2393,10 +2468,44 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   );
 }
 
+/**
+ * Палитра MUI по теме окна чата.
+ *
+ * Общая палитра MUI следует за общей темой приложения, а чат может иметь
+ * персональную тему (магазинная «персональная тема чата»). Без этой обёртки
+ * текст компонентов MUI без собственного `color` внутри такого чата брался бы
+ * из общей темы — то есть смена общей темы перекрашивала бы текст в чате, у
+ * которого своя тема. Scope задаёт палитру по resolved-теме чата.
+ *
+ * Если персональной темы нет, лишний ThemeProvider не создаётся: значения
+ * палитры совпали бы с общими, а лишняя тема заставила бы поддерево
+ * перерисовываться при смене общей темы.
+ */
+function ChatThemeScope({ chatTheme, children }: { chatTheme: Theme | null; children: React.ReactNode }) {
+  const outerTheme = useMuiTheme();
+  const scopedTheme = useMemo(
+    () => (chatTheme ? createTheme(outerTheme, { palette: muiPaletteFromTheme(chatTheme) }) : outerTheme),
+    [outerTheme, chatTheme],
+  );
+  if (!chatTheme) return <>{children}</>;
+  return <ThemeProvider theme={scopedTheme}>{children}</ThemeProvider>;
+}
+
 export default function ChatWindow(props: ChatWindowProps) {
+  const { id } = useParams();
+  const baseTheme = useThemeStore((s) => s.theme);
+  const chatThemeOverride = useChatThemeStore((s) => (id ? s.themes[id] : undefined));
+  const chatTheme = useMemo(
+    () => (chatThemeOverride && chatThemeOverride.enabled !== false
+      ? resolveChatTheme(baseTheme, chatThemeOverride)
+      : null),
+    [baseTheme, chatThemeOverride],
+  );
   return (
     <ChatErrorBoundary>
-      <ChatWindowInner {...props} />
+      <ChatThemeScope chatTheme={chatTheme}>
+        <ChatWindowInner {...props} />
+      </ChatThemeScope>
     </ChatErrorBoundary>
   );
 }
