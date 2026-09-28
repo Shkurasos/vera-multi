@@ -5,6 +5,7 @@ import {
 } from '@mui/material';
 import { Close, DeleteOutline, UploadFile, Videocam } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
+import { readableTextOn } from '../utils/contrast';
 import { useChatStore } from '../store/chatStore';
 import {
   useChatBgPrefsStore, STOCK_WALLPAPERS,
@@ -498,7 +499,9 @@ return (
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      color: '#fff',
+                      // Акцент в светлых темах бывает пастельным — белый текст на
+                      // нём сливается, поэтому выбираем контрастный по яркости.
+                      color: readableTextOn(theme.accent),
                       fontSize: 14,
                       fontWeight: 'bold',
                     }}

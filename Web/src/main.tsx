@@ -3,6 +3,8 @@ import ReactDOM from 'react-dom/client';
 import { HashRouter } from 'react-router-dom';
 import { ThemeProvider, createTheme, CssBaseline, GlobalStyles, Box, Typography, Button } from '@mui/material';
 import { useUserSettingsStore } from './store/userSettingsStore';
+import { useThemeStore } from './store/themeStore';
+import { muiPaletteFromTheme } from './utils/muiPalette';
 import { appFontStyles, resolveAppFont } from './utils/appFont';
 import App from './App';
 import './store/uiPrefsStore'; // применяет data-icon-pack / data-ui-style на <html>
@@ -434,9 +436,18 @@ const darkTheme = createTheme({
 
 function AppThemeProvider({ children }: { children: React.ReactNode }) {
   const font = useUserSettingsStore((state) => state.globalFontFamily);
+  // Цвета берём из пользовательской темы: палитра MUI ниже собрана в режиме
+  // 'dark' (text.primary = #F5F7FF, background.paper = тёмный). Пока она не
+  // синхронизирована, любой компонент MUI без собственного `color`
+  // (Typography, MenuItem, значение Select, DialogTitle…) рисует почти белый
+  // текст — на светлых темах он просто пропадал («Мои скины в этом чате»,
+  // пункты меню обоев). Фон paper синхронизируем обязательно: он же подложка
+  // для выпадающих списков Select, иначе тёмный текст лёг бы на тёмный фон.
+  const appTheme = useThemeStore((state) => state.theme);
   const theme = React.useMemo(() => {
     const fontFamily = resolveAppFont(font);
     return createTheme(darkTheme, {
+      palette: muiPaletteFromTheme(appTheme),
       typography: {
         fontFamily,
         ...Object.fromEntries([
@@ -445,7 +456,7 @@ function AppThemeProvider({ children }: { children: React.ReactNode }) {
         ].map((variant) => [variant, { fontFamily }])),
       },
     });
-  }, [font]);
+  }, [font, appTheme]);
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />

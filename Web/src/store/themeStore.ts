@@ -658,8 +658,10 @@ export const THEMES: Theme[] = [
     bg: '#FFFFFF', text: '#000000', accent: '#000000',
     bgSidebar: '#F5F5F7', bgChat: '#FFFFFF', bgHeader: '#FAFAFA',
     bgInput: '#F2F2F7', bgBubbleOwn: '#000000', bgBubbleOther: '#E9E9EB',
-    bgHover: '#F2F2F7', bgActive: '#E5E5EA', textSec: '#8E8E93',
-    border: 'rgba(0,0,0,0.08)', online: '#34C759',
+    bgHover: '#F2F2F7', bgActive: '#E5E5EA', textSec: '#2A2A2C',
+    // Границы плотнее, чем у соседних светлых тем: на чистом белом аватары и
+    // плашки раньше растворялись, и элементы не читались как отдельные.
+    border: 'rgba(0,0,0,0.16)', online: '#34C759',
     chatPattern: undefined,
     disableBackgroundBlobs: true,
     disableBackgroundGlow: false,

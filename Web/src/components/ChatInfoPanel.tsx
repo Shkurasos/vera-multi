@@ -922,9 +922,11 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
       <Menu open={!!memberMenu && !!selectedMember} onClose={() => setMemberMenu(null)}
         anchorReference="anchorPosition" anchorPosition={memberMenu ? { top: memberMenu.y, left: memberMenu.x } : undefined}
         PaperProps={{ sx: { bgcolor: theme.bgHeader, color: theme.text } }}>
-        <MenuItem onClick={() => { if (selectedMember) onViewProfile?.(selectedMember.userId); setMemberMenu(null); }}>Открыть профиль</MenuItem>
+        <MenuItem onClick={() => { if (selectedMember) onViewProfile?.(selectedMember.userId); setMemberMenu(null); }}
+          sx={{ color: theme.text, '&:hover': { bgcolor: theme.bgHover } }}>Открыть профиль</MenuItem>
         {selectedMember && canManageMember(selectedMember) && (
-          <MenuItem onClick={() => { openAdmin(selectedMember); setMemberMenu(null); }}>
+          <MenuItem onClick={() => { openAdmin(selectedMember); setMemberMenu(null); }}
+            sx={{ color: theme.text, '&:hover': { bgcolor: theme.bgHover } }}>
             {selectedMember.role === 'admin' ? 'Изменить права и звание' : 'Назначить администратором'}
           </MenuItem>
         )}
