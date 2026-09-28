@@ -100,9 +100,22 @@ interface Props {
   onGoChats?: () => void;
   initialTheme?: Theme;
   onApply?: (theme: Theme) => void;
+  /**
+   * 'app' — редактор всей темы; 'chat' — только то, что реально рисует окно
+   * чата. Список оставленных полей сверен с обращениями к `theme.*` в
+   * ChatWindow/MessageBubble, а не выбран на глаз.
+   */
+  mode?: 'app' | 'chat';
+  /**
+   * Дополнительный элемент в шапке плашки. Редактору чата нужен переключатель
+   * «применять тему», но самому редактору знать про чат незачем — передаём
+   * готовый элемент, чтобы не оборачивать плашку ещё одним полноэкранным окном.
+   */
+  headerExtra?: React.ReactNode;
 }
 
-export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply }: Props) {
+export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 'app', headerExtra }: Props) {
+  const isChat = mode === 'chat';
   const { theme, customThemes, saveCustomTheme, deleteCustomTheme, setTheme, themeId } = useThemeStore();
 
   const [draft, setDraft] = useState<Theme>(() => {
@@ -241,16 +254,37 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply }: Props
   };
 
   // ── Стили модалки ───────────────────────────────────────────────────────
+  // Плавающая панель поверх всего: отступы от краёв, размытие фона, своя
+  // высота. Раньше это была карточка 820 px с прокруткой — половина
+  // настроек уезжала за экран.
   const overlay: React.CSSProperties = {
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)', zIndex: 9999,
-    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12,
+    position: 'fixed', inset: 0, zIndex: 9999,
+    background: 'rgba(0,0,0,0.55)',
+    backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
+    display: 'flex', alignItems: 'stretch', justifyContent: 'center',
+    padding: 'max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left))',
   };
   const modal: React.CSSProperties = {
-    background: theme.bgSidebar, color: theme.text,
-    borderRadius: 12, width: '100%', maxWidth: 820, maxHeight: '92vh',
-    overflowY: 'auto', padding: 18, boxSizing: 'border-box',
+    background: theme.sidebarGradient || theme.bgSidebar, color: theme.text,
+    backdropFilter: 'blur(22px) saturate(1.35)', WebkitBackdropFilter: 'blur(22px) saturate(1.35)',
+    borderRadius: 22, width: '100%',
+    // Занимает почти весь экран, но с полями: это плашка, а не полноэкранное
+    // окно музыки — по краям остаётся видно приложение под ней.
+    maxWidth: 'min(1680px, 100%)', height: '100%',
+    display: 'flex', flexDirection: 'column', overflow: 'hidden',
     border: '1px solid ' + theme.border,
-    boxShadow: '0 24px 60px rgba(0,0,0,0.6)',
+    boxShadow: '0 28px 80px rgba(0,0,0,0.55)',
+  };
+  // Прокручиваемая середина между закреплённой шапкой и кнопками.
+  const plateBody: React.CSSProperties = {
+    flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden',
+    padding: '0 20px 20px', boxSizing: 'border-box',
+  };
+  const plateFooter: React.CSSProperties = {
+    flexShrink: 0, display: 'flex', gap: 10, justifyContent: 'flex-end',
+    flexWrap: 'wrap', padding: '14px 20px',
+    borderTop: '1px solid ' + theme.border,
+    background: 'rgba(0,0,0,0.18)',
   };
   const sectionLabel: React.CSSProperties = {
     fontSize: 11, opacity: 0.55, textTransform: 'uppercase',
@@ -269,9 +303,10 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply }: Props
     <div style={overlay} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={modal}>
         {/* Шапка */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
+        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '16px 20px', borderBottom: '1px solid ' + theme.border }}>
           <h2 style={{ margin: 0, fontSize: 17 }}>🎨 Редактор темы</h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {headerExtra}
             {onGoChats && (
               <button
                 onClick={onGoChats}
@@ -285,6 +320,7 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply }: Props
           </div>
         </div>
 
+        <div style={plateBody}>
          {/* Мои сохранённые темы */}
          {!onApply && customThemes.length > 0 && (
            <div style={{ marginBottom: 14 }}>
@@ -335,26 +371,29 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply }: Props
            </div>
          </div>
 
-         {/* Импорт/экспорт темы */}
-         <div style={{ marginBottom: 14 }}>
-           <div style={sectionLabel}>Ссылка на тему</div>
-           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-             <Button size="small" variant="outlined" onClick={generateLink} sx={{ color: theme.accent, borderColor: theme.accent + '50', textTransform: 'none' }}>Скопировать ссылку текущей</Button>
-             <Button size="small" variant="text" onClick={importLink} sx={{ color: theme.textSec, textTransform: 'none' }}>Импорт по ссылке</Button>
-           </Box>
-           {themeLink && (
-             <TextField
-               size="small"
-               fullWidth
-               sx={{ mt: 1, '& .MuiOutlinedInput-root': { bgcolor: theme.bgInput, color: theme.text, fontSize: 12 } }}
-               value={themeLink}
-               onChange={(e) => setThemeLink(e.target.value)}
-               InputProps={{ endAdornment: <InputAdornment position="end"><IconButton size="small" onClick={() => { navigator.clipboard.writeText(themeLink); }} sx={{ color: theme.textSec }}><ContentCopy sx={{ fontSize: 16 }} /></IconButton></InputAdornment> } }
-             />
-           )}
-         </div>
+         {/* Импорт/экспорт темы — только для общей темы: в чате это способ
+    перенести ссылку, а не свойство самого чата. */}
+{!isChat && (
+           <div style={{ marginBottom: 14 }}>
+             <div style={sectionLabel}>Ссылка на тему</div>
+             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+               <Button size="small" variant="outlined" onClick={generateLink} sx={{ color: theme.accent, borderColor: theme.accent + '50', textTransform: 'none' }}>Скопировать ссылку текущей</Button>
+               <Button size="small" variant="text" onClick={importLink} sx={{ color: theme.textSec, textTransform: 'none' }}>Импорт по ссылке</Button>
+             </Box>
+             {themeLink && (
+               <TextField
+                 size="small"
+                 fullWidth
+                 sx={{ mt: 1, '& .MuiOutlinedInput-root': { bgcolor: theme.bgInput, color: theme.text, fontSize: 12 } }}
+                 value={themeLink}
+                 onChange={(e) => setThemeLink(e.target.value)}
+                 InputProps={{ endAdornment: <InputAdornment position="end"><IconButton size="small" onClick={() => { navigator.clipboard.writeText(themeLink); }} sx={{ color: theme.textSec }}><ContentCopy sx={{ fontSize: 16 }} /></IconButton></InputAdornment> } }
+               />
+             )}
+           </div>
+)}
 
-        {/* Название */}
+{/* Название */}
         <div style={sectionLabel}>Название темы</div>
         <input
           value={draft.name}
@@ -362,7 +401,9 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply }: Props
           style={{ ...inputStyle, marginBottom: 14 }}
         />
 
-        {/* ИИ-генератор темы */}
+        {/* ИИ-генератор темы — генерирует палитру всего приложения, чату она
+            ни к чему, поэтому в режиме чата блока нет. */}
+        {!isChat && (
         <div style={{
           marginBottom: 16, padding: 12, borderRadius: 10,
           border: '1px solid ' + theme.accent + '44',
@@ -401,6 +442,7 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply }: Props
             Меняет всю палитру, градиенты и тени. После генерации можно доработать вручную.
           </div>
         </div>
+        )}
 
         {/* Основная сетка */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18, alignItems: 'start' }}>
@@ -415,12 +457,14 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply }: Props
             <ColorField label="Онлайн-точка"      value={draft.online}    onChange={v => upd('online', v)} />
 
             <div style={sectionLabel}>Зоны интерфейса</div>
-            <ColorField label="Сайдбар"           value={draft.bgSidebar} onChange={v => upd('bgSidebar', v)} />
+            {/* Сайдбар и «активный элемент» в окне чата не рисуются — в режиме
+                чата эти поля убираем, чтобы не предлагать то, что не видно. */}
+            {!isChat && <ColorField label="Сайдбар"           value={draft.bgSidebar} onChange={v => upd('bgSidebar', v)} />}
             <ColorField label="Область чата"      value={draft.bgChat}    onChange={v => upd('bgChat', v)} />
             <ColorField label="Хедер"             value={draft.bgHeader}  onChange={v => upd('bgHeader', v)} />
             <ColorField label="Поле ввода"        value={draft.bgInput}   onChange={v => upd('bgInput', v)} />
             <ColorField label="Ховер-фон"         value={draft.bgHover}   onChange={v => upd('bgHover', v)} />
-            <ColorField label="Активный элемент"  value={draft.bgActive}  onChange={v => upd('bgActive', v)} />
+            {!isChat && <ColorField label="Активный элемент"  value={draft.bgActive}  onChange={v => upd('bgActive', v)} />}
 
             <div style={sectionLabel}>Пузыри сообщений</div>
             <ColorField label="Свой пузырь"          value={draft.bgBubbleOwn}
@@ -429,12 +473,17 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply }: Props
             <ColorField label="Текст своего пузыря"  value={draft.bubbleOwnText || '#ffffff'} onChange={v => upd('bubbleOwnText', v)} />
             <ColorField label="Текст чужого пузыря"  value={draft.bubbleOtherText || draft.text} onChange={v => upd('bubbleOtherText', v)} />
 
-            <div style={sectionLabel}>Время сообщений и чатов</div>
+            <div style={sectionLabel}>Время сообщений</div>
             <ColorField label="Время на сообщениях"  value={draft.messageTimeColor || draft.bubbleOtherText || draft.text} onChange={v => upd('messageTimeColor', v)} />
-            <ColorField label="Время в списке чатов" value={draft.chatTimeColor || draft.textSec} onChange={v => upd('chatTimeColor', v)} />
-            {(!draft.messageTimeColor || !draft.chatTimeColor) && (
+            {!isChat && <ColorField label="Время в списке чатов" value={draft.chatTimeColor || draft.textSec} onChange={v => upd('chatTimeColor', v)} />}
+            {(!draft.messageTimeColor || (!isChat && !draft.chatTimeColor)) && (
               <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 6 }}>
-                Пока цвет не задан: на сообщениях — цвет текста пузыря, в списке чатов — «Вторичный текст».
+                Пока цвет не задан: на сообщениях — цвет текста пузыря{!isChat && ', в списке чатов — «Вторичный текст»'}.
+              </div>
+            )}
+            {isChat && (
+              <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 6 }}>
+                «Время в списке чатов» здесь не нужно: в чате списка нет.
               </div>
             )}
             <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 6 }}>
@@ -633,6 +682,8 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply }: Props
               <div style={{ ...previewOther, position: 'relative', zIndex: 2 }}>Vera — твой мессенджер<div style={previewTimeOther}>12:46</div></div>
               <div style={{ ...previewOwn, position: 'relative', zIndex: 2 }}>Красивая тема! 🎨<div style={previewTimeOwn}>12:46 · изменено</div></div>
             </div>
+            {!isChat && (
+            <>
             <div style={{ ...sectionLabel, marginTop: 14 }}>Превью сайдбара</div>
             <div style={{
               background: draft.sidebarGradient || draft.bgSidebar,
@@ -660,11 +711,15 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply }: Props
                 </div>
               ))}
             </div>
+            </>
+            )}
           </div>
         </div>
 
+        </div>
+
         {/* Кнопки */}
-        <div style={{ display: 'flex', gap: 10, marginTop: 22, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+        <div style={plateFooter}>
           <button
             onClick={() => setDraft(d => ({ ...d, id: makeId(), name: d.name + ' (копия)' }))}
             style={{

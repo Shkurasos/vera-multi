@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-export type IconPack = 'filled' | 'outlined' | 'rounded' | 'sharp';
-export type UiStyle = 'default' | 'rounded' | 'square' | 'glass' | 'compact';
+export type IconPack = 'filled' | 'outlined' | 'rounded' | 'sharp' | 'twoTone';
+export type UiStyle = 'default' | 'rounded' | 'square' | 'glass' | 'compact' | 'flat';
 /** Вид карточек чатов в списке слева: насколько скруглены углы. */
 export type ChatShape = 'vera' | 'telegram' | 'vk';
 
@@ -22,10 +22,11 @@ interface UiPrefsState {
 }
 
 export const ICON_PACKS: { id: IconPack; label: string; desc: string }[] = [
-  { id: 'filled',   label: 'Filled',   desc: 'Классические залитые иконки (по умолчанию)' },
-  { id: 'outlined', label: 'Outlined', desc: 'Тонкие контурные иконки' },
-  { id: 'rounded',  label: 'Rounded',  desc: 'Скруглённые формы' },
-  { id: 'sharp',    label: 'Sharp',    desc: 'Резкие углы' },
+  { id: 'filled',   label: 'Залитые',  desc: 'Плотные классические иконки (по умолчанию)' },
+  { id: 'outlined', label: 'Контурные', desc: 'Тонкие линии без заливки' },
+  { id: 'rounded',  label: 'Скруглённые', desc: 'Мягкие формы со скруглёнными углами' },
+  { id: 'sharp',    label: 'Резкие',   desc: 'Прямые углы, строгая геометрия' },
+  { id: 'twoTone',  label: 'Двухслойные', desc: 'Контур с полупрозрачной заливкой — «объём» без потери формы' },
 ];
 
 export const UI_STYLES: { id: UiStyle; label: string; desc: string }[] = [
@@ -33,7 +34,63 @@ export const UI_STYLES: { id: UiStyle; label: string; desc: string }[] = [
   { id: 'rounded', label: 'Скруглённый',  desc: 'Крупные радиусы у пузырей и кнопок' },
   { id: 'square',  label: 'Строгий',      desc: 'Прямые углы, минимализм' },
   { id: 'glass',   label: 'Glass',        desc: 'Прозрачность и размытие фона' },
+  { id: 'flat',    label: 'Плоский',      desc: 'Без теней: только заливка и границы' },
   { id: 'compact', label: 'Компактный',   desc: 'Плотный интерфейс, меньше отступов' },
+];
+
+/**
+ * Радиусы поверхностей для скруглённого и строгого стилей.
+ *
+ * Раньше правила касались только кнопок, полей и бумаги, поэтому стиль
+ * выглядел наполовину применённым: у вкладок, чипов, переключателей и
+ * выпадающих списков оставались свои радиусы. Список задан один раз, а CSS
+ * в main.tsx разворачивается из него — одна правка меняет весь стиль.
+ *
+ * Числа — в пикселях: MUI умножает числовой borderRadius в sx на 18, но здесь
+ * это обычный CSS, где значение трактуется буквально.
+ */
+export const UI_STYLE_RADII: Record<'rounded' | 'square', Record<string, number>> = {
+  rounded: {
+    '.MuiPaper-root': 24,          // диалоги, меню, поповеры
+    '.MuiCard-root': 24,
+    '.MuiButton-root': 999,        // «таблетки»
+    '.MuiChip-root': 999,
+    '.MuiIconButton-root': 16,
+    '.MuiToggleButton-root': 999,
+    '.MuiOutlinedInput-root': 999,
+    '.MuiInputBase-root': 999,
+    '.MuiListItemButton-root': 18,
+    '.MuiListItem-root': 18,
+    '.MuiMenuItem-root': 12,
+    '.MuiTooltip-tooltip': 12,
+    '.MuiBadge-badge': 999,
+    '.MuiLinearProgress-root': 999,
+    '.MuiAvatar-root': 999,
+  },
+  square: {
+    '.MuiPaper-root': 4,
+    '.MuiCard-root': 4,
+    '.MuiButton-root': 4,
+    '.MuiChip-root': 4,
+    '.MuiIconButton-root': 4,
+    '.MuiToggleButton-root': 4,
+    '.MuiOutlinedInput-root': 4,
+    '.MuiInputBase-root': 4,
+    '.MuiListItemButton-root': 4,
+    '.MuiListItem-root': 4,
+    '.MuiMenuItem-root': 2,
+    '.MuiTooltip-tooltip': 4,
+    '.MuiBadge-badge': 4,
+    '.MuiLinearProgress-root': 4,
+    '.MuiAvatar-root': 6,
+  },
+};
+
+/** Поверхности, с которых снимаются тени в стиле «Плоский». */
+export const UI_STYLE_FLAT_TARGETS = [
+  '.MuiPaper-root', '.MuiCard-root', '.MuiButton-root', '.MuiChip-root',
+  '.MuiIconButton-root', '.MuiMenuItem-root', '.MuiListItemButton-root',
+  '.MuiToggleButton-root', '.MuiTooltip-tooltip', '.MuiLinearProgress-root',
 ];
 
 // Радиусы — в пикселях, как их видит браузер. В sx числовой borderRadius

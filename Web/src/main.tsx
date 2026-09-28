@@ -5,7 +5,7 @@ import { ThemeProvider, createTheme, CssBaseline, GlobalStyles, Box, Typography,
 import { useUserSettingsStore } from './store/userSettingsStore';
 import { useThemeStore } from './store/themeStore';
 import { muiPaletteFromTheme } from './utils/muiPalette';
-import { CHAT_SHAPES } from './store/uiPrefsStore';
+import { CHAT_SHAPES, UI_STYLE_RADII, UI_STYLE_FLAT_TARGETS } from './store/uiPrefsStore';
 import { appFontStyles, resolveAppFont } from './utils/appFont';
 import App from './App';
 import './store/uiPrefsStore'; // применяет data-icon-pack / data-ui-style на <html>
@@ -209,6 +209,12 @@ const darkTheme = createTheme({
           from: { opacity: 0, transform: 'translateY(6px) scale(.985)' },
           to: { opacity: 1, transform: 'translateY(0) scale(1)' },
         },
+        // Панель быстрых действий выезжает из-под пузыря: фон рисует сам корпус
+        // сообщения (поэтому стык не мигает), а иконки подтягиваются следом.
+        '@keyframes veraActionsIn': {
+          from: { opacity: 0, transform: 'translateY(-6px)' },
+          to: { opacity: 1, transform: 'translateY(0)' },
+        },
         '@keyframes veraAuroraShift': {
           '0%': { backgroundPosition: '0% 50%' },
           '50%': { backgroundPosition: '100% 50%' },
@@ -387,16 +393,18 @@ const darkTheme = createTheme({
         '*::-webkit-scrollbar-track': { background: 'transparent' },
 
         // ─── UI-стили из настроек ────────────────────────────────────────
-        // Скруглённый: усиливаем радиусы у пузырей, кнопок, полей.
-        'html[data-ui-style="rounded"] .MuiPaper-root': { borderRadius: 24 },
-        'html[data-ui-style="rounded"] .MuiButton-root': { borderRadius: 999 },
-        'html[data-ui-style="rounded"] .MuiOutlinedInput-root': { borderRadius: 999 },
+        // Скруглённый и строгий разворачиваются из UI_STYLE_RADII: список
+        // поверхностей задан один раз в сторе, поэтому стиль действует на всё
+        // (диалоги, меню, чипы, вкладки, бейджи, аватары), а не на три класса.
+        ...Object.fromEntries(
+          (['rounded', 'square'] as const).flatMap((style) =>
+            Object.entries(UI_STYLE_RADII[style]).map(([selector, radius]) => [
+              `html[data-ui-style="${style}"] ${selector}`,
+              { borderRadius: radius },
+            ])),
+        ),
+        // Пузыри сообщений — не MUI-компоненты, у них свой маркер.
         'html[data-ui-style="rounded"] [data-vera-bubble]': { borderRadius: 26 },
-
-        // Строгий: прямые углы везде.
-        'html[data-ui-style="square"] .MuiPaper-root': { borderRadius: 4 },
-        'html[data-ui-style="square"] .MuiButton-root': { borderRadius: 4 },
-        'html[data-ui-style="square"] .MuiOutlinedInput-root': { borderRadius: 4 },
         'html[data-ui-style="square"] [data-vera-bubble]': { borderRadius: 4 },
         'html[data-ui-style="square"] .MuiAvatar-root': { borderRadius: 6 },
 
@@ -409,7 +417,9 @@ const darkTheme = createTheme({
           borderRadius: 'inherit',
         },
 
-        // Glass: полупрозрачные поверхности с блюром.
+        // Glass: полупрозрачные поверхности с блюром. Помимо бумаги и пузырей
+        // накрываем выпадающие списки, поповеры и подсказки — иначе стиль
+        // выглядел наполовину: окна стеклянные, а меню под ними матовые.
         'html[data-ui-style="glass"] .MuiPaper-root': {
           backdropFilter: 'blur(16px) saturate(1.4)',
           backgroundColor: 'rgba(255,255,255,0.06) !important',
@@ -421,6 +431,23 @@ const darkTheme = createTheme({
         'html[data-ui-style="glass"] .MuiDialog-paper': {
           backgroundColor: 'rgba(15,18,30,0.72) !important',
         },
+        'html[data-ui-style="glass"] .MuiMenu-paper, html[data-ui-style="glass"] .MuiPopover-paper': {
+          backgroundColor: 'rgba(15,18,30,0.72) !important',
+        },
+        'html[data-ui-style="glass"] .MuiTooltip-tooltip': {
+          backgroundColor: 'rgba(15,18,30,0.82) !important',
+          backdropFilter: 'blur(12px)',
+        },
+        'html[data-ui-style="glass"] .MuiChip-root': {
+          backgroundColor: 'rgba(255,255,255,0.10) !important',
+        },
+
+        // Плоский: убираем все тени, оставляя заливку и границы. Плоские
+        // поверхности читаются за счёт контраста, а не объёма.
+        ...Object.fromEntries(UI_STYLE_FLAT_TARGETS.map((selector) => [
+          `html[data-ui-style="flat"] ${selector}`,
+          { boxShadow: 'none' },
+        ])),
 
         // Компактный: уменьшаем отступы и высоту контролов.
         'html[data-ui-style="compact"] .MuiListItemButton-root': { paddingTop: 4, paddingBottom: 4 },

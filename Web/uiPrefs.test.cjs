@@ -39,10 +39,14 @@ function loadUiPrefs() {
     }).outputText,
     context,
   );
-  // CHAT_SHAPES — экспорт модуля, а не состояние стора.
+  // CHAT_SHAPES и прочие — экспорты модуля, а не состояние стора.
   return {
     store: context.exports.useUiPrefsStore,
     shapes: context.exports.CHAT_SHAPES,
+    packs: context.exports.ICON_PACKS,
+    styles: context.exports.UI_STYLES,
+    radii: context.exports.UI_STYLE_RADII,
+    flatTargets: context.exports.UI_STYLE_FLAT_TARGETS,
     html: context.document.documentElement,
   };
 }
@@ -168,6 +172,69 @@ test('без заливки строка становится полосой в�
   // Ориентация размечена, иначе правило сломало бы горизонтальную ленту.
   const sidebar = fs.readFileSync(path.join(__dirname, 'src/components/Sidebar.tsx'), 'utf8');
   assert.ok(sidebar.includes('data-vera-list-layout'), 'список должен сообщать свою ориентацию');
+});
+
+test('пять паков иконок, и шим умеет их все отдавать', () => {
+  const { packs } = loadUiPrefs();
+  const ids = packs.map((p) => p.id);
+
+  assert.equal(packs.length, 5, 'пять паков');
+  assert.equal(JSON.stringify(ids), JSON.stringify(['filled', 'outlined', 'rounded', 'sharp', 'twoTone']));
+  for (const p of packs) assert.ok(p.label && p.desc, 'у пака есть подпись и описание');
+
+  // Порядок важен: он же порядок вкладок и VARIANTS в генераторе шима.
+  const generator = fs.readFileSync(path.join(__dirname, 'scripts/make-icon-shim.mjs'), 'utf8');
+  for (const id of ids) {
+    const suffix = id === 'filled' ? '' : id[0].toUpperCase() + id.slice(1);
+    assert.ok(generator.includes(`['${id}', '${suffix}']`), `генератор знает вариант ${id}`);
+  }
+
+  // Шим обязан отдавать каждый пак для каждой иконки: make() падает на filled,
+  // и «Двухслойные» молча превратились бы в обычные.
+  const shim = fs.readFileSync(path.join(__dirname, 'src/mui-icons-shim.tsx'), 'utf8');
+  const entries = [...shim.matchAll(/^ {2}(\w+): \{([^}]*)\}/gm)];
+  assert.ok(entries.length > 50, 'шим содержит иконки');
+  for (const [, name, body] of entries) {
+    for (const key of ['filled', 'outlined', 'rounded', 'sharp', 'twoTone']) {
+      assert.ok(body.includes(`${key}:`), `у иконки ${name} нет варианта ${key}`);
+    }
+  }
+});
+
+test('стили интерфейса: шесть вариантов, включая «Плоский»', () => {
+  const { styles } = loadUiPrefs();
+  const ids = styles.map((s) => s.id);
+  assert.equal(styles.length, 6, 'шесть стилей');
+  assert.ok(ids.includes('flat'), 'есть стиль «Плоский»');
+  for (const s of styles) assert.ok(s.label && s.desc, 'у стиля есть подпись и описание');
+});
+
+test('радиусы стилей покрывают один и тот же набор поверхностей', () => {
+  const { radii } = loadUiPrefs();
+  const rounded = Object.keys(radii.rounded);
+  const square = Object.keys(radii.square);
+
+  // Регрессия: раньше стиль трогал 3 класса, и вкладки/чипы/бейджи оставались
+  // со своими радиусами — стиль выглядел применённым наполовину.
+  assert.deepEqual(rounded.slice().sort(), square.slice().sort(), 'наборы поверхностей совпадают');
+  assert.ok(rounded.length >= 12, `поверхностей много (${rounded.length}), а не три`);
+
+  for (const sel of rounded) {
+    assert.ok(radii.rounded[sel] > radii.square[sel], `${sel}: скруглённый должен быть круглее`);
+    // 999 — «таблетка», иначе разумный радиус в пикселях.
+    assert.ok(radii.rounded[sel] === 999 || (radii.rounded[sel] >= 4 && radii.rounded[sel] <= 32), `подозрительный радиус у ${sel}`);
+    assert.ok(radii.square[sel] >= 0 && radii.square[sel] <= 8, `подозрительный радиус у ${sel}`);
+  }
+});
+
+test('CSS стилей генерируется из карт, а не прописан по классам', () => {
+  const mainSource = fs.readFileSync(path.join(__dirname, 'src/main.tsx'), 'utf8');
+  assert.ok(mainSource.includes('UI_STYLE_RADII'), 'радиусы разворачиваются из UI_STYLE_RADII');
+  assert.ok(mainSource.includes('UI_STYLE_FLAT_TARGETS'), 'цели «Плоский» разворачиваются из списка');
+  assert.ok(
+    mainSource.includes("from './store/uiPrefsStore'"),
+    'стили берутся из стора настроек',
+  );
 });
 
 test('карточка чата размечена для настройки и в сайдбаре, и в горизонтальном виде', () => {

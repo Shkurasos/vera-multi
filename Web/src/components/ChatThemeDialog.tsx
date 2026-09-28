@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Checkbox, Dialog, DialogContent, FormControlLabel, Stack, Typography } from '@mui/material';
+import { Checkbox, FormControlLabel, Typography } from '@mui/material';
 import { useThemeStore, THEMES, Theme } from '../store/themeStore';
 import { useChatThemeStore } from '../store/chatThemeStore';
 import { ThemeEditor } from './ThemeEditor';
@@ -10,7 +10,13 @@ interface Props {
   onClose: () => void;
 }
 
-/** Полный редактор Theme, работающий только с выбранным чатом. */
+/**
+ * Редактор темы чата.
+ *
+ * Раньше он накрывал редактор ещё и полноэкранным Dialog, хотя тот уже
+ * открывается плашкой поверх всего. Теперь слой один, а переключатель
+ * «применять тему» передаётся в шапку плашки через headerExtra.
+ */
 export default function ChatThemeDialog({ chatId, open, onClose }: Props) {
   const { theme } = useThemeStore();
   const current = useChatThemeStore((s) => (chatId ? s.themes[chatId] : undefined));
@@ -28,34 +34,33 @@ export default function ChatThemeDialog({ chatId, open, onClose }: Props) {
     };
   }, [current, theme]);
 
+  if (!open) return null;
+
   return (
-    <Dialog open={open} onClose={onClose} fullScreen
-      PaperProps={{ sx: { bgcolor: theme.bg, color: theme.text } }}>
-      <DialogContent sx={{ p: 0 }}>
-        <Stack direction="row" alignItems="center" sx={{ px: 3, pt: 2 }}>
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={enabled}
-                onChange={(event) => {
-                  if (!chatId) return;
-                  setChatTheme(chatId, { ...(current || initialTheme), enabled: event.target.checked });
-                }}
-              />
-            }
-            label={<Typography sx={{ color: theme.text }}>Применять персональную тему для этого чата</Typography>}
-          />
-        </Stack>
-        <ThemeEditor
-          key={chatId || 'no-chat'}
-          onClose={onClose}
-          initialTheme={initialTheme}
-          onApply={(next) => {
-            if (!chatId) return;
-            setChatTheme(chatId, { ...next, enabled, sourceThemeId: next.id });
-          }}
+    <ThemeEditor
+      key={chatId || 'no-chat'}
+      mode="chat"
+      onClose={onClose}
+      initialTheme={initialTheme}
+      headerExtra={
+        <FormControlLabel
+          sx={{ mr: 0 }}
+          control={
+            <Checkbox
+              checked={enabled}
+              onChange={(event) => {
+                if (!chatId) return;
+                setChatTheme(chatId, { ...(current || initialTheme), enabled: event.target.checked });
+              }}
+            />
+          }
+          label={<Typography sx={{ color: theme.text, fontSize: 13 }}>Применять для этого чата</Typography>}
         />
-      </DialogContent>
-    </Dialog>
+      }
+      onApply={(next) => {
+        if (!chatId) return;
+        setChatTheme(chatId, { ...next, enabled, sourceThemeId: next.id });
+      }}
+    />
   );
 }

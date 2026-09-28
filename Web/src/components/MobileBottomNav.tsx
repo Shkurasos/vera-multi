@@ -1,16 +1,17 @@
 import React, { useEffect, useState, lazy, Suspense } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
-  Box, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, Button, Badge,
+  Box, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, Button,
 } from '@mui/material';
 import {
   Chat as ChatIcon,
   LibraryMusic,
   AccountCircle,
   Palette,
+  Archive,
 } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
-import { useChatStore } from '../store/chatStore';
+import { useSidebarViewStore } from '../store/sidebarViewStore';
 import MusicLibrary from './MusicLibrary';
 
 const ThemeEditor = lazy(() => import('./ThemeEditor').then(m => ({ default: m.ThemeEditor })));
@@ -22,7 +23,10 @@ export default function MobileBottomNav() {
   const navigate = useNavigate();
   const location = useLocation();
   const { theme } = useThemeStore();
-  const unread = useChatStore((s) => s.chats.reduce((acc, c) => acc + (c.unreadCount || 0), 0));
+  // Режим архива общий с сайдбаром: кнопка «Архив» переключает сам список чатов,
+  // поэтому и панель, и список должны знать одно и то же состояние.
+  const archiveView = useSidebarViewStore((s) => s.archiveView);
+  const toggleArchiveView = useSidebarViewStore((s) => s.toggleArchiveView);
   const [musicOpen, setMusicOpen] = useState(false);
   const [themeEditorOpen, setThemeEditorOpen] = useState(false);
   const [hiding, setHiding] = useState(false);
@@ -148,12 +152,13 @@ export default function MobileBottomNav() {
           transition: 'transform 220ms ease, opacity 220ms ease',
         }}
       >
-        {item(isActive('/'), 'Чаты', () => navigate('/'), <ChatIcon />, unread > 0 ? (
-          <Badge badgeContent={unread} color="primary" sx={{ position: 'absolute', top: 2, right: 'calc(50% - 32px)' }} />
-        ) : undefined)}
-        {item(musicOpen, 'Музыка', openMusic, <LibraryMusic />)}
+        {/* Порядок задан пользователем: 1 — редактор, 2 — профиль, 3 — музыка,
+            4 — архив. Пункта «Чаты» нет: панель показывается только на списке
+            чатов, поэтому отдельная кнопка «в чаты» была лишней. */}
+        {item(themeEditorOpen, 'Редактор', openThemeEditor, <Palette />)}
         {item(isActive('/profile'), 'Профиль', openProfile, <AccountCircle />)}
-        {item(themeEditorOpen, 'Темы', openThemeEditor, <Palette />)}
+        {item(musicOpen, 'Музыка', openMusic, <LibraryMusic />)}
+        {item(archiveView, 'Архив', toggleArchiveView, <Archive />)}
       </Box>
 
       <Dialog open={musicOpen} onClose={closeMusic} fullScreen

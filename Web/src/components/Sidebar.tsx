@@ -13,7 +13,7 @@ import {
   LibraryMusic, AccountCircle, SmartToy, Security, ChevronLeft,
   ContentCopy, ContentPaste, QrCode, Link,
 } from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useChatStore } from '../store/chatStore';
 import { useChatPrefsStore } from '../store/chatPrefsStore';
 import { useAuthStore } from '../store/authStore';
@@ -22,6 +22,7 @@ import { useUserSettingsStore } from '../store/userSettingsStore';
 import { useDraftsStore } from '../store/draftsStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { useCustomEquipStore } from '../store/customEquipStore';
+import { useSidebarViewStore } from '../store/sidebarViewStore';
 import { specToStyle } from '../utils/customStyle';
 import { buildShopRingSx } from '../utils/rarityStyles';
 import { skinColors } from '../utils/skinColors';
@@ -53,10 +54,14 @@ function getInitials(name: string): string {
   return name.split(' ').filter(Boolean).map(w => w[0]).join('').toUpperCase().slice(0, 2);
 }
 
-type SidebarTab = 'chats' | 'archive' | 'groups';
+// Фильтр списка по типу чата. Архив вынесен из вкладок в отдельный режим
+// (useSidebarViewStore.archiveView) — его открывает кнопка «Архив».
+// «Группы» объединяет и группы, и каналы, «Диалоги» — только личные чаты
+// (включая «Избранное» и Vera AI), «Все» — всё неархивное.
+type SidebarTab = 'all' | 'chats' | 'groups';
 const TABS: { id: SidebarTab; label: string }[] = [
+  { id: 'all', label: 'Все' },
   { id: 'chats', label: 'Диалоги' },
-  { id: 'archive', label: 'Архив' },
   { id: 'groups', label: 'Группы' },
 ];
 
@@ -200,6 +205,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   const user = useAuthStore((s) => s.user);
   const theme = useThemeStore((s) => s.theme);
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Обводка аватара из магазина VERA — применяем к своей аватарке (в футере/шапке).
   // Для аватаров чужих чатов используем тот же стиль, чтобы обводка была
@@ -233,7 +239,16 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
     return [build(false), build(true)];
   }, [theme.accent, ringVal, ringItem, colorModes, customProfileSpec]);
 
-  const [tab, setTab] = useState<SidebarTab>('chats');
+  // По умолчанию «Все»: раньше вкладка «Диалоги» показывала всё неархивное,
+  // и после переименования первой вкладки вид списка не должен измениться.
+  const [tab, setTab] = useState<SidebarTab>('all');
+  // Режим архива включается кнопкой «Архив» — она есть и в нижней панели
+  // сайдбара на ПК, и в нижней навигации на телефоне, поэтому состояние
+  // общее. Имя toggleArchiveView, а не toggleArchive: последнее в
+  // chatPrefsStore архивирует конкретный чат, это другое действие.
+  const archiveView = useSidebarViewStore((s) => s.archiveView);
+  const setArchiveView = useSidebarViewStore((s) => s.setArchiveView);
+  const toggleArchiveView = useSidebarViewStore((s) => s.toggleArchiveView);
   const [search, setSearch] = useState('');
   const [channelsFound, setChannelsFound] = useState<Pick<Chat, 'id' | 'name' | 'avatarUrl'>[]>([]);
   useEffect(() => {
@@ -413,9 +428,12 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       const otherMember = c.members?.find(m => m.userId !== user?.id);
       const name = c.name || [otherMember?.user?.firstName, otherMember?.user?.lastName].filter(Boolean).join(' ') || otherMember?.user?.username || '';
       const matchSearch = name.toLowerCase().includes(search.toLowerCase());
-      if (tab === 'archive') return matchSearch && isArchived(c.id);
-      if (tab === 'groups') return matchSearch && (c.type === 'group' || c.type === 'channel');
-      return matchSearch && !isArchived(c.id);
+      if (archiveView) return matchSearch && isArchived(c.id);
+      if (isArchived(c.id)) return false;
+      if (tab === 'all') return matchSearch;
+      // Группы и каналы показываются вместе; диалогами считается всё остальное.
+      const isRoom = c.type === 'group' || c.type === 'channel';
+      return matchSearch && (tab === 'groups' ? isRoom : !isRoom);
     });
 
     return [...filtered].sort((a, b) => {
@@ -426,7 +444,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       const bt = b.lastMessage?.createdAt || b.createdAt;
       return new Date(bt).getTime() - new Date(at).getTime();
     });
-  }, [chats, search, tab, user?.id, isPinned, isArchived]);
+  }, [chats, search, tab, archiveView, user?.id, isPinned, isArchived]);
 
   async function handleSearchUser() {
     const query = searchUser.trim();
@@ -592,7 +610,17 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
         {!avatarOnly && open && <Tooltip title="Создать группу"><IconButton onClick={() => setCreateGroupOpen(true)} sx={{ color: theme.textSec }}><Group /></IconButton></Tooltip>}
       </Box>
 
-      {!avatarOnly && open && layout.showTabs && (
+      {/* В режиме архива вкладки фильтра уступают заголовку с возвратом. */}
+      {!avatarOnly && open && archiveView && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, px: 1, pb: 1.2, position: 'relative', zIndex: 1 }}>
+          <IconButton size="small" onClick={() => setArchiveView(false)} sx={{ color: theme.textSec }} aria-label="Назад к чатам">
+            <ChevronLeft />
+          </IconButton>
+          <Typography sx={{ color: theme.text, fontWeight: 700, fontSize: 14 }}>Архив</Typography>
+        </Box>
+      )}
+
+      {!avatarOnly && open && !archiveView && layout.showTabs && (
         <Box sx={{
           display: 'grid',
           gridTemplateColumns: `repeat(${TABS.length}, 1fr)`,
@@ -715,6 +743,14 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
         <Tooltip title="Профиль"><IconButton onClick={() => navigate('/profile')} sx={{ color: theme.textSec, ...membranePressSx }}><AccountCircle /></IconButton></Tooltip>
         <Tooltip title="Моя музыка и плейлисты"><IconButton onClick={() => setMusicOpen(true)} sx={{ color: theme.textSec, ...membranePressSx }}><LibraryMusic /></IconButton></Tooltip>
         <Tooltip title="Редактор тем"><IconButton onClick={() => setThemeEditorOpen(true)} sx={{ color: theme.textSec, ...membranePressSx }}><Palette /></IconButton></Tooltip>
+        <Tooltip title={archiveView ? 'Назад к чатам' : 'Архив'}>
+          <IconButton
+            onClick={toggleArchiveView}
+            sx={{ color: archiveView ? theme.accent : theme.textSec, ...membranePressSx }}
+          >
+            <Archive />
+          </IconButton>
+        </Tooltip>
         {user?.isAdmin && (
           <Tooltip title="Bug Bounty Tools"><IconButton onClick={() => navigate('/admin')} sx={{ color: theme.textSec, ...membranePressSx }}><Security /></IconButton></Tooltip>
         )}
