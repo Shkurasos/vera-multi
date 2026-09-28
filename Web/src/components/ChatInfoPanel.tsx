@@ -173,7 +173,14 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
     mediaItems.filter((item) => item.mimeType?.startsWith('audio/')),
   ], [mediaItems]);
 
-  const resolveMediaUrl = (url: string) => /^https?:|^data:|^blob:/i.test(url) ? url : `${window.location.origin}${url.startsWith('/') ? '' : '/'}${url}`;
+  // SEC: пропускаем только медиа-типы. Раньше /^data:/ принимал ЛЮБОЙ data-URL,
+  // включая data:text/html — такая ссылка в <a href> открыла бы документ
+  // в нашем origin. Сервер режет вложения через SAFE_MEDIA_DATA_URL, здесь
+  // та же проверка на клиенте как второй эшелон.
+  const resolveMediaUrl = (url: string) =>
+    /^https?:|^blob:|^data:(?:image|audio|video)\//i.test(url)
+      ? url
+      : `${window.location.origin}${url.startsWith('/') ? '' : '/'}${url}`;
   const formatFileSize = (size?: number) => {
     if (!size) return '';
     if (size < 1024) return `${size} B`;

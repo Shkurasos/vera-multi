@@ -626,11 +626,12 @@ app.use('/uploads', express.static(UPLOADS_DIR, {
     // трафика (аватарки/фото при повторных заходах не тянутся заново).
     res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
     const lower = filePath.toLowerCase();
-    const inlineOk = /\.(png|jpe?g|gif|webp|svg|mp3|ogg|wav|m4a|mp4|webm|mov)$/i.test(lower);
+    // SVG намеренно не раздаём inline: в нём может быть <script>. Загрузка SVG
+    // и так запрещена (см. mimeFilter), так что это лишь страховка.
+    const inlineOk = /\.(png|jpe?g|gif|webp|mp3|ogg|wav|m4a|mp4|webm|mov)$/i.test(lower);
     if (!inlineOk) {
       res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
     }
-    if (lower.endsWith('.svg')) res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
   },
 }));
 
@@ -890,10 +891,29 @@ app.post('/api/auth/refresh', csrfCheck, (req, res) => {
 
 // ─── Multer storage ───────────────────────────────────────────────────────────
 // SEC: белые списки MIME/расширений. UUID-имя файла, безопасное расширение.
-const SAFE_EXT = /^\.[a-z0-9]{1,8}$/i;
+//
+// Расширение берётся из имени, приходящего от клиента, поэтому раньше можно
+// было положить на диск что угодно: evil.html, x.js, x.xhtml, x.mht... MIME
+// при этом подделывается тривиально (это просто заголовок клиента). Список
+// расширений теперь ЗАКРЫТЫЙ: неизвестное отбрасывается, файл сохраняется
+// вообще без расширения. Лишние проверки на сервере раздачи (attachment +
+// nosniff + CSP sandbox) остаются вторым эшелоном.
+const SAFE_EXTENSIONS = new Set([
+  // изображения
+  '.png', '.jpg', '.jpeg', '.jfif', '.gif', '.webp', '.avif', '.bmp', '.heic', '.heif', '.tiff',
+  // аудио
+  '.mp3', '.m4a', '.aac', '.ogg', '.oga', '.opus', '.wav', '.flac', '.weba', '.aiff',
+  // видео
+  '.mp4', '.webm', '.mov', '.m4v', '.ogv', '.mkv', '.avi',
+  // документы
+  '.pdf', '.txt', '.csv', '.md', '.log', '.json', '.rtf', '.epub', '.ics',
+  '.zip', '.7z', '.rar', '.gz', '.tar', '.bz2',
+  '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.odp',
+]);
+
 function safeExt(name) {
   const e = path.extname(String(name || '')).toLowerCase();
-  return SAFE_EXT.test(e) ? e : '';
+  return SAFE_EXTENSIONS.has(e) ? e : '';
 }
 function makeStorage(subfolder) {
   return multer.diskStorage({
@@ -902,6 +922,30 @@ function makeStorage(subfolder) {
       cb(null, uuidv4() + safeExt(file.originalname));
     },
   });
+}
+
+// SEC: сигнатура активного контента. Проверяем начало файла, потому что тип
+// и имя приходят от клиента. HTML/SVG/XML не должны оседать на диске даже под
+// видом «картинки» — иначе это готовый payload для ссылок вида «открыть».
+const ACTIVE_CONTENT_RE = /^\s*(?:<\?xml|<!doctype\s+html|<html|<head|<body|<script|<svg|<iframe|<object|<embed|<meta)/i;
+function sniffActiveContent(filePath) {
+  let fd;
+  try { fd = fs.openSync(filePath, 'r'); } catch { return false; }
+  try {
+    const buf = Buffer.alloc(512);
+    const read = fs.readSync(fd, buf, 0, 512, 0);
+    return read > 0 && ACTIVE_CONTENT_RE.test(buf.subarray(0, read).toString('utf8'));
+  } catch { return false; } finally {
+    try { fs.closeSync(fd); } catch {}
+  }
+}
+/** Удаляет свежезагруженный файл и отвечает 400, если это активный контент. */
+function dropIfActiveContent(req, res) {
+  if (!req.file || !req.file.path) return false;
+  if (!sniffActiveContent(req.file.path)) return false;
+  try { fs.unlinkSync(req.file.path); } catch {}
+  res.status(400).json({ message: 'Файл содержит запрещённый активный контент (HTML/SVG/XML)' });
+  return true;
 }
 function mimeFilter(allowedPrefixes, allowedExact = []) {
   return (req, file, cb) => {
@@ -1614,6 +1658,7 @@ app.post('/api/users/avatar', authMiddleware, uploadAvatar.single('avatar'), (re
   const user = db.users.find(u => u.id === req.userId);
   if (!user) return res.status(404).json({ message: 'Не найден' });
   if (!req.file) return res.status(400).json({ message: 'Файл не загружен' });
+  if (dropIfActiveContent(req, res)) return;
   user.avatarUrl = `/uploads/avatars/${req.file.filename}`;
   saveDb();
   res.json(user);
@@ -1624,6 +1669,7 @@ app.put('/api/users/me/avatar', authMiddleware, uploadAvatar.single('avatar'), (
   const user = db.users.find(u => u.id === req.userId);
   if (!user) return res.status(404).json({ message: 'Не найден' });
   if (!req.file) return res.status(400).json({ message: 'Файл не загружен' });
+  if (dropIfActiveContent(req, res)) return;
   user.avatarUrl = `/uploads/avatars/${req.file.filename}`;
   saveDb();
   res.json(user);
@@ -2683,30 +2729,73 @@ app.get('/api/shop/custom', (req, res) => {
 // ─── CHATS routes ─────────────────────────────────────────────────────────────
 
 // GET /api/chats
+// PERF: последнее сообщение чата без сортировки всей истории.
+// Раньше здесь стояло db.messages.filter(...).sort(...)[0] — это O(m log m) на
+// каждый вызов. Один проход с сравнением меток времени даёт тот же результат
+// (при равных метках побеждает первое, как при стабильной сортировке).
+function lastMessageOf(chatId, isChannel) {
+  let best = null;
+  let bestTs = -Infinity;
+  for (const msg of db.messages) {
+    if (msg.chatId !== chatId) continue;
+    if (isChannel && msg.replyToId) continue;
+    const ts = Date.parse(msg.createdAt) || 0;
+    if (!best || ts > bestTs) { best = msg; bestTs = ts; }
+  }
+  return best;
+}
+
 app.get('/api/chats', authMiddleware, (req, res) => {
   const myMemberships = db.chatMembers.filter(m => m.userId === req.userId);
+  const myChatIds = new Set(myMemberships.map(m => m.chatId));
+
+  // PERF: раньше для КАЖДОГО чата выполнялось по два полных прохода по всем
+  // сообщениям, а последнее сообщение ещё и сортировалось целиком. На 50 чатах
+  // и 50k сообщений это миллионы итераций на каждый запрос списка чатов.
+  // Теперь один проход считает lastMessage и unreadCount сразу для всех чатов,
+  // а участники/пользователи берутся из Map вместо find() по массиву.
+  const chatsById = new Map(db.chats.map(c => [c.id, c]));
+  const lastByChat = new Map();
+  const unreadByChat = new Map();
+  for (const msg of db.messages) {
+    const chatId = msg.chatId;
+    if (!myChatIds.has(chatId)) continue;
+    if (!msg.replyToId || chatsById.get(chatId)?.type !== 'channel') {
+      const ts = Date.parse(msg.createdAt) || 0;
+      const current = lastByChat.get(chatId);
+      if (!current || ts > current.ts) lastByChat.set(chatId, { ts, msg });
+    }
+    if (!msg.readBy?.includes(req.userId) && msg.senderId !== req.userId) {
+      unreadByChat.set(chatId, (unreadByChat.get(chatId) || 0) + 1);
+    }
+  }
+  const membersByChat = new Map();
+  for (const cm of db.chatMembers) {
+    const list = membersByChat.get(cm.chatId);
+    if (list) list.push(cm); else membersByChat.set(cm.chatId, [cm]);
+  }
+  const usersById = new Map(db.users.map(u => [u.id, u]));
+
   const chats = myMemberships.map(m => {
-    const chat = db.chats.find(c => c.id === m.chatId);
+    const chat = chatsById.get(m.chatId);
     if (!chat) return null;
     // Возвращаем members в формате ChatMember (с role и вложенным user)
-    const members = db.chatMembers
-      .filter(cm => cm.chatId === chat.id)
-      .map(cm => ({
-        id: cm.id,
-        chatId: cm.chatId,
-        userId: cm.userId,
-        role: cm.role || 'member', permissions: cm.permissions, adminTitle: cm.adminTitle, promotedBy: cm.promotedBy,
-        joinedAt: cm.joinedAt,
-        isMuted: cm.muted || false,
-        user: db.users.find(u => u.id === cm.userId) || null, skins: cm.skins,
-      }));
-    const lastMsg = db.messages
-      .filter(msg => msg.chatId === chat.id && (chat.type !== 'channel' || !msg.replyToId))
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
-    const unreadCount = db.messages.filter(msg =>
-      msg.chatId === chat.id && !msg.readBy?.includes(req.userId) && msg.senderId !== req.userId
-    ).length;
-    return { ...chat, pinnedMessageIds: pinnedMessageIds(chat), pinnedMessage: getPinnedMessage(chat), pinnedMessages: pinnedMessageList(chat), type: chat.type || 'direct', members, lastMessage: lastMsg, unreadCount };
+    const members = (membersByChat.get(chat.id) || []).map(cm => ({
+      id: cm.id, chatId: cm.chatId, userId: cm.userId,
+      role: cm.role || 'member', permissions: cm.permissions, adminTitle: cm.adminTitle, promotedBy: cm.promotedBy,
+      joinedAt: cm.joinedAt, isMuted: cm.muted || false,
+      user: usersById.get(cm.userId) || null, skins: cm.skins,
+    }));
+    return {
+      ...chat,
+      pinnedMessageIds: pinnedMessageIds(chat),
+      pinnedMessage: getPinnedMessage(chat),
+      pinnedMessages: pinnedMessageList(chat),
+      type: chat.type || 'direct',
+      members,
+      lastMessage: lastByChat.get(chat.id)?.msg || null,
+      unreadCount: unreadByChat.get(chat.id) || 0,
+    };
   }).filter(Boolean);
 
   chats.sort((a, b) => {
@@ -2880,12 +2969,10 @@ app.get('/api/chats/:id', authMiddleware, (req, res) => {
     joinedAt: m.joinedAt, isMuted: m.muted || false,
     user: db.users.find(u => u.id === m.userId) || null, skins: m.skins,
   }));
-  const lastMsg = db.messages
-    .filter(msg => msg.chatId === chat.id)
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
-  const unreadCount = db.messages.filter(msg =>
-    msg.chatId === chat.id && !msg.readBy?.includes(req.userId) && msg.senderId !== req.userId
-  ).length;
+  const lastMsg = lastMessageOf(chat.id, false);
+  const unreadCount = db.messages.reduce((acc, msg) => acc + (
+    msg.chatId === chat.id && !msg.readBy?.includes(req.userId) && msg.senderId !== req.userId ? 1 : 0
+  ), 0);
   res.json({ ...chat, type: chat.type || 'direct', members, lastMessage: lastMsg, unreadCount });
 });
 
@@ -3768,6 +3855,7 @@ app.get('/api/call-log', authMiddleware, (req, res) => {
 
 app.post('/api/files/upload', authMiddleware, uploadFile.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'Файл не загружен' });
+  if (dropIfActiveContent(req, res)) return;
   res.json({
     url: `/uploads/files/${req.file.filename}`,
     originalName: req.file.originalname,
@@ -3856,6 +3944,7 @@ app.get('/api/music/:id', authMiddleware, (req, res) => {
 // POST /api/music/upload
 app.post('/api/music/upload', authMiddleware, uploadMusic.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'Файл не загружен' });
+  if (dropIfActiveContent(req, res)) return;
 
   const { title, artist, album, duration } = req.body;
   const track = {
@@ -3891,6 +3980,7 @@ app.patch('/api/music/:id', authMiddleware, uploadMusic.single('cover'), (req, r
   const track = db.tracks.find(t => t.id === req.params.id);
   if (!track) return res.status(404).json({ message: 'Трек не найден' });
   if (track.uploadedById !== req.userId) return res.status(403).json({ message: 'Нет прав' });
+  if (req.file && dropIfActiveContent(req, res)) return;
 
   const { title, artist, album, description } = req.body;
   if (title !== undefined) track.title = String(title).trim() || track.title;
@@ -4231,6 +4321,7 @@ app.post('/api/ai/models', authMiddleware, (req, res) => {
 });
 app.post('/api/ai/models/:id/files', authMiddleware, uploadFile.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'Файл не загружен' });
+  if (dropIfActiveContent(req, res)) return;
   res.json({ message: 'Файл принят', fileName: req.file.filename });
 });
 app.post('/api/ai/models/:id/train', authMiddleware, (req, res) => {
@@ -4537,9 +4628,7 @@ app.get('/api/favorites', authMiddleware, (req, res) => {
       const members = db.chatMembers
         .filter(m => m.chatId === chatId)
         .map(m => ({ ...m, user: db.users.find(u => u.id === m.userId) || null }));
-      const lastMsg = db.messages
-        .filter(m => m.chatId === chatId)
-        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
+      const lastMsg = lastMessageOf(chatId, false);
       return { ...chat, members, lastMessage: lastMsg, unreadCount: 0 };
     })
     .filter(Boolean);
