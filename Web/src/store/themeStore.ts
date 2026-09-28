@@ -194,9 +194,9 @@ export function getFinishStyles(theme: Theme) {
 
 
 export const THEMES: Theme[] = [
-  // ── 0 ── Vera 0.2 Betta — AMOLED Glass / 2026 ─────────────────────────────
+  // ── 0 ── Ателье Минимализм — AMOLED Glass / 2026 ─────────────────────────────
   {
-    id: 0, name: 'Atelier Minimal',
+    id: 0, name: 'Ателье Минимализм',
     bg: '#11151B', text: '#EEF3F7', accent: '#8FE3CF',
     bgSidebar: '#151A21', bgChat: '#11151B', bgHeader: '#171D25',
     bgInput: '#1B232C', bgBubbleOwn: '#8FE3CF', bgBubbleOther: '#202934',
@@ -212,9 +212,9 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#00100E',
   },
 
-  // ── 1 ── Vera Dark — чистая, без паттерна ─────────────────────────────────
+  // ── 1 ── Глубокая ночь — чистая, без паттерна ─────────────────────────────────
   {
-    id: 1, name: 'Deep Night',
+    id: 1, name: 'Глубокая ночь',
     bg: '#0A0E1A', text: '#EEF3FF', accent: '#FFB86B',
     bgSidebar: 'rgba(10,14,26,0.86)', bgChat: '#080C16', bgHeader: 'rgba(10,14,26,0.70)',
     bgInput: 'rgba(255,255,255,0.085)', bgBubbleOwn: '#FFB86B', bgBubbleOther: 'rgba(22,31,50,0.66)',
@@ -232,7 +232,7 @@ export const THEMES: Theme[] = [
 
   // ── 0 ── Vera Dark — чистая, без паттерна ─────────────────────────────────
   {
-    id: 100, name: 'Vera Dark Legacy',
+    id: 100, name: 'Наследие Vera Dark',
     bg: '#1E1D2B', text: '#E0DEFF', accent: '#7C6AF7',
     bgSidebar: '#1E1D2B', bgChat: '#1A1928', bgHeader: '#17162A',
     bgInput: '#252535', bgBubbleOwn: '#4A3F9F', bgBubbleOther: '#2A2940',
@@ -264,26 +264,9 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#ffffff',
   },
 
-  // ── 2 ── Тёплый закат ────────────────────────────────────────────────────
+  // ── 3 ── Свет и воздух — молочное стекло / дневной воздух ─────────────────
   {
-    id: 2, name: 'Тёплый закат',
-    bg: '#2c1810', text: '#fdebd0', accent: '#e67e22',
-    bgSidebar: '#2c1810', bgChat: '#251410', bgHeader: '#1f100c',
-    bgInput: '#331d14', bgBubbleOwn: '#7a3e10', bgBubbleOther: '#3a2015',
-    bgHover: '#3a2015', bgActive: '#4a2a1c', textSec: '#c4946a',
-    border: 'rgba(230,126,34,0.055)', online: '#4CAF50',
-    chatPattern: diagonals('rgba(230,126,34,0.055)'),
-    bubbleOwnGradient: 'linear-gradient(135deg, #e67e22 0%, #7a3e10 60%, #5a2d08 100%)',
-    bubbleOwnShadow: '0 6px 18px rgba(230,126,34,0.24), 0 1px 4px rgba(0,0,0,0.30)',
-    bubbleOtherShadow: '0 2px 8px rgba(0,0,0,0.24)',
-    sidebarGradient: 'linear-gradient(180deg, #341d12 0%, #2c1810 60%, #1f100c 100%)',
-    headerGradient: 'linear-gradient(90deg, #261510 0%, #1f100c 100%)',
-    bubbleOwnText: '#fff8ee',
-  },
-
-  // ── 3 ── Light & Airy — молочное стекло / дневной воздух ─────────────────
-  {
-    id: 3, name: 'Light & Airy',
+    id: 3, name: 'Свет и воздух',
     bg: '#F8F2EA', text: '#172033', accent: '#5B6CFF',
     bgSidebar: 'rgba(255,252,247,0.78)', bgChat: '#FBF7F0', bgHeader: 'rgba(255,255,255,0.66)',
     bgInput: 'rgba(255,255,255,0.82)', bgBubbleOwn: '#5B6CFF', bgBubbleOther: 'rgba(255,255,255,0.78)',
@@ -299,9 +282,9 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#FFFFFF',
   },
 
-  // ── 4 ── Индиго-голд ─────────────────────────────────────────────────────
+  // ── 4 ── Индиго и золото ─────────────────────────────────────────────────────
   {
-    id: 4, name: 'Индиго-голд',
+    id: 4, name: 'Индиго и золото',
     bg: '#0f0f2d', text: '#e0e7ff', accent: '#fbbf24',
     bgSidebar: '#0f0f2d', bgChat: '#0c0c26', bgHeader: '#08081e',
     bgInput: '#141440', bgBubbleOwn: '#7a5a10', bgBubbleOther: '#1a1a45',
@@ -386,9 +369,9 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#ffffff',
   },
 
-  // ── 9 ── Смоки-розовый ───────────────────────────────────────────────────
+  // ── 9 ── Дымчато-розовая ───────────────────────────────────────────────────
   {
-    id: 9, name: 'Смоки-розовый',
+    id: 9, name: 'Дымчато-розовая',
     bg: '#1a1418', text: '#f5e4ec', accent: '#f472b6',
     bgSidebar: '#1a1418', bgChat: '#150f13', bgHeader: '#110c0f',
     bgInput: '#221820', bgBubbleOwn: '#7a2050', bgBubbleOther: '#281820',
@@ -418,23 +401,6 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #102818 0%, #0d1f14 60%, #08140c 100%)',
     headerGradient: 'linear-gradient(90deg, #0f2016 0%, #08140c 100%)',
     bubbleOwnText: '#ffffff',
-  },
-
-  // ── 11 ── Медовый месяц ──────────────────────────────────────────────────
-  {
-    id: 11, name: 'Медовый месяц',
-    bg: '#1f180d', text: '#fef3c7', accent: '#f59e0b',
-    bgSidebar: '#1f180d', bgChat: '#1a1408', bgHeader: '#141008',
-    bgInput: '#261e10', bgBubbleOwn: '#7a4a05', bgBubbleOther: '#2e2010',
-    bgHover: '#2e2010', bgActive: '#3c2c14', textSec: '#c0a040',
-    border: 'rgba(245,158,11,0.1)', online: '#4CAF50',
-    chatPattern: crosses('rgba(245,158,11,0.08)'),
-    bubbleOwnGradient: 'linear-gradient(135deg, #f59e0b 0%, #7a4a05 60%, #5a3404 100%)',
-    bubbleOwnShadow: '0 6px 18px rgba(245,158,11,0.28), 0 1px 4px rgba(0,0,0,0.30)',
-    bubbleOtherShadow: '0 2px 8px rgba(0,0,0,0.24)',
-    sidebarGradient: 'linear-gradient(180deg, #261c10 0%, #1f180d 60%, #141008 100%)',
-    headerGradient: 'linear-gradient(90deg, #20160c 0%, #141008 100%)',
-    bubbleOwnText: '#fff8e0',
   },
 
   // ── 12 ── Арктическая зима ───────────────────────────────────────────────
@@ -475,26 +441,9 @@ export const THEMES: Theme[] = [
     finishAmount: 0.4,
   },
 
-  // ── 14 ── Болотный мох ───────────────────────────────────────────────────
+  // ── 15 ── Коралловый риф ────────────────────────────────────────────────────
   {
-    id: 14, name: 'Болотный мох',
-    bg: '#141a12', text: '#d4e8c4', accent: '#65a30d',
-    bgSidebar: '#141a12', bgChat: '#10160e', bgHeader: '#0c120a',
-    bgInput: '#1c2418', bgBubbleOwn: '#3a5808', bgBubbleOther: '#1c2a16',
-    bgHover: '#1c2a16', bgActive: '#263818', textSec: '#80a860',
-    border: 'rgba(101,163,13,0.1)', online: '#65a30d',
-    chatPattern: scales('rgba(101,163,13,0.075)'),
-    bubbleOwnGradient: 'linear-gradient(135deg, #65a30d 0%, #3a5808 60%, #2a4005 100%)',
-    bubbleOwnShadow: '0 6px 16px rgba(101,163,13,0.24), 0 1px 4px rgba(0,0,0,0.30)',
-    bubbleOtherShadow: '0 2px 8px rgba(0,0,0,0.24)',
-    sidebarGradient: 'linear-gradient(180deg, #1a2218 0%, #141a12 60%, #0c120a 100%)',
-    headerGradient: 'linear-gradient(90deg, #141c10 0%, #0c120a 100%)',
-    bubbleOwnText: '#f0ffe0',
-  },
-
-  // ── 15 ── Коралл риф ────────────────────────────────────────────────────
-  {
-    id: 15, name: 'Коралл риф',
+    id: 15, name: 'Коралловый риф',
     bg: '#1f0f0f', text: '#ffe0d4', accent: '#f43f5e',
     bgSidebar: '#1f0f0f', bgChat: '#1a0c0c', bgHeader: '#140909',
     bgInput: '#281414', bgBubbleOwn: '#801020', bgBubbleOther: '#301818',
@@ -524,23 +473,6 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #202428 0%, #1a1c1e 60%, #121415 100%)',
     headerGradient: 'linear-gradient(90deg, #1c2024 0%, #121415 100%)',
     bubbleOwnText: '#ffffff',
-  },
-
-  // ── 17 ── Тыквенный пирог ────────────────────────────────────────────────
-  {
-    id: 17, name: 'Тыквенный пирог',
-    bg: '#1f140d', text: '#ffedd5', accent: '#ea580c',
-    bgSidebar: '#1f140d', bgChat: '#1a100a', bgHeader: '#140c08',
-    bgInput: '#261a10', bgBubbleOwn: '#7c2d05', bgBubbleOther: '#2e1a10',
-    bgHover: '#2e1a10', bgActive: '#3c2418', textSec: '#c07040',
-    border: 'rgba(234,88,12,0.1)', online: '#4CAF50',
-    chatPattern: dotGrid('rgba(234,88,12,0.10)'),
-    bubbleOwnGradient: 'linear-gradient(135deg, #ea580c 0%, #7c2d05 60%, #5c2004 100%)',
-    bubbleOwnShadow: '0 6px 20px rgba(234,88,12,0.28), 0 1px 4px rgba(0,0,0,0.30)',
-    bubbleOtherShadow: '0 2px 8px rgba(0,0,0,0.24)',
-    sidebarGradient: 'linear-gradient(180deg, #261810 0%, #1f140d 60%, #140c08 100%)',
-    headerGradient: 'linear-gradient(90deg, #20120c 0%, #140c08 100%)',
-    bubbleOwnText: '#fff8ee',
   },
 
   // ── 18 ── Тёмная фуксия ──────────────────────────────────────────────────
@@ -577,23 +509,6 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#e0fffc',
   },
 
-  // ── 20 ── Шоколадный брауни ──────────────────────────────────────────────
-  {
-    id: 20, name: 'Шоколадный брауни',
-    bg: '#1a1210', text: '#eed6c4', accent: '#a0522d',
-    bgSidebar: '#1a1210', bgChat: '#150f0c', bgHeader: '#100c09',
-    bgInput: '#221816', bgBubbleOwn: '#5a2815', bgBubbleOther: '#281a16',
-    bgHover: '#281a16', bgActive: '#342018', textSec: '#a07060',
-    border: 'rgba(160,82,45,0.1)', online: '#4CAF50',
-    chatPattern: grid('rgba(160,82,45,0.08)'),
-    bubbleOwnGradient: 'linear-gradient(135deg, #a0522d 0%, #5a2815 60%, #401e10 100%)',
-    bubbleOwnShadow: '0 6px 16px rgba(160,82,45,0.26), 0 1px 4px rgba(0,0,0,0.30)',
-    bubbleOtherShadow: '0 2px 8px rgba(0,0,0,0.24)',
-    sidebarGradient: 'linear-gradient(180deg, #201614 0%, #1a1210 60%, #100c09 100%)',
-    headerGradient: 'linear-gradient(90deg, #1c1412 0%, #100c09 100%)',
-    bubbleOwnText: '#fff0e8',
-  },
-
   // ── 21 ── Лунная ночь ────────────────────────────────────────────────────
   {
     id: 21, name: 'Лунная ночь',
@@ -613,9 +528,9 @@ export const THEMES: Theme[] = [
     finishAmount: 0.5,
   },
 
-  // ── 22 ── Crimson Chalk ──────────────────────────────────────────────────
+  // ── 22 ── Алый мел ──────────────────────────────────────────────────
   {
-    id: 22, name: 'Crimson Chalk',
+    id: 22, name: 'Алый мел',
     bg: '#08080A', text: '#F8F2EE', accent: '#DC143C',
     bgSidebar: '#0C0A0B', bgChat: '#171316', bgHeader: '#050506',
     bgInput: '#2A2A2C', bgBubbleOwn: '#DC143C', bgBubbleOther: '#241E21',
@@ -630,9 +545,9 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#FFFFFF',
   },
 
-  // ── 23 ── Abyss Frost ────────────────────────────────────────────────────
+  // ── 23 ── Бездна и мороз ────────────────────────────────────────────────────
   {
-    id: 23, name: 'Abyss Frost',
+    id: 23, name: 'Бездна и мороз',
     bg: '#050914', text: '#EAF6FF', accent: '#E4F0F6',
     bgSidebar: '#070C17', bgChat: '#0B1220', bgHeader: '#030611',
     bgInput: '#121A28', bgBubbleOwn: '#0A0F1E', bgBubbleOther: '#131C2B',
@@ -649,9 +564,9 @@ export const THEMES: Theme[] = [
     finishAmount: 0.8,
   },
 
-  // ── 24 ── Vault Gold ─────────────────────────────────────────────────────
+  // ── 24 ── Золотой сейф ─────────────────────────────────────────────────────
   {
-    id: 24, name: 'Vault Gold',
+    id: 24, name: 'Золотой сейф',
     bg: '#0A0A0A', text: '#F5E6BC', accent: '#C8A96E',
     bgSidebar: '#0E0E0D', bgChat: '#12110E', bgHeader: '#050505',
     bgInput: '#1C1A15', bgBubbleOwn: '#C8A96E', bgBubbleOther: '#111111',
@@ -668,9 +583,9 @@ export const THEMES: Theme[] = [
     finishAmount: 0.5,
   },
 
-  // ── 25 ── Noir Rose ──────────────────────────────────────────────────────
+  // ── 25 ── Чёрная роза ──────────────────────────────────────────────────────
   {
-    id: 25, name: 'Noir Rose',
+    id: 25, name: 'Чёрная роза',
     bg: '#120607', text: '#FFEAF1', accent: '#E8729A',
     bgSidebar: '#160708', bgChat: '#170B10', bgHeader: '#080203',
     bgInput: '#241012', bgBubbleOwn: '#E8729A', bgBubbleOther: '#241016',
@@ -685,9 +600,9 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#160708',
   },
 
-  // ── 26 ── Midnight Ember ─────────────────────────────────────────────────
+  // ── 26 ── Полночный уголёк ─────────────────────────────────────────────────
   {
-    id: 26, name: 'Midnight Ember',
+    id: 26, name: 'Полночный уголёк',
     bg: '#061018', text: '#FFF1EA', accent: '#FF6B35',
     bgSidebar: '#07111A', bgChat: '#0A141D', bgHeader: '#03090E',
     bgInput: '#13202A', bgBubbleOwn: '#FF6B35', bgBubbleOther: '#0D1117',
@@ -702,9 +617,9 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#111111',
   },
 
-  // ── 27 ── Midnight Coral ─────────────────────────────────────────────────
+  // ── 27 ── Полночный коралл ─────────────────────────────────────────────────
   {
-    id: 27, name: 'Midnight Coral',
+    id: 27, name: 'Полночный коралл',
     bg: '#0E1727', text: '#FFF4F1', accent: '#FF6B5F',
     bgSidebar: '#101827', bgChat: '#121B2A', bgHeader: '#080E18',
     bgInput: '#1B2535', bgBubbleOwn: '#FF6B5F', bgBubbleOther: '#1E293B',
@@ -719,9 +634,9 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#101827',
   },
 
-  // ── 28 ── Live Adaptive — время / освещение / батарея ────────────────────
+  // ── 28 ── Живая адаптация — время / освещение / батарея ────────────────────
   {
-    id: 28, name: 'Live Adaptive',
+    id: 28, name: 'Живая адаптация',
     bg: '#070A10', text: '#F4F7FF', accent: '#7DFFB2',
     bgSidebar: 'rgba(8,12,18,0.82)', bgChat: '#05070B', bgHeader: 'rgba(8,12,18,0.68)',
     bgInput: 'rgba(255,255,255,0.075)', bgBubbleOwn: '#7DFFB2', bgBubbleOther: 'rgba(255,255,255,0.070)',
@@ -759,9 +674,9 @@ export const THEMES: Theme[] = [
     finishAmount: 0.6,
   },
 
-  // ── 30 ── Монохром Тёмный — бело-чёрный минимализм (матовый графит) ──────────
+  // ── 30 ── Тёмный монохром — бело-чёрный минимализм (матовый графит) ──────────
   {
-    id: 30, name: 'Монохром Тёмный',
+    id: 30, name: 'Тёмный монохром',
     bg: '#1C1C1E', text: '#FFFFFF', accent: '#FFFFFF',
     bgSidebar: '#282828', bgChat: '#1C1C1E', bgHeader: '#262626',
     bgInput: '#3A3A3C', bgBubbleOwn: '#F2F2F7', bgBubbleOther: '#3A3A3C',
@@ -783,7 +698,7 @@ export const THEMES: Theme[] = [
 
   // ── 31 ── Telegram — светлый интерфейс с голубым акцентом ────────────────
   {
-    id: 31, name: 'Telegram Blue',
+    id: 31, name: 'Синий Telegram',
     bg: '#DDE7EF', text: '#17212B', accent: '#229ED9',
     bgSidebar: '#FFFFFF', bgChat: '#DDE7EF', bgHeader: '#FFFFFF',
     bgInput: '#FFFFFF', bgBubbleOwn: '#EFFDDE', bgBubbleOther: '#FFFFFF',
@@ -801,9 +716,9 @@ export const THEMES: Theme[] = [
     finishAmount: 0.3,
   },
 
-  // ── 36 ── Telegram Dark — тёмная палитра Telegram с голубым акцентом ─────
+  // ── 36 ── Тёмный Telegram — тёмная палитра Telegram с голубым акцентом ─────
   {
-    id: 36, name: 'Telegram Dark',
+    id: 36, name: 'Тёмный Telegram',
     bg: '#17212B', text: '#F5F7F9', accent: '#229ED9',
     bgSidebar: '#202B36', bgChat: '#17212B', bgHeader: '#202B36',
     bgInput: '#242F3D', bgBubbleOwn: '#2B5278', bgBubbleOther: '#202B36',
@@ -1048,10 +963,13 @@ export const useThemeStore = create<ThemeState>()(
       },
       merge: (persisted, current) => {
         const p = (persisted || {}) as Partial<ThemeState>;
-        const themeId = typeof p.themeId === 'number' ? p.themeId : 0;
+        const storedId = typeof p.themeId === 'number' ? p.themeId : 0;
         const customThemes = Array.isArray(p.customThemes) ? p.customThemes : [];
-        const custom = customThemes.find(t => t && t.id === themeId);
-        const builtin = THEMES.find(t => t.id === themeId);
+        const custom = customThemes.find(t => t && t.id === storedId);
+        const builtin = THEMES.find(t => t.id === storedId);
+        // Если сохранённая тема была удалена из каталога, themeId приводим к 0:
+        // иначе в переключателе не выделена ни одна тема, а редактор путается.
+        const themeId = custom || builtin ? storedId : 0;
         const baseTheme = custom || builtin || THEMES[0];
         // Поверх базовой темы восстанавливаем пользовательское фото-фон чата
         const theme: Theme = {
@@ -1061,7 +979,7 @@ export const useThemeStore = create<ThemeState>()(
             ? { chatBgImageOpacity: p.chatBgImageOpacity }
             : { chatBgImageOpacity: baseTheme.chatBgImageOpacity }),
         };
-                return {
+        return {
           ...current,
           themeId,
           customThemes,

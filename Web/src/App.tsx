@@ -94,6 +94,25 @@ function playNotificationSound(chatId?: string) {
   playDefaultBeep();
 }
 
+/**
+ * Открыт ли сейчас именно этот чат И смотрит ли пользователь окно.
+ *
+ * Маршрут надёжнее `activeChat` из стора: он не сбрасывается при переходе на
+ * другой экран, поэтому «открытый чат» по нему определяется точно.
+ * Проверка фокуса/видимости отделяет реальный просмотр от фоновой вкладки —
+ * в фоне уведомление нужно, чтобы не пропустить сообщение.
+ */
+function isUserViewingChat(chatId: string): boolean {
+  if (document.hidden || !document.hasFocus()) return false;
+  const match = /^#\/chat\/([^/?#]+)/.exec(window.location.hash);
+  if (!match) return false;
+  try {
+    return decodeURIComponent(match[1]) === chatId;
+  } catch {
+    return match[1] === chatId;
+  }
+}
+
 interface IncomingCallState {
   callerId: string;
   callerName: string;
@@ -267,10 +286,17 @@ export default function App() {
           addMessage(message);
           const { isMuted } = useChatPrefsStore.getState();
           const chatMuted = isMuted(message.chatId);
-          if (!chatMuted) playNotificationSound(message.chatId);
+          // Пользователь сидит в этом чате и видит вкладку: уведомление ему не
+          // нужно — гасим звук и сразу отправляем «прочитано», чтобы у
+          // отправителя сразу появились галочки и не висел счётчик непрочитанных.
+          const viewingThisChat = isUserViewingChat(message.chatId);
+          if (!chatMuted && !viewingThisChat) playNotificationSound(message.chatId);
+          if (viewingThisChat) {
+            useChatStore.getState().markRead(message.chatId, message.id);
+          }
 
           // Push-уведомление если чат не в фокусе и не замьючен
-          if (!chatMuted) {
+          if (!chatMuted && !viewingThisChat) {
             const { chats } = useChatStore.getState();
             const chat = chats.find(c => c.id === message.chatId);
             const senderName = message.sender

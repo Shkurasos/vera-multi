@@ -230,10 +230,14 @@ const darkTheme = createTheme({
         },
         html: { width: '100%', maxWidth: '100%', overflowX: 'hidden' },
         // ─── Анимации (каждая группа выключается атрибутом data-anim-off-*) ─
-        // 1. Подъём карточек при наведении
+        // 1. Подъём карточек при наведении.
+        // will-change намеренно НЕ выставлен: он стоял глобально на всех
+        // ListItemButton/Card/ButtonBase/SvgIcon и заставлял браузер держать
+        // композитный слой для каждого элемента списка (сотни слоёв = расход
+        // GPU-памяти и просадка FPS). Transform-анимации браузер поднимает на
+        // слой сам на время перехода.
         'html:not([data-anim-off-hover-lift]) .MuiListItemButton-root': {
           transition: 'transform .28s cubic-bezier(.34,1.56,.64,1), box-shadow .3s cubic-bezier(.16,1,.3,1), background-color .25s ease',
-          willChange: 'transform',
         },
         'html:not([data-anim-off-hover-lift]) .MuiListItemButton-root:hover': { transform: 'translateY(-2px)' },
         'html:not([data-anim-off-hover-lift]) .MuiListItem-root': {
@@ -242,7 +246,6 @@ const darkTheme = createTheme({
         'html:not([data-anim-off-hover-lift]) .MuiListItem-root:hover': { transform: 'translateY(-1px)' },
         'html:not([data-anim-off-hover-lift]) .MuiCard-root': {
           transition: 'transform .3s cubic-bezier(.34,1.56,.64,1), box-shadow .35s cubic-bezier(.16,1,.3,1)',
-          willChange: 'transform',
         },
         'html:not([data-anim-off-hover-lift]) .MuiCard-root:hover': { transform: 'translateY(-3px)' },
         'html:not([data-anim-off-hover-lift]) [data-vera-hoverlift]': {
@@ -253,7 +256,6 @@ const darkTheme = createTheme({
         // 2. Нажатие кнопок (мембрана)
         'html:not([data-anim-off-press]) .MuiButtonBase-root': {
           transition: 'transform .18s cubic-bezier(.34,1.56,.64,1), filter .18s ease',
-          willChange: 'transform',
         },
         'html:not([data-anim-off-press]) .MuiButtonBase-root:active': {
           transform: 'scale(.96)',
@@ -304,7 +306,6 @@ const darkTheme = createTheme({
         // 8. Иконки при наведении
         'html:not([data-anim-off-icon-motion]) .MuiIconButton-root .MuiSvgIcon-root': {
           transition: 'transform .3s cubic-bezier(.34,1.56,.64,1)',
-          willChange: 'transform',
         },
         'html:not([data-anim-off-icon-motion]) .MuiIconButton-root:hover .MuiSvgIcon-root': { transform: 'scale(1.14)' },
 

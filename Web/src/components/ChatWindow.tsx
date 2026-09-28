@@ -24,6 +24,7 @@ import { useThemeStore, getFinishStyles } from '../store/themeStore';
 import { useChatSettingsStore, BUILTIN_FONTS } from '../store/chatSettingsStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
 import { useDraftsStore } from '../store/draftsStore';
+import { useMessageHoverStore } from '../store/messageHoverStore';
 import { useChatFontStore, STOCK_FONTS } from '../store/chatFontStore';
 import { sendTypingStart, sendTypingStop, getSocket } from '../services/socket';
 import { chatsApi, filesApi, messagesApi } from '../services/api';
@@ -236,6 +237,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   // не перерисовывает открытое окно.
   const typingList = useChatStore((s) => s.typingUsers[id || ''] || EMPTY_TYPING_LIST);
   const leaveChat = useChatStore((s) => s.leaveChat);
+  const markRead = useChatStore((s) => s.markRead);
   const pinMessage = useChatStore((s) => s.pinMessage);
   const unpinMessage = useChatStore((s) => s.unpinMessage);
   const toggleMute = useChatPrefsStore((s) => s.toggleMute);
@@ -269,15 +271,20 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const clearChatFont = useChatFontStore((s) => s.clearChatFont);
   const chatFontValue = useChatFontStore((s) => s.perChatFonts[id || '']);
   const globalFontFamily = useUserSettingsStore((s) => s.globalFontFamily);
-  const chatLayout = useUserSettingsStore((s) => s.layout);
+  const layoutBubbleEnabled = useUserSettingsStore((s) => s.layout.bubbleEnabled);
+  const layoutBubbleTextSize = useUserSettingsStore((s) => s.layout.bubbleTextSize);
+  const layoutBubblePadding = useUserSettingsStore((s) => s.layout.bubblePadding);
+  const layoutMessageMaxWidth = useUserSettingsStore((s) => s.layout.messageMaxWidth);
   const bubblePrefs: BubblePrefsShape = useChatPrefsStore((s) => s.bubbleSettings[id || ''] || EMPTY_BUBBLE_PREFS);
   const setBubbleSettings = useChatPrefsStore((s) => s.setBubbleSettings);
-  const effectiveBubble = {
-    enabled: bubblePrefs.enabled ?? chatLayout.bubbleEnabled ?? true,
-    textSize: bubblePrefs.textSize ?? chatLayout.bubbleTextSize ?? 15,
-    padding: bubblePrefs.padding ?? chatLayout.bubblePadding ?? 6,
-    maxWidth: bubblePrefs.maxWidth ?? chatLayout.messageMaxWidth,
-  };
+  // useMemo: объект ниже передаётся в BubbleSettingsControls и в пропсы пузырей;
+  // без мемоизации он был новым на каждом рендере.
+  const effectiveBubble = useMemo(() => ({
+    enabled: bubblePrefs.enabled ?? layoutBubbleEnabled ?? true,
+    textSize: bubblePrefs.textSize ?? layoutBubbleTextSize ?? 15,
+    padding: bubblePrefs.padding ?? layoutBubblePadding ?? 6,
+    maxWidth: bubblePrefs.maxWidth ?? layoutMessageMaxWidth,
+  }), [bubblePrefs, layoutBubbleEnabled, layoutBubbleTextSize, layoutBubblePadding, layoutMessageMaxWidth]);
   const [text, setText] = useState('');
   const [keepSendButton, setKeepSendButton] = useState(false);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -311,7 +318,6 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const [showDisplaySettings, setShowDisplaySettings] = useState(false);
   const [notifSettingsOpen, setNotifSettingsOpen] = useState(false);
   const [chatThemeOpen, setChatThemeOpen] = useState(false);
-  const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
   const [activeCall, setActiveCall] = useState<{ type: 'audio' | 'video' } | null>(null);
   const callActive = useCallStore((s) => s.activeChatId === id);
   const [toast, setToast] = useState<{ message: string; severity: 'success' | 'info' | 'warning' | 'error' } | null>(null);
@@ -346,12 +352,18 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const setFontSize = useChatSettingsStore((s) => s.setFontSize);
   const setEmojiSize = useChatSettingsStore((s) => s.setEmojiSize);
   const setFontFamily = useChatSettingsStore((s) => s.setFontFamily);
-  const layout = useUserSettingsStore((st) => st.layout);
+  // Второй селектор на тот же layout сужаем до нужного поля: иначе любое
+  // изменение настроек layout (например перетаскивание ширины сайдбара)
+  // перерисовывало всё окно чата.
+  const chatHeaderPos = useUserSettingsStore((s) => s.layout.chatHeaderPos);
+  const chatInputPos = useUserSettingsStore((s) => s.layout.chatInputPos);
+  const messageAlign = useUserSettingsStore((s) => s.layout.messageAlign);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTypingStart = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatBgInputRef = useRef<HTMLInputElement>(null);
   const liveBgInputRef = useRef<HTMLInputElement>(null);
@@ -378,6 +390,28 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   // Состояние для кнопки "прокрутить вниз"
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [unreadAtBottom, setUnreadAtBottom] = useState(0);
+
+  // Сообщения, пришедшие пока вкладка была в фоне, отмечаем прочитанными, как
+  // только пользователь вернулся в чат. Последний отправленный id запоминаем,
+  // чтобы не слать «прочитано» повторно при каждом alt-tab.
+  const lastReadReceiptRef = useRef<string | null>(null);
+  useEffect(() => {
+    const markIncomingRead = () => {
+      if (!id || document.hidden || !document.hasFocus()) return;
+      const msgs = chatMessagesForId || [];
+      const lastIncoming = [...msgs].reverse().find((m) => m.senderId !== user?.id);
+      const target = lastIncoming || msgs[msgs.length - 1];
+      if (!target?.id || target.id === lastReadReceiptRef.current) return;
+      lastReadReceiptRef.current = target.id;
+      markRead(id, target.id);
+    };
+    window.addEventListener('focus', markIncomingRead);
+    document.addEventListener('visibilitychange', markIncomingRead);
+    return () => {
+      window.removeEventListener('focus', markIncomingRead);
+      document.removeEventListener('visibilitychange', markIncomingRead);
+    };
+  }, [id, chatMessagesForId, user?.id, markRead]);
 
   // Окно рендера истории: в DOM только последние renderLimit сообщений.
   // При скролле вверх порция растёт, позиция сохраняется через
@@ -824,7 +858,15 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     if (id) setDraft(id, value); // Сохраняем черновик при каждом изменении
     if (!id) return;
     try {
-      sendTypingStart(id);
+      // Раньше typing:start уходил на КАЖДЫЙ символ — собеседник получал
+      // десятки событий в секунду и столько же ререндеров своего окна чата.
+      // Отправляем старт не чаще раза в 1.5с: индикатор всё равно живёт
+      // благодаря продлению таймера stop ниже.
+      const now = Date.now();
+      if (now - lastTypingStart.current > 1500) {
+        lastTypingStart.current = now;
+        sendTypingStart(id);
+      }
       if (typingTimer.current) clearTimeout(typingTimer.current);
       typingTimer.current = setTimeout(() => { try { sendTypingStop(id); } catch {} }, 2000);
     } catch {}
@@ -998,10 +1040,9 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     return groups;
   }, [visibleMessages]);
 
-  const handleHover = useCallback((id: string | null) => setHoveredMsgId(id), []);
-  const handleOpenActions = useCallback((id: string) => {
-    setHoveredMsgId((current) => current === id ? null : id);
-  }, []);
+  // Ховер сообщения живёт в отдельном микро-сторе: движение мыши по ленте
+  // больше не перерисовывает шапку/ввод/список целиком, только два пузыря.
+  const clearHover = useCallback(() => useMessageHoverStore.getState().setHoveredId(null), []);
   const handleReply = useCallback((m: Message) => {
     if (activeChat?.type !== 'channel') setReplyTo(m);
   }, [activeChat?.type]);
@@ -1284,12 +1325,12 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           px: { xs: 0.75, md: 2.5 }, py: { xs: 0.65, md: 1.5 }, gap: { xs: 0.5, md: 2 },
           background: theme.headerGradient || theme.bgHeader,
           backdropFilter: 'blur(22px)',
-          borderBottom: layout.chatHeaderPos === 'bottom' ? 'none' : `1px solid ${theme.border}`,
-          borderTop: layout.chatHeaderPos === 'bottom' ? `1px solid ${theme.border}` : 'none',
+          borderBottom: chatHeaderPos === 'bottom' ? 'none' : `1px solid ${theme.border}`,
+          borderTop: chatHeaderPos === 'bottom' ? `1px solid ${theme.border}` : 'none',
           boxShadow: '0 16px 44px rgba(0,0,0,0.22)',
           flexShrink: 0,
           position: 'relative', zIndex: 2,
-          order: { xs: 0, md: layout.chatHeaderPos === 'bottom' ? 3 : 0 },
+          order: { xs: 0, md: chatHeaderPos === 'bottom' ? 3 : 0 },
           ...getFinishStyles(theme),
           '& .mobile-secondary-action': { display: { xs: 'none', md: 'inline-flex' } },
         }}>
@@ -1775,6 +1816,11 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           // (а не только при наведении/прокрутке), бегунок при открытии
           // чата стоит в самом низу — чат открывается на последнем сообщении.
           flex: 1, minHeight: 0, overflowY: 'auto', scrollbarGutter: 'stable',
+          // Изоляция ленты: правки в шапке/вводе (в т.ч. ресайз сайдбара)
+          // больше не инвалидируют layout сотен сообщений. 'layout style' без
+          // 'paint': paint-containment обрезал бы всплывающие панели.
+          contain: 'layout style',
+          willChange: 'scroll-position',
           WebkitOverflowScrolling: 'touch', touchAction: 'pan-y',
           px: { xs: 1, md: 2.5 }, py: { xs: 1.25, md: 2 },
           pb: { xs: 'calc(1.25rem + env(safe-area-inset-bottom))', md: 2 },
@@ -1791,8 +1837,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           position: 'relative', zIndex: 2, order: 2,
         }}
           ref={messagesContainerRef}
-          onClick={() => setHoveredMsgId(null)}
-          onContextMenu={() => setHoveredMsgId(null)}
+          onClick={clearHover}
+          onContextMenu={clearHover}
         >
           {chatMessages.length === 0 && !searchQuery.trim() && (
             <Box display="flex" justifyContent="center" mt={6}>
@@ -1827,9 +1873,6 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
                   key={msg.id}
                   message={msg}
                   isOwn={activeChat.type !== 'channel' && msg.senderId === user?.id}
-                  isHovered={hoveredMsgId === msg.id}
-                  onHover={handleHover}
-                  onOpenActions={handleOpenActions}
                   onReply={handleReply}
                   onForward={handleForward}
                   onAvatarClick={handleSetProfileUser}
@@ -1843,7 +1886,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
                   bubbleOtherShadow={theme.bubbleOtherShadow}
                   messageTimeColor={theme.messageTimeColor}
                   messageMaxWidth={effectiveBubble.maxWidth}
-                  messageAlign={chatLayout.messageAlign}
+                  messageAlign={messageAlign}
                   bubbleEnabled={effectiveBubble.enabled}
                   bubbleTextSize={effectiveBubble.textSize}
                   bubblePadding={effectiveBubble.padding}
@@ -2030,12 +2073,12 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           pb: { xs: 'calc(0.55rem + env(safe-area-inset-bottom))', md: 1.25 },
           bgcolor: theme.bgHeader,
           backdropFilter: 'blur(22px)',
-          borderTop: layout.chatInputPos === 'top' ? 'none' : `1px solid ${theme.border}`,
-          borderBottom: layout.chatInputPos === 'top' ? `1px solid ${theme.border}` : 'none',
-          boxShadow: layout.chatInputPos === 'top' ? '0 18px 46px rgba(0,0,0,0.28)' : '0 -18px 46px rgba(0,0,0,0.28)',
+          borderTop: chatInputPos === 'top' ? 'none' : `1px solid ${theme.border}`,
+          borderBottom: chatInputPos === 'top' ? `1px solid ${theme.border}` : 'none',
+          boxShadow: chatInputPos === 'top' ? '0 18px 46px rgba(0,0,0,0.28)' : '0 -18px 46px rgba(0,0,0,0.28)',
           flexShrink: 0,
           position: 'relative', zIndex: 2,
-          order: { xs: 4, md: layout.chatInputPos === 'top' ? 1 : 4 },
+          order: { xs: 4, md: chatInputPos === 'top' ? 1 : 4 },
         }}>
 
           {activeChat?.type === 'channel' && !channelReadOnly && (

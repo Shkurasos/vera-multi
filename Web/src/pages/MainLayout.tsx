@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
 import { Box, useMediaQuery } from '@mui/material';
 import { useChatStore } from '../store/chatStore';
@@ -26,7 +26,17 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
   const theme = useThemeStore((s) => s.theme);
   const currentTrack = useMusicStore((s) => s.currentTrack);
   const playerCollapsed = useMusicStore((s) => s.playerCollapsed);
-  const layout = useUserSettingsStore((s) => s.layout);
+  // Только нужные поля layout: подписка на весь объект перерисовывала всё
+  // дерево (сайдбар + окно чата) при ЛЮБОЙ правке настроек — включая
+  // перетаскивание ширины сайдбара, где это 60+ ререндеров в секунду.
+  const density = useUserSettingsStore((s) => s.layout.density);
+  const radius = useUserSettingsStore((s) => s.layout.radius);
+  const bubbleRadius = useUserSettingsStore((s) => s.layout.bubbleRadius);
+  const mobileNavPos = useUserSettingsStore((s) => s.layout.mobileNavPos);
+  const playerPos = useUserSettingsStore((s) => s.layout.playerPos);
+  const playerWidth = useUserSettingsStore((s) => s.layout.playerWidth);
+  const sidebarSide = useUserSettingsStore((s) => s.layout.sidebarSide);
+  const chatOuterMargin = useUserSettingsStore((s) => s.layout.chatOuterMargin);
   const location = useLocation();
   const isMobile = useMediaQuery('(max-width: 700px)');
 
@@ -34,13 +44,13 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
 
   // Применяем плотность и радиус как CSS-переменные для всего приложения.
   useEffect(() => {
-    const densityGap = layout.density === 'compact' ? 0.5 : layout.density === 'roomy' ? 1.6 : 1;
+    const densityGap = density === 'compact' ? 0.5 : density === 'roomy' ? 1.6 : 1;
     const root = document.documentElement;
     root.style.setProperty('--vera-density', String(densityGap));
-    root.style.setProperty('--vera-radius', `${layout.radius}px`);
-    root.style.setProperty('--vera-bubble-radius', `${layout.bubbleRadius}px`);
-    root.style.setProperty('--vera-nav-pos', layout.mobileNavPos);
-  }, [layout.density, layout.radius, layout.bubbleRadius, layout.mobileNavPos]);
+    root.style.setProperty('--vera-radius', `${radius}px`);
+    root.style.setProperty('--vera-bubble-radius', `${bubbleRadius}px`);
+    root.style.setProperty('--vera-nav-pos', mobileNavPos);
+  }, [density, radius, bubbleRadius, mobileNavPos]);
 
   const onChatList = location.pathname === '/';
   const [viewport, setViewport] = useState<{ height: number; top: number } | null>(null);
@@ -72,13 +82,13 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
   // резервируют место внутри основной области ниже.
   let bottomPad = '0px';
   let topPad = '0px';
-  const sidePlayer = !isMobile && layout.playerPos === 'left';
-  const effectiveVerticalPos = isMobile && (layout.playerPos === 'left' || layout.playerPos === 'right')
+  const sidePlayer = !isMobile && playerPos === 'left';
+  const effectiveVerticalPos = isMobile && (playerPos === 'left' || playerPos === 'right')
     ? 'bottom'
-    : layout.playerPos;
+    : playerPos;
   const maxSidePlayerWidth = Math.max(PLAYER_SIDE_MIN, Math.floor(window.innerWidth / 2));
   const sidePlayerWidth = Math.min(
-    Math.max(Number(layout.playerWidth) || 300, PLAYER_SIDE_MIN),
+    Math.max(Number(playerWidth) || 300, PLAYER_SIDE_MIN),
     maxSidePlayerWidth,
   );
   const sidePlayerPad = currentTrack && sidePlayer
@@ -92,7 +102,7 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
 
   const bg = {
     display: 'flex',
-    flexDirection: (layout.sidebarSide === 'top' || layout.sidebarSide === 'bottom') ? 'column' as const : 'row' as const,
+    flexDirection: (sidebarSide === 'top' || sidebarSide === 'bottom') ? 'column' as const : 'row' as const,
     height: '100%',
     minHeight: 0,
     minWidth: 0,
@@ -108,7 +118,7 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
     `,
     pt: topPad,
     pb: bottomPad,
-    ...(sidePlayer ? (layout.playerPos === 'left'
+    ...(sidePlayer ? (playerPos === 'left'
       ? { pl: sidePlayerPad }
       : { pr: sidePlayerPad }) : {}),
     boxSizing: 'border-box',
@@ -172,8 +182,8 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
     }}>
       <Box sx={{
         flex: 1, overflow: 'hidden', minHeight: 0, height: '100%',
-        m: { xs: 0, md: `${layout.chatOuterMargin}px` },
-        borderRadius: { xs: 0, md: `${layout.radius}px` },
+        m: { xs: 0, md: `${chatOuterMargin}px` },
+        borderRadius: { xs: 0, md: `${radius}px` },
         border: { xs: 'none', md: `1px solid ${theme.border}` },
         boxShadow: { xs: 'none', md: '0 22px 70px rgba(0,0,0,0.42)' },
         transition: 'border-color 800ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 800ms cubic-bezier(0.22, 1, 0.36, 1), border-radius 220ms ease',
@@ -205,11 +215,11 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
           <ChatWallpaper spec={wallpaperSpec} isLight={!theme.bg.startsWith('#0') && theme.bg !== '#000000'} />
         </Box>
       )}
-      <Box sx={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: (layout.sidebarSide === 'top' || layout.sidebarSide === 'bottom') ? 'column' : 'row', flex: 1, minWidth: 0, minHeight: 0, width: '100%', height: '100%' }}>
-        {layout.sidebarSide === 'left' && (<>{sidebar}{mainArea}</>)}
-        {layout.sidebarSide === 'right' && (<>{mainArea}{sidebar}</>)}
-        {layout.sidebarSide === 'top' && (<>{sidebar}{mainArea}</>)}
-        {layout.sidebarSide === 'bottom' && (<>{mainArea}{sidebar}</>)}
+      <Box sx={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: (sidebarSide === 'top' || sidebarSide === 'bottom') ? 'column' : 'row', flex: 1, minWidth: 0, minHeight: 0, width: '100%', height: '100%' }}>
+        {sidebarSide === 'left' && (<>{sidebar}{mainArea}</>)}
+        {sidebarSide === 'right' && (<>{mainArea}{sidebar}</>)}
+        {sidebarSide === 'top' && (<>{sidebar}{mainArea}</>)}
+        {sidebarSide === 'bottom' && (<>{mainArea}{sidebar}</>)}
       </Box>
     </Box>
   );

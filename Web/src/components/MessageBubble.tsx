@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo, memo } from 'react';
 import { createPortal } from 'react-dom';
+import { useShallow } from 'zustand/react/shallow';
 import { Box, Typography, Avatar, IconButton, Tooltip, Slider, Popover, Button, CircularProgress } from '@mui/material';
 import {
   Reply, Delete, ContentCopy, DoneAll, Done, AccessTime, GraphicEq, Pause, Download,
@@ -26,7 +27,8 @@ import { skinColors } from '../utils/skinColors';
 import { bubbleSkin, selfcardSkin } from '../utils/bubbleSkin';
 import { mirrorBubble } from '../utils/mirrorBubble';
 import { clampBubble } from '../utils/bubbleSettings';
-import { clampAlpha, withAlpha } from '../utils/colorAlpha';
+import { clampAlpha, withAlpha, isTranslucentColor } from '../utils/colorAlpha';
+import { useMessageHoverStore } from '../store/messageHoverStore';
 import { messagesApi, voiceApi } from '../services/api';
 import PlaylistMessageCard, { VeraPlaylistPayload } from './PlaylistMessageCard';
 import GroupInviteCard from './GroupInviteCard';
@@ -38,9 +40,6 @@ import { membranePressSx, motion } from '../styles/motion';
 interface Props {
   message: Message;
   isOwn: boolean;
-  isHovered?: boolean;
-  onHover?: (id: string | null) => void;
-  onOpenActions?: (id: string) => void;
   onReply: (message: Message) => void;
   onForward: (message: Message) => void;
   onAvatarClick?: (user: User) => void;
@@ -406,9 +405,6 @@ function DocumentPreview({ url, fileName, mimeType, accent }: { url: string; fil
 function MessageBubble({
   message,
   isOwn,
-  isHovered,
-  onHover,
-  onOpenActions,
   onReply,
   onForward,
   onAvatarClick,
@@ -430,11 +426,31 @@ function MessageBubble({
   isGroupEnd = true,
 }: Props) {
   const user = useAuthStore((s) => s.user);
-  const groupChat = useChatStore(s => s.chats.find(c => c.id === message.chatId));
+  // Узкая подписка на ЧАСТИ чата, а не на весь объект: chats.map в addMessage
+  // пересоздаёт объект чата на КАЖДОЕ новое сообщение, и прежний селектор
+  // отдавал новую ссылку -> перерисовывались ВСЕ пузыри чата. Через shallow
+  // перерисовка случается только при реальном изменении полей чата.
+  const groupChat = useChatStore(useShallow((s) => {
+    const c = s.chats.find(x => x.id === message.chatId);
+    if (!c) return null;
+    return {
+      type: c.type,
+      members: c.members,
+      id: c.id,
+      name: c.name,
+      avatarUrl: c.avatarUrl,
+      activeRing: c.activeRing,
+      activeSelfCard: c.activeSelfCard,
+      activeBubble: c.activeBubble,
+    };
+  }));
   const channelPost = groupChat?.type === 'channel' && !message.replyToId;
-  const canEdit = isOwn || hasGroupRight(groupChat?.members.find(m => m.userId === user?.id), 'editMessages');
-  const canDelete = isOwn || hasGroupRight(groupChat?.members.find(m => m.userId === user?.id), 'deleteMessages');
-  const senderTitle = groupChat?.members.find(m => m.userId === message.senderId && m.role === 'admin')?.adminTitle;
+  const canEdit = isOwn || hasGroupRight(groupChat?.members?.find(m => m.userId === user?.id), 'editMessages');
+  const canDelete = isOwn || hasGroupRight(groupChat?.members?.find(m => m.userId === user?.id), 'deleteMessages');
+  const senderTitle = groupChat?.members?.find(m => m.userId === message.senderId && m.role === 'admin')?.adminTitle;
+  // Ховер живёт в отдельном микро-сторе: булев селектор трогает только два
+  // затронутых пузыря, а не перерисовывает всё окно чата (как было раньше).
+  const isHovered = useMessageHoverStore((s) => s.hoveredId === message.id);
   // Экшены стора стабильны: подписка только на них не вызывает лишних
   // перерисовок при каждом изменении сообщений/печати/присутствия.
   const addReaction = useChatStore((s) => s.addReaction);
@@ -476,6 +492,12 @@ function MessageBubble({
   const customProfileSpec = useCustomEquipStore((s) => s.equipped.profile ? s.items[s.equipped.profile]?.spec : undefined);
   const customSelfcardSpec = useCustomEquipStore((s) => s.equipped.selfcard ? s.items[s.equipped.selfcard]?.spec : undefined);
   const customBubbleSpec = useCustomEquipStore((s) => s.equipped.bubble ? s.items[s.equipped.bubble]?.spec : undefined);
+
+  // Ховер-микро-стор: пишем напрямую (стабильные ссылки на действия), не
+  // прокидывая колбэки через props из окна чата.
+  const setHoveredId = useMessageHoverStore((s) => s.setHoveredId);
+  const hoverSelf = () => setHoveredId(message.id);
+  const hoverNone = () => setHoveredId(null);
 
   const [showActions, setShowActions] = useState(false);
   const [openReply, setOpenReply] = useState(false);
@@ -530,7 +552,13 @@ function MessageBubble({
   }, [isOwn, user, activeChatMembers, message.senderId, message.sender, channelPost, groupChat]);
   const equipment = useEquipmentStore(s => message.senderId ? s.users[message.senderId] : undefined);
   useEffect(() => {
-    if (!channelPost && !isOwn && message.senderId) void useEquipmentStore.getState().refresh(message.senderId);
+    if (channelPost || isOwn || !message.senderId) return;
+    // Загружаем образ отправителя только если его ещё нет в кэше: раньше каждый
+    // маунт пузыря слал запрос (throttle отсутствовал), при 200+ сообщениях в чате
+    // это десятки одинаковых запросов к /users/:id.
+    const cache = useEquipmentStore.getState().users;
+    if (cache[message.senderId]) return;
+    void useEquipmentStore.getState().refresh(message.senderId);
   }, [isOwn, message.senderId, message.chatId]);
   // «Мои скины» отправителя в этом чате (настраиваются им в инфопанели):
   // переопределяют глобальные скины на ЕГО сообщениях. '' — без скина,
@@ -670,6 +698,14 @@ function MessageBubble({
     ...shopBubbleSx,
     ...(isOwn && customBubbleSpec && !ownOverrideSet('bubble') ? specToStyle(customBubbleSpec) : {}),
   };
+  // backdrop-filter реально виден только если сквозь фон что-то просвечивает.
+  // За непрозрачной заливкой блюр(18px) не даёт картинки, но заставляет браузер
+  // каждый кадр скролла считать блюр для каждого пузыря. Скины из магазина
+  // переопределяют и фон, и блюр ниже (их стиль идёт последним), поэтому здесь
+  // достаточно смотреть на ИТОГОВЫЙ фон.
+  const finalBubbleBackground = (equippedBubbleSx as any).background
+    || (!bubbleEnabled ? 'transparent' : (isOwn ? (bubbleOwnGradient || bgBubbleOwn) : bgBubbleOther));
+  const bubbleNeedsBackdropBlur = bubbleEnabled && isTranslucentColor(finalBubbleBackground);
   // ── Цвет времени и «(изменено)» ──────────────────────────────────────
   // Приоритет: настройка темы (персональной темы чата, затем глобальной).
   // Если цвет не задан — как раньше, цвет текста пузыря (с учётом стиля из магазина).
@@ -769,14 +805,14 @@ function MessageBubble({
 
       <Box
         onPointerEnter={(e) => {
-          if (e.pointerType === 'mouse') { onHover?.(message.id); updateActionsPlacement(e.currentTarget); }
+          if (e.pointerType === 'mouse') { hoverSelf(); updateActionsPlacement(e.currentTarget); }
         }}
         onTouchStart={(e) => {
           cancelHold();
           suppressTouchClick.current = false;
           touchOrigin.current = null;
           if (e.touches.length !== 1 || (e.target as HTMLElement).closest('button, a, input, textarea, video, audio, [role="slider"]')) return;
-          onHover?.(null);
+          hoverNone();
           const touch = e.touches[0];
           touchOrigin.current = { x: touch.clientX, y: touch.clientY };
           const target = e.currentTarget;
@@ -784,7 +820,7 @@ function MessageBubble({
             holdTimer.current = null;
             suppressTouchClick.current = true;
             updateActionsPlacement(target);
-            onHover?.(message.id);
+            hoverSelf();
           }, 550);
         }}
         onTouchMove={(e) => {
@@ -793,18 +829,18 @@ function MessageBubble({
           if (!start) return;
           if (!touch || Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 8) {
             cancelHold();
-            onHover?.(null);
+            hoverNone();
           }
         }}
         onTouchEnd={cancelHold}
-        onTouchCancel={() => { cancelHold(); onHover?.(null); }}
+        onTouchCancel={() => { cancelHold(); hoverNone(); }}
         onClickCapture={(e) => {
           if (!suppressTouchClick.current) return;
           suppressTouchClick.current = false;
           e.preventDefault();
           e.stopPropagation();
         }}
-        onPointerLeave={(e) => { if (e.pointerType === 'mouse') onHover?.(null); }}
+        onPointerLeave={(e) => { if (e.pointerType === 'mouse') hoverNone(); }}
         sx={{
           // Редактор не должен наследовать пользовательское ограничение ширины
           // обычных пузырей (например, 35%): на узком окне оно делает поле
@@ -838,13 +874,22 @@ function MessageBubble({
               cancelHold();
               suppressTouchClick.current = true;
               updateActionsPlacement(e.currentTarget);
-              onHover?.(message.id);
+              hoverSelf();
             } else if (e.button === 2) setContextMenu({ x: e.clientX, y: e.clientY });
           }}
           onPointerDown={(e) => { if (e.pointerType === 'mouse') touchOrigin.current = null; }}
           className={bubbleEnabled && isOwn && customBubbleSpec && !ownOverrideSet('bubble') ? specAnimationClass(customBubbleSpec) : ''}
           sx={{
             position: 'relative',
+            // Экономим layout/paint сообщений, которые сейчас вне экрана.
+            // 'auto' в contain-intrinsic-size заставляет браузер запомнить
+            // реальную высоту после первой отрисовки — оценка в 72px нужна
+            // только до этого, поэтому длина ленты не «прыгает» при скролле.
+            // Важно: это ИМЕННО пузырь, а не строка сообщения — у строки есть
+            // панель действий, выходящая за её пределы, и paint containment
+            // (часть content-visibility) её бы обрезал.
+            contentVisibility: bubbleEnabled ? 'auto' : 'visible',
+            containIntrinsicSize: 'auto 72px',
             '@media (pointer: coarse)': {
               userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
               '& input, & textarea': { userSelect: 'text', WebkitUserSelect: 'text', WebkitTouchCallout: 'default' },
@@ -861,7 +906,7 @@ function MessageBubble({
               : `var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) 4px`,
             maxWidth: '100%', boxSizing: 'border-box',
             border: `1px solid ${isOwn ? accent + '28' : theme.border}`,
-            backdropFilter: 'blur(18px)',
+            backdropFilter: bubbleNeedsBackdropBlur ? 'blur(18px)' : 'none',
             transition: `background 220ms ${motion.easeOut}, transform 220ms ${motion.spring}, box-shadow 220ms ${motion.easeOut}`,
             transform: { xs: 'none', md: isHovered ? 'translateY(-2px)' : 'translateY(0)' },
             ...(isOwn
@@ -1080,11 +1125,17 @@ function MessageBubble({
         )}
 
         {actionError && <Typography role="alert" color="error" sx={{ fontSize: 13, mt: 0.5 }}>{actionError}</Typography>}
+        {/* Панель монтируется ТОЛЬКО при наведении. Раньше она висела в DOM
+            скрытой для каждого сообщения: 7 IconButton + 7 Tooltip на пузырь,
+            то есть ~2800 лишних узлов на 200 сообщений — и они участвовали в
+            каждом цикле reconcile. Раз позиционируется относительно родителя,
+            порядок в DOM и логика ховера не меняются. */}
+        {isHovered && (
         <Box
           onClick={e => e.stopPropagation()}
           onPointerDown={e => e.stopPropagation()}
-          onMouseEnter={(e) => { onHover?.(message.id); updateActionsPlacement(e.currentTarget.parentElement as HTMLElement); }}
-          onMouseLeave={() => onHover?.(null)}
+          onMouseEnter={(e) => { hoverSelf(); updateActionsPlacement(e.currentTarget.parentElement as HTMLElement); }}
+          onMouseLeave={hoverNone}
           sx={{
           display: 'flex', alignItems: 'center', gap: 0.5,
           justifyContent: isOwnSide ? 'flex-end' : 'flex-start',
@@ -1119,8 +1170,7 @@ function MessageBubble({
           borderRadius: 2,
           boxShadow: '0 5px 18px rgba(0,0,0,0.35)',
           zIndex: 10,
-          pointerEvents: isHovered ? 'auto' : 'none',
-          visibility: isHovered ? 'visible' : 'hidden',
+          pointerEvents: 'auto',
         }} className="msg-actions">
           {!channelPost && <Tooltip title="Ответить">
             <IconButton size="small" onClick={() => onReply(message)} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><Reply sx={{ fontSize: 16 }} /></IconButton>
@@ -1148,6 +1198,7 @@ function MessageBubble({
             </Tooltip>
           )}
         </Box>
+        )}
       </Box>
 
       {/* Попап выбора реакции */}
@@ -1200,14 +1251,14 @@ function MessageBubble({
   );
 }
 
-// Мемоизируем пузырь: перерисовка только когда message/isOwn/isHovered НЕ изменились,
-// но принудительно при смене темы (accent / themeVersion).
+// Мемоизируем пузырь: перерисовка только когда message/isOwn НЕ изменились,
+// но принудительно при смене темы (accent / themeVersion). isHovered больше не
+// проп — ховер приходит из микро-стора и меняет ровно два пузыря.
 export default memo(
   MessageBubble,
   (prev, next) =>
     prev.message === next.message &&
     prev.isOwn === next.isOwn &&
-    prev.isHovered === next.isHovered &&
     prev.accent === next.accent &&
     prev.themeVersion === next.themeVersion &&
     prev.messageMaxWidth === next.messageMaxWidth &&

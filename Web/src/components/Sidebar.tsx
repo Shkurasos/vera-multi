@@ -17,7 +17,7 @@ import { useNavigate } from 'react-router-dom';
 import { useChatStore } from '../store/chatStore';
 import { useChatPrefsStore } from '../store/chatPrefsStore';
 import { useAuthStore } from '../store/authStore';
-import { useThemeStore, getFinishStyles } from '../store/themeStore';
+import { useThemeStore, getFinishStyles, type Theme } from '../store/themeStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
 import { useDraftsStore } from '../store/draftsStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
@@ -62,13 +62,127 @@ const TABS: { id: SidebarTab; label: string }[] = [
 
 const SIDEBAR_MIN = 72;
 
+/**
+ * Строка списка чатов — вынесена в отдельный memo-компонент.
+ *
+ * Раньше она рендерилась инлайн внутри map(), поэтому ЛЮБОЕ изменение стора
+ * (новое сообщение в другом чате, набор текста в поле ввода, присутствие
+ * собеседника) пересоздавало JSX для всех строк сразу. Теперь строка
+ * подписана только на свои данные: конкретный черновик и онлайн-статус
+ * именно этого чата. Черновик и присутствие вынесены внутрь компонента
+ * сознательно — иначе набор текста в поле ввода перерисовывал бы весь сайдбар.
+ */
+interface SidebarChatRowProps {
+  chat: Chat;
+  name: string;
+  avatarUrl?: string;
+  active: boolean;
+  pinned: boolean;
+  unreadCount?: number;
+  updatedAt: string;
+  theme: Theme;
+  ringSx: Record<string, any>[];
+  avatarOnly: boolean;
+  horizontal: boolean;
+  open: boolean;
+  showAvatars: boolean;
+  userId?: string;
+  /** Тик раз в минуту: пересчитывает «5 мин назад» без перерисовки всего списка. */
+  nowTick: number;
+  onSelect: (chat: Chat) => void;
+  onContextMenu: (e: React.MouseEvent, chat: Chat) => void;
+}
+
+const SidebarChatRow = React.memo(function SidebarChatRow(props: SidebarChatRowProps) {
+  const {
+    chat, name, avatarUrl, active, pinned, unreadCount, updatedAt, theme, ringSx,
+    avatarOnly, horizontal, open, showAvatars, userId, onSelect, onContextMenu,
+  } = props;
+  // Свои подписки строки: булевы селекторы не меняют ссылку при посторонних
+  // событиях, поэтому ререндерится только реально затронутая строка.
+  const draft = useDraftsStore((s) => s.drafts[chat.id] || '');
+  const online = useChatStore((s) => {
+    const other = chat.members?.find(m => m.userId !== userId);
+    return !!other && s.onlineUsers.has(other.userId);
+  });
+
+  const lastText = draft
+    ? `Черновик: ${draft}`
+    : chat.lastMessage?.content
+      ? chat.lastMessage.content
+      : (chat.lastMessage?.attachments?.length ? '📎 Вложение' : 'Нет сообщений');
+
+  return (
+    <Tooltip title={avatarOnly ? name : ''} placement="right">
+      <ListItem
+        onClick={() => onSelect(chat)}
+        onContextMenu={(e) => onContextMenu(e, chat)}
+        sx={{
+          cursor: 'pointer',
+          contentVisibility: 'auto',
+          containIntrinsicSize: 'auto 64px',
+          ...(horizontal
+            ? { flexDirection: 'column', width: 84, minWidth: 84, mr: .5, py: 1, px: .5, alignItems: 'center', textAlign: 'center' }
+            : avatarOnly
+              ? { justifyContent: 'center', px: .5, py: .65, mb: .4 }
+              : { px: open ? 1.15 : .65, py: .85, mb: .55 }),
+          borderRadius: 3.5,
+          bgcolor: active ? theme.bgActive : 'rgba(255,255,255,0.026)',
+          border: `1px solid ${active ? theme.accent + '66' : 'rgba(255,255,255,0.045)'}`,
+          boxShadow: active ? `0 12px 34px ${theme.accent}22` : 'none',
+          overflow: 'hidden',
+          '&:hover': { bgcolor: theme.bgHover, transform: 'translateY(-1px)' },
+          transition: `background .22s ${motion.easeOut}, transform .28s ${motion.spring}, box-shadow .22s ${motion.easeOut}`,
+        }}
+      >
+        <Badge
+          color={avatarOnly && unreadCount ? 'primary' : 'success'}
+          variant={avatarOnly && unreadCount ? 'standard' : 'dot'}
+          badgeContent={avatarOnly ? unreadCount : undefined}
+          invisible={!online && !(avatarOnly && unreadCount)}
+          overlap="circular"
+        >
+          {avatarOnly || showAvatars ? (
+            chat.type === 'saved' ? (
+              <Avatar sx={{ width: horizontal ? 52 : 46, height: horizontal ? 52 : 46, bgcolor: theme.accent, ...ringSx[active ? 1 : 0] }}>
+                <StarIcon sx={{ fontSize: 28, color: '#fff' }} />
+              </Avatar>
+            ) : (
+              <Avatar src={avatarUrl} sx={{ width: horizontal ? 52 : 46, height: horizontal ? 52 : 46, bgcolor: theme.accent, ...ringSx[active ? 1 : 0] }}>
+                {getInitials(name)}
+              </Avatar>
+            )
+          ) : (
+            <Box sx={{ width: horizontal ? 46 : 6, height: horizontal ? 4 : 46, borderRadius: 3, bgcolor: active ? theme.accent : 'transparent' }} />
+          )}
+        </Badge>
+        {horizontal
+          ? <Typography noWrap sx={{ mt: .6, color: theme.text, fontSize: 12, fontWeight: pinned ? 700 : 600, maxWidth: 76 }}>{pinned ? '📌 ' : ''}{name}</Typography>
+          : (!avatarOnly && open && (
+            <ListItemText
+              sx={{ ml: 1.25, minWidth: 0 }}
+              primary={
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: .5 }}>
+                  <Typography noWrap sx={{ color: theme.text, fontWeight: pinned ? 700 : 600, flex: 1 }}>{pinned ? '📌 ' : ''}{name}</Typography>
+                  <Typography sx={{ color: theme.chatTimeColor || theme.textSec, fontSize: 11 }}>{timeAgo(updatedAt)}</Typography>
+                </Box>
+              }
+              secondary={<Typography noWrap sx={{ color: theme.textSec, fontSize: 13 }}>{lastText}</Typography>}
+            />
+          ))}
+        {!horizontal && !avatarOnly && open && !!unreadCount && <Badge badgeContent={unreadCount} color="primary" />}
+        {horizontal && !!unreadCount && <Box sx={{ position: 'absolute', top: 4, right: 6, minWidth: 18, height: 18, px: .6, borderRadius: 999, bgcolor: theme.accent, color: '#fff', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{unreadCount}</Box>}
+      </ListItem>
+    </Tooltip>
+  );
+});
+
 export default function Sidebar({ open, onToggle, mobile }: Props) {
   // Точечные селекторы: перерисовка только при изменениях, влияющих на список чатов.
   const chats = useChatStore((s) => s.chats);
   const activeChat = useChatStore((s) => s.activeChat);
   const setActiveChat = useChatStore((s) => s.setActiveChat);
   const loadChats = useChatStore((s) => s.loadChats);
-  const onlineUsers = useChatStore((s) => s.onlineUsers);
   const togglePin = useChatPrefsStore((s) => s.togglePin);
   const toggleArchive = useChatPrefsStore((s) => s.toggleArchive);
   const toggleMute = useChatPrefsStore((s) => s.toggleMute);
@@ -81,8 +195,6 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   const isMuted = useCallback((chatId: string) => mutedIds.includes(chatId), [mutedIds]);
   const user = useAuthStore((s) => s.user);
   const theme = useThemeStore((s) => s.theme);
-  const drafts = useDraftsStore((s) => s.drafts);
-  const getDraft = useCallback((chatId: string) => drafts[chatId] || '', [drafts]);
   const navigate = useNavigate();
 
   // Обводка аватара из магазина VERA — применяем к своей аватарке (в футере/шапке).
@@ -220,8 +332,16 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   const [myLinkDialogOpen, setMyLinkDialogOpen] = useState(false);
   const [musicOpen, setMusicOpen] = useState(false);
-  const [scrollPulse, setScrollPulse] = useState(false);
+  // Импульс при прокрутке — чисто CSS: раньше это был React-стейт, из-за чего
+  // КАЖДОЕ событие скролла перерисовывало весь список чатов. Теперь ставим
+  // data-атрибут на сам <List> (через ref) и переключаем анимацию правилом CSS.
+  const chatListRef = React.useRef<HTMLUListElement | null>(null);
   const scrollTimerRef = React.useRef<number | null>(null);
+  const [nowTick, setNowTick] = React.useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowTick((n) => n + 1), 60000);
+    return () => window.clearInterval(timer);
+  }, []);
   const layout = useUserSettingsStore((s) => s.layout);
   const setLayout = useUserSettingsStore((s) => s.setLayout);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
@@ -263,10 +383,23 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   }, [resizing, layout.sidebarSide, setLayout, sidebarMax]);
 
   function handleChatListScroll() {
-    setScrollPulse(true);
+    const el = chatListRef.current;
+    if (!el) return;
+    if (el.dataset.scrolling !== '1') el.dataset.scrolling = '1';
     if (scrollTimerRef.current) window.clearTimeout(scrollTimerRef.current);
-    scrollTimerRef.current = window.setTimeout(() => setScrollPulse(false), 170);
+    scrollTimerRef.current = window.setTimeout(() => { delete el.dataset.scrolling; }, 170);
   }
+
+  // Стабильные колбэки для строк: иначе memo-строки перерисовывались бы
+  // на каждом рендере сайдбара.
+  const handleSelectChat = useCallback((chat: Chat) => {
+    setActiveChat(chat);
+    navigate(`/chat/${chat.id}`);
+  }, [setActiveChat, navigate]);
+  const handleRowContextMenu = useCallback((e: React.MouseEvent, chat: Chat) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, chat });
+  }, []);
 
   // Фильтрация + сортировка пересчитываются только при реальных изменениях
   // (раньше выполнялись на каждый рендер списка).
@@ -335,11 +468,6 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       const newChat = res.data;
       if (newChat?.id) { setActiveChat(newChat); navigate(`/chat/${newChat.id}`); }
     } catch (e) { console.error(e); }
-  }
-
-  function handleContextMenu(e: React.MouseEvent, chat: Chat) {
-    e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY, chat });
   }
 
   async function handleDeleteChat(chat: Chat) {
@@ -417,19 +545,6 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
     if (chat.type === 'saved') return undefined; // Для избранного используем StarIcon
     if (chat.avatarUrl) return chat.avatarUrl;
     return chat.members?.find(m => m.userId !== user?.id)?.user?.avatarUrl || undefined;
-  }
-
-  function isChatOnline(chat: Chat): boolean {
-    const otherId = chat.members?.find(m => m.userId !== user?.id)?.userId;
-    return !!otherId && onlineUsers.has(otherId);
-  }
-
-  function getLastMessageText(chat: Chat): string {
-    const draft = getDraft(chat.id);
-    if (draft) return `Черновик: ${draft}`;
-    if (chat.lastMessage?.content) return chat.lastMessage.content;
-    if (chat.lastMessage?.attachments?.length) return '📎 Вложение';
-    return 'Нет сообщений';
   }
 
   return (
@@ -544,50 +659,48 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
         </Box>
       )}
 
-      <List data-vera-list onScroll={handleChatListScroll} sx={{ flex: 1, overflowY: horizontal ? 'hidden' : 'auto', overflowX: horizontal ? 'auto' : 'hidden', display: horizontal ? 'flex' : 'block', flexDirection: horizontal ? 'row' : 'column', py: .5, px: open ? 1 : .5, position: 'relative', zIndex: 1, scrollBehavior: 'smooth', '&::-webkit-scrollbar': { height: 6 } }}>
-        {channelsFound.filter(c => !chats.some(existing => existing.id === c.id)).map(c => <ListItem key={c.id} onClick={() => openChannel(c.id)} sx={{ cursor: 'pointer' }}><Avatar src={c.avatarUrl} /><ListItemText sx={{ ml: 1 }} primary={c.name} secondary="Канал · подписаться" /></ListItem>)}
-        {sorted.map(chat => {
-          const name = getChatName(chat);
-          const active = activeChat?.id === chat.id;
-           return <Tooltip key={chat.id} title={avatarOnly ? name : ''} placement="right"><ListItem onClick={() => { setActiveChat(chat); navigate(`/chat/${chat.id}`); }} onContextMenu={(e) => handleContextMenu(e, chat)} sx={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 64px', ...(horizontal ? { flexDirection: 'column', width: 84, minWidth: 84, mr: .5, py: 1, px: .5, alignItems: 'center', textAlign: 'center' } : avatarOnly ? { justifyContent: 'center', px: .5, py: .65, mb: .4 } : { px: open ? 1.15 : .65, py: .85, mb: .55 }), borderRadius: 3.5, bgcolor: active ? theme.bgActive : 'rgba(255,255,255,0.026)', border: `1px solid ${active ? theme.accent + '66' : 'rgba(255,255,255,0.045)'}`, boxShadow: active ? `0 12px 34px ${theme.accent}22` : 'none', backdropFilter: 'blur(14px)', overflow: 'hidden', '&:hover': { bgcolor: theme.bgHover, transform: 'translateY(-1px)' }, transition: `background .22s ${motion.easeOut}, transform .28s ${motion.spring}, box-shadow .22s ${motion.easeOut}` }}>
-             <Badge color={avatarOnly && chat.unreadCount ? 'primary' : 'success'} variant={avatarOnly && chat.unreadCount ? 'standard' : 'dot'} badgeContent={avatarOnly ? chat.unreadCount : undefined} invisible={!isChatOnline(chat) && !(avatarOnly && chat.unreadCount)} overlap="circular">
-               {avatarOnly || layout.showAvatarsInList ? (
-                 chat.type === 'saved' ? (
-                   <Avatar sx={{ 
-                     width: horizontal ? 52 : 46, 
-                     height: horizontal ? 52 : 46, 
-                     bgcolor: theme.accent, 
-                     ...ringSx[active ? 1 : 0], 
-                     transform: scrollPulse ? 'scale(.88)' : 'scale(1)', 
-                     transition: `transform ${scrollPulse ? 120 : 520}ms ${scrollPulse ? motion.easeIn : motion.spring}, box-shadow .3s ease, border-color .3s ease`, 
-                     willChange: 'transform' 
-                   }}>
-                     <StarIcon sx={{ fontSize: 28, color: '#fff' }} />
-                   </Avatar>
-                 ) : (
-                   <Avatar src={getChatAvatar(chat)} sx={{ 
-                     width: horizontal ? 52 : 46, 
-                     height: horizontal ? 52 : 46, 
-                     bgcolor: theme.accent, 
-                     ...ringSx[active ? 1 : 0], 
-                     transform: scrollPulse ? 'scale(.88)' : 'scale(1)', 
-                     transition: `transform ${scrollPulse ? 120 : 520}ms ${scrollPulse ? motion.easeIn : motion.spring}, box-shadow .3s ease, border-color .3s ease`, 
-                     willChange: 'transform' 
-                   }}>
-                     {getInitials(name)}
-                   </Avatar>
-                 )
-               ) : (
-                 <Box sx={{ width: horizontal ? 46 : 6, height: horizontal ? 4 : 46, borderRadius: 3, bgcolor: active ? theme.accent : 'transparent' }} />
-               )}
-             </Badge>
-             {horizontal
-              ? <Typography noWrap sx={{ mt: .6, color: theme.text, fontSize: 12, fontWeight: isPinned(chat.id) ? 700 : 600, maxWidth: 76 }}>{isPinned(chat.id) ? '📌 ' : ''}{name}</Typography>
-              : (!avatarOnly && open && <ListItemText sx={{ ml: 1.25, minWidth: 0 }} primary={<Box sx={{ display: 'flex', alignItems: 'center', gap: .5 }}><Typography noWrap sx={{ color: theme.text, fontWeight: isPinned(chat.id) ? 700 : 600, flex: 1 }}>{isPinned(chat.id) ? '📌 ' : ''}{name}</Typography><Typography sx={{ color: theme.chatTimeColor || theme.textSec, fontSize: 11 }}>{timeAgo(chat.lastMessage?.createdAt || chat.updatedAt || chat.createdAt)}</Typography></Box>} secondary={<Typography noWrap sx={{ color: theme.textSec, fontSize: 13 }}>{getLastMessageText(chat)}</Typography>} />)}
-             {!horizontal && !avatarOnly && open && !!chat.unreadCount && <Badge badgeContent={chat.unreadCount} color="primary" />}
-            {horizontal && !!chat.unreadCount && <Box sx={{ position: 'absolute', top: 4, right: 6, minWidth: 18, height: 18, px: .6, borderRadius: 999, bgcolor: theme.accent, color: '#fff', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{chat.unreadCount}</Box>}
-          </ListItem></Tooltip>;
-        })}
+      <List
+        data-vera-list
+        onScroll={handleChatListScroll}
+        ref={chatListRef}
+        sx={{
+          flex: 1, overflowY: horizontal ? 'hidden' : 'auto', overflowX: horizontal ? 'auto' : 'hidden',
+          display: horizontal ? 'flex' : 'block', flexDirection: horizontal ? 'row' : 'column',
+          py: .5, px: open ? 1 : .5, position: 'relative', zIndex: 1, scrollBehavior: 'smooth',
+          '&::-webkit-scrollbar': { height: 6 },
+          // Импульс аватарок при прокрутке — на CSS, без React-стейта.
+          '&[data-scrolling="1"] .MuiAvatar-root': {
+            transform: 'scale(.88)',
+            transition: `transform 120ms ${motion.easeIn}, box-shadow .3s ease, border-color .3s ease`,
+          },
+          '& .MuiAvatar-root': {
+            transform: 'scale(1)',
+            transition: `transform 520ms ${motion.spring}, box-shadow .3s ease, border-color .3s ease`,
+          },
+        }}
+      >
+        {sorted.map(chat => (
+          <SidebarChatRow
+            key={chat.id}
+            chat={chat}
+            name={getChatName(chat)}
+            avatarUrl={getChatAvatar(chat)}
+            active={activeChat?.id === chat.id}
+            pinned={isPinned(chat.id)}
+            unreadCount={chat.unreadCount}
+            updatedAt={chat.lastMessage?.createdAt || chat.updatedAt || chat.createdAt}
+            theme={theme}
+            ringSx={ringSx}
+            avatarOnly={avatarOnly}
+            horizontal={horizontal}
+            open={open}
+            showAvatars={layout.showAvatarsInList}
+            userId={user?.id}
+            nowTick={nowTick}
+            onSelect={handleSelectChat}
+            onContextMenu={handleRowContextMenu}
+          />
+        ))}
       </List>
 
       <Box sx={{ p: 1, borderTop: `1px solid ${theme.border}`, display: mobile ? 'none' : 'flex', gap: .5, justifyContent: open ? 'space-between' : 'center', flexWrap: 'wrap', position: 'relative', zIndex: 1, background: 'rgba(0,0,0,0.18)', backdropFilter: 'blur(18px)' }}>

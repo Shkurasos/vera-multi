@@ -6,9 +6,10 @@ export const motion = {
   membraneShadow: 'inset 0 7px 18px rgba(0,0,0,.34), inset 0 -4px 12px rgba(255,255,255,.08)',
 };
 
+// will-change: transform здесь намеренно убран: объект раздаётся сотням
+// кнопок, и постоянный will-change держал для каждой композитный слой.
+// Промпт поднимает слой на время самого нажатия.
 export const membranePressSx = {
-  transform: 'translateZ(0)',
-  willChange: 'transform, box-shadow, filter',
   transition: `transform 180ms ${motion.spring}, box-shadow 220ms ${motion.easeOut}, filter 220ms ${motion.easeOut}`,
   '&:active': {
     transform: 'scale(0.96) translateY(1px)',

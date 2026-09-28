@@ -94,3 +94,61 @@ export function withAlpha(color: string, alpha: number): string {
   }
   return value;
 }
+
+/** #rgb/#rrggbb/#rrggbbaa → true/false (непрозрачность), null если формат не распознан. */
+function hexHasAlpha(color: string): boolean | null {
+  const match = /^#([0-9a-f]{3,8})$/i.exec((color || '').trim());
+  if (!match) return null;
+  let body = match[1];
+  if (body.length === 3 || body.length === 4) {
+    body = body.split('').map((ch) => ch + ch).join('');
+  }
+  if (body.length === 6) return false;
+  if (body.length === 8) return parseInt(body.slice(6, 8), 16) < 255;
+  return null;
+}
+
+/** rgb()/rgba()/hsl()/hsla() → true если есть альфа-канал < 1, null если не распознан. */
+function functionalHasAlpha(color: string): boolean | null {
+  const match = /^(rgba?|hsla?)\(([^()]*)\)$/i.exec((color || '').trim());
+  if (!match) return null;
+  const parts = match[2].split(/[,\s/]+/).filter(Boolean);
+  if (parts.length === 3) return false;
+  if (parts.length === 4) return parseAlphaPart(parts[3]) < MAX_ALPHA;
+  return null;
+}
+
+/**
+ * Виден ли фон сквозь элемент (цвет/градиент с неполной непрозрачностью).
+ *
+ * Нужен для `backdrop-filter`: за полностью непрозрачным фоном размытие
+ * физически не видно, но стоит байтам каждый кадр при скролле — поэтому
+ * такой фон рендерим без блюра, не меняя картинку.
+ *
+ * Неизвестные форматы (`var()`, `url()`, именованные цвета) считаем
+ * полупрозрачными — консервативно ОСТАВЛЯЕМ backdrop-filter.
+ */
+export function isTranslucentColor(value?: unknown): boolean {
+  if (typeof value !== 'string') return true; // неизвестный формат — блюр оставляем
+  const v = value.trim();
+  if (!v) return true;
+  if (/^transparent$/i.test(v)) return true;
+
+  const hex = hexHasAlpha(v);
+  if (hex !== null) return hex;
+  const functional = functionalHasAlpha(v);
+  if (functional !== null) return functional;
+
+  if (/gradient\(/i.test(v)) {
+    if (/\btransparent\b/i.test(v)) return true;
+    let translucent = false;
+    v.replace(GRADIENT_COLOR_RE, (match) => {
+      const h = hexHasAlpha(match);
+      const f = functionalHasAlpha(match);
+      if (h === true || f === true) translucent = true;
+      return match;
+    });
+    return translucent;
+  }
+  return true;
+}
