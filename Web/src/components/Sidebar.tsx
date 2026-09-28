@@ -117,6 +117,10 @@ const SidebarChatRow = React.memo(function SidebarChatRow(props: SidebarChatRowP
       <ListItem
         onClick={() => onSelect(chat)}
         onContextMenu={(e) => onContextMenu(e, chat)}
+        // Метка для настройки «Вид чатов» (CHAT_SHAPES): правило в main.tsx
+        // бьёт по ней, а не по .MuiListItem-root — тот же класс используется
+        // в списках участников и настройках.
+        data-vera-chat-row="true"
         sx={{
           cursor: 'pointer',
           contentVisibility: 'auto',
@@ -661,6 +665,10 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
 
       <List
         data-vera-list
+        // Ориентация нужна стилям «без заливки»: полноширинная полоса и
+        // растягивание единственного чата применимы только к вертикальному
+        // списку и сломали бы горизонтальную ленту.
+        data-vera-list-layout={horizontal ? 'horizontal' : 'vertical'}
         onScroll={handleChatListScroll}
         ref={chatListRef}
         sx={{

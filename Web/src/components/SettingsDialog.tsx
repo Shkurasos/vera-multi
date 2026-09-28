@@ -25,7 +25,7 @@ import InviteLinkDialog from './InviteLinkDialog';
 import LayoutDesignerDialog from './LayoutDesignerDialog';
 import { APP_FONT_OPTIONS } from '../utils/appFont';
 import { useShopStore } from '../store/shopStore';
-import { useUiPrefsStore, ICON_PACKS, UI_STYLES, IconPack, UiStyle } from '../store/uiPrefsStore';
+import { useUiPrefsStore, ICON_PACKS, UI_STYLES, CHAT_SHAPES, IconPack, UiStyle, ChatShape } from '../store/uiPrefsStore';
 import { useAnimStore, ANIM_GROUPS } from '../store/animStore';
 import { useAuthStore } from '../store/authStore';
 
@@ -44,7 +44,7 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
   const [sidebarWidthMax, setSidebarWidthMax] = useState(() => Math.max(200, Math.floor(window.innerWidth / 10) * 5));
   const shopSetOpen = useShopStore((x) => x.setOpen);
   const s = useUserSettingsStore();
-  const { iconPack, uiStyle, setIconPack, setUiStyle } = useUiPrefsStore();
+  const { iconPack, uiStyle, chatShape, chatBorder, chatFill, setIconPack, setUiStyle, setChatShape, setChatBorder, setChatFill } = useUiPrefsStore();
   const { enabled: animEnabled, set: setAnim, setAll: setAllAnims } = useAnimStore();
   const currentUser = useAuthStore((state) => state.user);
   const isAdmin = Boolean(currentUser?.isAdmin);
@@ -216,6 +216,55 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
                 <Typography sx={{ fontSize: 12, color: theme.textSec, mt: 1 }}>
                   {UI_STYLES.find((u) => u.id === uiStyle)?.desc}
                 </Typography>
+
+                <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 1 }}>
+                  Вид чатов
+                </Typography>
+                <ToggleButtonGroup
+                  exclusive
+                  fullWidth
+                  size="small"
+                  value={chatShape}
+                  onChange={(_, v) => v && setChatShape(v as ChatShape)}
+                  sx={{ flexWrap: 'wrap', gap: 0.5 }}
+                >
+                  {CHAT_SHAPES.map((d) => (
+                    <ToggleButton
+                      key={d.id}
+                      value={d.id}
+                      sx={{
+                        // Превью формы карточки прямо на кнопке.
+                        borderRadius: `${d.radius}px !important`,
+                        flex: '1 1 30%', textTransform: 'none', color: theme.text,
+                        borderColor: theme.border,
+                        '&.Mui-selected': { bgcolor: theme.accent + '25', color: theme.text, borderColor: theme.accent },
+                      }}
+                    >
+                      {d.label}
+                    </ToggleButton>
+                  ))}
+                </ToggleButtonGroup>
+                <Typography sx={{ fontSize: 12, color: theme.textSec, mt: 1 }}>
+                  {CHAT_SHAPES.find((d) => d.id === chatShape)?.desc}
+                </Typography>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 1.5, pr: 0.5 }}>
+                  <Box sx={{ minWidth: 0, pr: 1 }}>
+                    <Typography sx={{ color: theme.text, fontSize: 14 }}>Обводка карточек</Typography>
+                    <Typography sx={{ color: theme.textSec, fontSize: 11 }}>
+                      Выключите, чтобы убрать рамку вокруг чатов совсем
+                    </Typography>
+                  </Box>
+                  <Switch checked={chatBorder} onChange={(_, checked) => setChatBorder(checked)} />
+                </Stack>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 0.5, pr: 0.5 }}>
+                  <Box sx={{ minWidth: 0, pr: 1 }}>
+                    <Typography sx={{ color: theme.text, fontSize: 14 }}>Заливка карточек</Typography>
+                    <Typography sx={{ color: theme.textSec, fontSize: 11 }}>
+                      Выключите — строка станет простой полосой во всю ширину
+                    </Typography>
+                  </Box>
+                  <Switch checked={chatFill} onChange={(_, checked) => setChatFill(checked)} />
+                </Stack>
                 <Alert severity="info" sx={{ mt: 1.5, fontSize: 12 }}>
                   Изменения применяются сразу и работают поверх любой темы.
                 </Alert>

@@ -5,6 +5,7 @@ import { ThemeProvider, createTheme, CssBaseline, GlobalStyles, Box, Typography,
 import { useUserSettingsStore } from './store/userSettingsStore';
 import { useThemeStore } from './store/themeStore';
 import { muiPaletteFromTheme } from './utils/muiPalette';
+import { CHAT_SHAPES } from './store/uiPrefsStore';
 import { appFontStyles, resolveAppFont } from './utils/appFont';
 import App from './App';
 import './store/uiPrefsStore'; // применяет data-icon-pack / data-ui-style на <html>
@@ -428,6 +429,45 @@ const darkTheme = createTheme({
         'html[data-ui-style="compact"] .MuiIconButton-root': { padding: 6 },
         'html[data-ui-style="compact"] [data-vera-bubble]': { padding: '6px 10px' },
         'html[data-ui-style="compact"] .MuiOutlinedInput-input': { paddingTop: 6, paddingBottom: 6 },
+
+        // ─── Вид карточек чатов в списке слева ─────────────────────────────
+        // Vera — круглые «таблетки» (текущий вид), Telegram — умеренные,
+        // VK — почти прямые углы. Радиусы берём из CHAT_SHAPES, чтобы подписи
+        // в настройках и реальные значения не разошлись.
+        // Селектор [data-vera-chat-row] (специфичность 0,2,1) перебивает
+        // сгенерированную sx-классу (0,1,0), поэтому карточки одинаковые,
+        // несмотря на borderRadius в sx. Пузыри сообщений не трогаем.
+        ...Object.fromEntries(CHAT_SHAPES.map((shape) => [
+          `html[data-chat-shape="${shape.id}"] [data-vera-chat-row]`,
+          { borderRadius: shape.radius },
+        ])),
+
+        // Обводку карточек можно снять совсем. Гасим только цвет, а не саму
+        // рамку: border-width остаётся 1px, поэтому высота строк не прыгает.
+        // Активный чат при этом виден по заливке (theme.bgActive) и тени.
+        'html[data-chat-border="off"] [data-vera-chat-row]': { borderColor: 'transparent' },
+
+        // ─── Без заливки: простая полоса во всю ширину ────────────────────
+        // Вертикальный список становится флекс-колонкой без боковых отступов,
+        // строка теряет фон и скругление. Активный чат остаётся виден по
+        // обводке (если включена) и мягкой тени.
+        'html[data-chat-fill="off"] [data-vera-list][data-vera-list-layout="vertical"]': {
+          display: 'flex', flexDirection: 'column',
+          paddingLeft: 0, paddingRight: 0,
+        },
+        // Селектор с [data-vera-list] намеренно длиннее правила формы
+        // (0,3,1 против 0,2,1): «без заливки» всегда даёт нулевой радиус,
+        // независимо от порядка правил в объекте стилей.
+        'html[data-chat-fill="off"] [data-vera-list] [data-vera-chat-row]': {
+          background: 'transparent',
+          // Прямоугольник во всю ширину: скругление «таблетки» на такой
+          // полосе выглядит ломанным, поэтому здесь радиус всегда нулевой.
+          borderRadius: 0,
+        },
+        // Единственный чат занимает всю высоту списка.
+        'html[data-chat-fill="off"] [data-vera-list][data-vera-list-layout="vertical"] [data-vera-chat-row]:only-child': {
+          flex: 1,
+        },
 
       },
     },
