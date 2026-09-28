@@ -26,6 +26,7 @@ import { buildPlaqueSx, buildShopRingSx } from '../utils/rarityStyles';
 import { skinColors } from '../utils/skinColors';
 import { bubbleSkin, selfcardSkin } from '../utils/bubbleSkin';
 import { mirrorBubble } from '../utils/mirrorBubble';
+import { ACTIONS_PANEL_HEIGHT, inActionsCorner, splitBubbleSkin } from '../utils/bubbleActions';
 import { clampBubble } from '../utils/bubbleSettings';
 import { clampAlpha, withAlpha, isTranslucentColor } from '../utils/colorAlpha';
 import { useMessageHoverStore } from '../store/messageHoverStore';
@@ -448,9 +449,11 @@ function MessageBubble({
   const canEdit = isOwn || hasGroupRight(groupChat?.members?.find(m => m.userId === user?.id), 'editMessages');
   const canDelete = isOwn || hasGroupRight(groupChat?.members?.find(m => m.userId === user?.id), 'deleteMessages');
   const senderTitle = groupChat?.members?.find(m => m.userId === message.senderId && m.role === 'admin')?.adminTitle;
-  // Ховер живёт в отдельном микро-сторе: булев селектор трогает только два
-  // затронутых пузыря, а не перерисовывает всё окно чата (как было раньше).
-  const isHovered = useMessageHoverStore((s) => s.hoveredId === message.id);
+  // Панель действий живёт в отдельном микро-сторе: булев селектор трогает только
+  // два затронутых пузыря, а не перерисовывает всё окно чата (как было раньше).
+  // Открывается она не на любое наведение, а только из нижнего уголка пузыря —
+  // см. inActionsCorner.
+  const actionsOpen = useMessageHoverStore((s) => s.hoveredId === message.id);
   // Экшены стора стабильны: подписка только на них не вызывает лишних
   // перерисовок при каждом изменении сообщений/печати/присутствия.
   const addReaction = useChatStore((s) => s.addReaction);
@@ -499,7 +502,6 @@ function MessageBubble({
   const hoverSelf = () => setHoveredId(message.id);
   const hoverNone = () => setHoveredId(null);
 
-  const [showActions, setShowActions] = useState(false);
   const [openReply, setOpenReply] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [forwardChatId, setForwardChatId] = useState('');
@@ -511,6 +513,9 @@ function MessageBubble({
   const touchOrigin = useRef<{ x: number; y: number } | null>(null);
   const suppressTouchClick = useRef(false);
   const attachmentsRef = useRef<HTMLDivElement>(null);
+  // Прямоугольник пузыря нужен, чтобы понять, стоит ли курсор в «уголке вызова»
+  // панели действий (см. inActionsCorner).
+  const bubbleRef = useRef<HTMLDivElement | null>(null);
   const cancelHold = () => {
     if (holdTimer.current !== null) clearTimeout(holdTimer.current);
     holdTimer.current = null;
@@ -615,11 +620,14 @@ function MessageBubble({
 
   const updateActionsPlacement = (element: HTMLElement) => {
     const rect = element.getBoundingClientRect();
-    const actionBarHeight = 52;
     const gap = 8;
     const spaceBelow = window.innerHeight - rect.bottom;
     const spaceAbove = rect.top;
-    setActionsPlacement(spaceBelow < actionBarHeight + gap && spaceAbove > spaceBelow ? 'above' : 'below');
+    // Панель выезжает из пузыря вниз и занимает ACTIONS_PANEL_HEIGHT. Если места
+    // нет, корпус разворачивается (column-reverse) и панель выезжает вверх.
+    setActionsPlacement(
+      spaceBelow < ACTIONS_PANEL_HEIGHT + gap && spaceAbove > spaceBelow ? 'above' : 'below',
+    );
   };
 
 
@@ -643,7 +651,6 @@ function MessageBubble({
       shopBubbleSx.boxShadow = '0 8px 32px rgba(0,0,0,0.18)';
     } else if (t === 'shadow') {
       shopBubbleSx.boxShadow = '0 14px 34px rgba(0,0,0,0.38), 0 4px 10px rgba(0,0,0,0.22)';
-      shopBubbleSx.transform = isHovered ? 'translateY(-3px)' : 'translateY(0)';
     } else if (t === 'gradient') {
       // Градиентные пузыри из магазина: если есть свой градиент (закат/океан/лес),
       // используем его; иначе — градиент текущей темы.
@@ -698,14 +705,80 @@ function MessageBubble({
     ...shopBubbleSx,
     ...(isOwn && customBubbleSpec && !ownOverrideSet('bubble') ? specToStyle(customBubbleSpec) : {}),
   };
-  // backdrop-filter реально виден только если сквозь фон что-то просвечивает.
-  // За непрозрачной заливкой блюр(18px) не даёт картинки, но заставляет браузер
-  // каждый кадр скролла считать блюр для каждого пузыря. Скины из магазина
-  // переопределяют и фон, и блюр ниже (их стиль идёт последним), поэтому здесь
-  // достаточно смотреть на ИТОГОВЫЙ фон.
-  const finalBubbleBackground = (equippedBubbleSx as any).background
+  // ── Корпус сообщения: пузырь + выезжающая панель действий ───────────────
+  // Панель — не отдельная плашка под пузырём, а продолжение той же фигуры.
+  // Фон, рамку, тень, скругление и размытие рисует ОДИН элемент («корпус»,
+  // bubbleShellSx), который растёт вместе с панелью, а сам пузырь внутри
+  // прозрачный и отвечает только за содержимое. Поэтому:
+  //  • фон рисуется один раз — на стыке нет полосы от двойной заливки
+  //    (это особенно заметно на полупрозрачных и градиентных скинах);
+  //  • скин пузыря (магазин, авторы) автоматически достаётся и панели;
+  //  • скругление панели — то же, что у пузыря: сильное скругление даёт
+  //    плавное продолжение, квадратное — чёткое;
+  //  • размытие и тень тоже общие, иначе между пузырём и панелью видно шов.
+  // Радиус берём из --vera-bubble-radius: он меняется в настройках пузыря,
+  // и корпус подстраивается сам.
+  const bubbleRadiusCss = 'var(--vera-bubble-radius, 16px)';
+  const bubbleSkinSx: Record<string, any> = bubbleEnabled
+    ? (isOwnSide ? equippedBubbleSx : mirrorBubble(equippedBubbleSx))
+    : {};
+  const [shellSkinSx, innerSkinSx] = splitBubbleSkin(bubbleSkinSx);
+  // Анимацию кастомного скина (переливы, пульсация) тоже должен крутить корпус:
+  // он рисует фон, а пузырь внутри прозрачный.
+  const shellSkinClass = bubbleEnabled && isOwn && customBubbleSpec && !ownOverrideSet('bubble')
+    ? specAnimationClass(customBubbleSpec)
+    : '';
+  const shellBackground = bubbleSkinSx.background
     || (!bubbleEnabled ? 'transparent' : (isOwn ? (bubbleOwnGradient || bgBubbleOwn) : bgBubbleOther));
-  const bubbleNeedsBackdropBlur = bubbleEnabled && isTranslucentColor(finalBubbleBackground);
+  // Блюр виден только там, где сквозь фон что-то просвечивает. Считаем по
+  // ИТОГОВОМУ фону: за непрозрачной заливкой он не даёт картинки, но заставляет
+  // браузер каждый кадр скролла считать его для каждого сообщения.
+  const shellBackdrop = bubbleSkinSx.backdropFilter
+    || (bubbleEnabled && isTranslucentColor(shellBackground) ? 'blur(18px)' : 'none');
+  const shellRadius = bubbleSkinSx.borderRadius || (isOwnSide
+    ? `${bubbleRadiusCss} ${bubbleRadiusCss} 4px ${bubbleRadiusCss}`
+    : `${bubbleRadiusCss} ${bubbleRadiusCss} ${bubbleRadiusCss} 4px`);
+  const shellShadow = isOwn
+    ? [bubbleOwnShadow, `0 0 0 1px ${accent}18 inset`].filter(Boolean).join(', ')
+    : (bubbleOtherShadow || 'none');
+  // Порядок ключей важен: базовый вид темы идёт ПЕРВЫМ, а стиль скина — после
+  // него. CSS-шорткаты (`border`, `background`, `borderRadius`) сбрасывают
+  // парные длинные свойства, поэтому скин должен применяться последним:
+  // иначе `border` съел бы `borderLeft` скина «Минимал», а `background` —
+  // картинку-иконку из набора.
+  const bubbleShellSx: Record<string, any> = {
+    position: 'relative',
+    // Корпус выше реакций и прочих строк сообщения: выехавшая панель накрывает
+    // их, а не наоборот.
+    zIndex: 1,
+    display: 'flex',
+    // Панель может быть шире пузыря (короткое сообщение) — пузырь при этом не
+    // растягивается, а остаётся прижатым к своей стороне.
+    flexDirection: actionsPlacement === 'above' ? 'column-reverse' : 'column',
+    alignItems: isOwnSide ? 'flex-end' : 'flex-start',
+    maxWidth: '100%',
+    minWidth: 0,
+    boxSizing: 'border-box',
+    background: shellBackground,
+    borderRadius: shellRadius,
+    border: !bubbleEnabled ? 'none' : `1px solid ${isOwn ? accent + '28' : theme.border}`,
+    boxShadow: !bubbleEnabled ? 'none' : shellShadow,
+    backdropFilter: !bubbleEnabled ? 'none' : shellBackdrop,
+    WebkitBackdropFilter: !bubbleEnabled ? 'none' : shellBackdrop,
+    ...shellSkinSx,
+    // Панель занимает ровно ACTIONS_PANEL_HEIGHT и ровно столько же вычитается
+    // из раскладки: сообщение «растёт» только визуально, лента не прыгает.
+    marginTop: actionsOpen && actionsPlacement === 'above' ? -ACTIONS_PANEL_HEIGHT : 0,
+    marginBottom: actionsOpen && actionsPlacement === 'below' ? -ACTIONS_PANEL_HEIGHT : 0,
+  };
+  // Иконки действий — цветом текста пузыря, приглушённые до наведения.
+  const actionIconSx: Record<string, any> = {
+    color: shopBubbleText || bubbleTextColor,
+    flexShrink: 0,
+    opacity: 0.78,
+    ...membranePressSx,
+    '&:hover': { opacity: 1 },
+  };
   // ── Цвет времени и «(изменено)» ──────────────────────────────────────
   // Приоритет: настройка темы (персональной темы чата, затем глобальной).
   // Если цвет не задан — как раньше, цвет текста пузыря (с учётом стиля из магазина).
@@ -792,7 +865,7 @@ function MessageBubble({
         pb: isGroupEnd ? { xs: 1.2, md: 1.6 } : 0.15,
         position: 'relative',
         touchAction: 'pan-y',
-        zIndex: isHovered ? 20 : 'auto',
+        zIndex: actionsOpen ? 20 : 'auto',
       }}
     >
       {isGroupEnd ? <Avatar
@@ -804,8 +877,23 @@ function MessageBubble({
         </Avatar> : <Box sx={{ width: 34, flexShrink: 0 }} />}
 
       <Box
-        onPointerEnter={(e) => {
-          if (e.pointerType === 'mouse') { hoverSelf(); updateActionsPlacement(e.currentTarget); }
+        onPointerMove={(e) => {
+          if (e.pointerType !== 'mouse') return;
+          // Курсор уже на панели: она сама держит сообщение открытым, иначе
+          // панель закрывалась бы на первом же движении вниз, к кнопкам.
+          if ((e.target as HTMLElement).closest?.('.msg-actions')) return;
+          const bubbleEl = bubbleRef.current;
+          if (!bubbleEl) return;
+          // Панель выезжает только из нижнего уголка пузыря: наведение на само
+          // сообщение (при чтении) её не открывает.
+          if (inActionsCorner(bubbleEl.getBoundingClientRect(), e.clientX, e.clientY, isOwnSide)) {
+            if (!actionsOpen) { updateActionsPlacement(e.currentTarget); hoverSelf(); }
+            return;
+          }
+          // Ушли с уголка — закрываем панель. Проверяем стор целиком: она могла
+          // остаться открытой у СОСЕДНЕГО сообщения, если курсор перешёл на это,
+          // не задев его собственный уголок.
+          if (actionsOpen || useMessageHoverStore.getState().hoveredId) hoverNone();
         }}
         onTouchStart={(e) => {
           cancelHold();
@@ -849,6 +937,11 @@ function MessageBubble({
           maxWidth: editing ? '100%' : `${maxWidthPct}%`,
           minWidth: 0,
           position: 'relative',
+          // Выехавшая панель чуть приподнимает сообщение. Трансформация на
+          // обёртке, а не на пузыре: иначе пузырь уезжал бы от панели и на стыке
+          // появлялась бы щель.
+          transform: actionsOpen ? 'translateY(-2px)' : 'none',
+          transition: `transform 200ms ${motion.easeOut}`,
         }}
       >
         {!isOwn && !selfCardItem && isGroupStart && (
@@ -864,7 +957,12 @@ function MessageBubble({
           </Box>
         )}
 
+        {/* Корпус сообщения: фон, рамка, тень, скругление и размытие. Растёт
+            вместе с панелью действий, поэтому стык между пузырём и панелью
+            не виден — это одна фигура, а не два элемента. */}
+        <Box className={shellSkinClass} sx={bubbleShellSx}>
         <Box
+          ref={bubbleRef}
           data-vera-bubble
           onContextMenu={(e) => {
             if ((e.target as HTMLElement).closest('input, textarea')) return;
@@ -878,50 +976,44 @@ function MessageBubble({
             } else if (e.button === 2) setContextMenu({ x: e.clientX, y: e.clientY });
           }}
           onPointerDown={(e) => { if (e.pointerType === 'mouse') touchOrigin.current = null; }}
-          className={bubbleEnabled && isOwn && customBubbleSpec && !ownOverrideSet('bubble') ? specAnimationClass(customBubbleSpec) : ''}
           sx={{
             position: 'relative',
             // Экономим layout/paint сообщений, которые сейчас вне экрана.
             // 'auto' в contain-intrinsic-size заставляет браузер запомнить
             // реальную высоту после первой отрисовки — оценка в 72px нужна
             // только до этого, поэтому длина ленты не «прыгает» при скролле.
-            // Важно: это ИМЕННО пузырь, а не строка сообщения — у строки есть
-            // панель действий, выходящая за её пределы, и paint containment
-            // (часть content-visibility) её бы обрезал.
+            // Важно: это ИМЕННО пузырь, а не корпус — paint containment (часть
+            // content-visibility) обрезал бы панель действий, которая выходит за
+            // пределы пузыря.
             contentVisibility: bubbleEnabled ? 'auto' : 'visible',
             containIntrinsicSize: 'auto 72px',
             '@media (pointer: coarse)': {
               userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
               '& input, & textarea': { userSelect: 'text', WebkitUserSelect: 'text', WebkitTouchCallout: 'default' },
             },
-            background: !bubbleEnabled ? 'transparent' : (isOwn
-              ? bubbleOwnGradient || bgBubbleOwn
-              : bgBubbleOther),
+            // Фон, рамку, тень, скругление и размытие рисует корпус сообщения
+            // (bubbleShellSx): он один, и когда панель выезжает, он растёт вместе
+            // с ней. Пузырь отвечает только за содержимое — иначе заливка легла
+            // бы поверх корпуса и на стыке появилась бы полоса.
+            backdropFilter: 'none',
+            WebkitBackdropFilter: 'none',
             color: shopBubbleText || bubbleTextColor,
-            boxShadow: isOwn
-              ? bubbleOwnShadow
-              : bubbleOtherShadow,
-            borderRadius: isOwnSide
-              ? `var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) 4px var(--vera-bubble-radius, 16px)`
-              : `var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) 4px`,
-            maxWidth: '100%', boxSizing: 'border-box',
-            border: `1px solid ${isOwn ? accent + '28' : theme.border}`,
-            backdropFilter: bubbleNeedsBackdropBlur ? 'blur(18px)' : 'none',
-            transition: `background 220ms ${motion.easeOut}, transform 220ms ${motion.spring}, box-shadow 220ms ${motion.easeOut}`,
-            transform: { xs: 'none', md: isHovered ? 'translateY(-2px)' : 'translateY(0)' },
-            ...(isOwn
-              ? { boxShadow: `${bubbleOwnShadow || ''}, 0 0 0 1px ${accent}18 inset` }
-              : {}),
-            // Кастомный «пузырь» от авторов — перекрывает базовый стиль (только для своих).
-            // Стиль пузырей из магазина — между темой и кастомом авторов.
-            ...(bubbleEnabled ? (isOwnSide ? equippedBubbleSx : mirrorBubble(equippedBubbleSx)) : {}),
+            // Цвет и начертание текста, отступы — из скина (рамку и фон забрал корпус).
+            ...innerSkinSx,
+            maxWidth: '100%',
+            boxSizing: 'border-box',
+            // Тот же радиус, что у корпуса: его наследуют декоративные слои скинов
+            // (`border-radius: inherit`), иначе они стали бы прямоугольными.
+            borderRadius: shellRadius,
             paddingLeft: bubbleEnabled && !channelPost ? '14px' : 0,
             paddingRight: bubbleEnabled && !channelPost ? '14px' : 0,
             paddingTop: bubbleEnabled && !channelPost ? `${clampBubble('padding', bubblePadding)}px` : 0,
             paddingBottom: bubbleEnabled && !channelPost ? `${clampBubble('padding', bubblePadding)}px` : 0,
             minWidth: 0, overflowWrap: 'anywhere',
             '& > *': { maxWidth: '100%', minWidth: 0, boxSizing: 'border-box' },
-            ...(!bubbleEnabled ? { background: 'transparent', backgroundImage: 'none', border: 'none', boxShadow: 'none', backdropFilter: 'none', color: theme.text, animation: 'none', '&::before': { display: 'none' }, '&::after': { display: 'none' } } : {}),
+            // Режим «без пузырей»: сообщение лежит прямо на фоне чата, поэтому
+            // цвет текста берём из темы (в белой теме белый текст был бы невидим).
+            ...(bubbleEnabled ? {} : { color: theme.text }),
           }}
         >
           <Box sx={channelPost ? {
@@ -1101,6 +1193,68 @@ function MessageBubble({
           </Box>
           {channelPost && <ChannelComments post={message} />}
         </Box>
+        {/* Панель монтируется ТОЛЬКО при открытии (наведение на уголок пузыря).
+            Раньше она висела в DOM скрытой для каждого сообщения: 7 IconButton
+            + 7 Tooltip на пузырь, то есть ~2800 лишних узлов на 200 сообщений —
+            и они участвовали в каждом цикле reconcile.
+            Своего фона и рамки у панели нет: их рисует корпус, за счёт этого
+            пузырь и панель выглядят одной фигурой. */}
+        {actionsOpen && (
+        <Box
+          onClick={e => e.stopPropagation()}
+          onPointerDown={e => e.stopPropagation()}
+          sx={{
+          display: 'flex', alignItems: 'center', gap: 0.5,
+          justifyContent: isOwnSide ? 'flex-end' : 'flex-start',
+          // Панель всегда во всю ширину корпуса: у длинного сообщения — как
+          // пузырь, у короткого — как его кнопки.
+          alignSelf: 'stretch',
+          height: ACTIONS_PANEL_HEIGHT,
+          boxSizing: 'border-box',
+          px: 0.75,
+          color: shopBubbleText || bubbleTextColor,
+          maxWidth: 'calc(100vw - 24px)',
+          flexWrap: 'nowrap',
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          scrollbarWidth: 'none',
+          '&::-webkit-scrollbar': { display: 'none' },
+          touchAction: 'pan-x',
+          // Кнопки «выезжают» из-под пузыря. Фигура корпуса появляется сразу —
+          // поэтому стык не мигает, — а иконки чуть догоняют её.
+          animation: `veraActionsIn 160ms ${motion.easeOut}`,
+          // В режиме «без пузырей» у корпуса нет ни фона, ни рамки, поэтому
+          // панели нужна своя плашка — иначе кнопки висят в воздухе.
+          ...(bubbleEnabled ? {} : { bgcolor: theme.bgHeader, borderRadius: '12px', px: 1 }),
+        }} className="msg-actions">
+          {!channelPost && <Tooltip title="Ответить">
+            <IconButton size="small" onClick={() => onReply(message)} sx={actionIconSx}><Reply sx={{ fontSize: 16 }} /></IconButton>
+          </Tooltip>}
+          <Tooltip title="Переслать">
+            <IconButton size="small" onClick={() => onForward(message)} sx={actionIconSx}><Forward sx={{ fontSize: 16 }} /></IconButton>
+          </Tooltip>
+          <Tooltip title="Копировать">
+            <IconButton size="small" onClick={() => { navigator.clipboard.writeText(message.content || ''); }} sx={actionIconSx}><ContentCopy sx={{ fontSize: 16 }} /></IconButton>
+          </Tooltip>
+          <Tooltip title="Реакция">
+            <IconButton size="small" onClick={() => setReactionAnchor(bubbleRef.current)} sx={actionIconSx}><AddReaction sx={{ fontSize: 16 }} /></IconButton>
+          </Tooltip>
+          <Tooltip title={message.isPinned ? 'Открепить' : 'Закрепить'}>
+            <IconButton size="small" onClick={handleTogglePin} sx={{ ...actionIconSx, color: message.isPinned ? accent : (shopBubbleText || bubbleTextColor), opacity: 1 }}><PushPin sx={{ fontSize: 16 }} /></IconButton>
+          </Tooltip>
+          {canEdit && !editing && (
+            <Tooltip title="Редактировать">
+              <IconButton size="small" onClick={() => { setEditText(message.content || ''); setEditing(true); }} sx={actionIconSx}><Edit sx={{ fontSize: 16 }} /></IconButton>
+            </Tooltip>
+          )}
+          {canDelete && (
+            <Tooltip title="Удалить">
+              <IconButton size="small" onClick={handleDelete} sx={{ ...actionIconSx, color: '#f44336', opacity: 1 }}><Delete sx={{ fontSize: 16 }} /></IconButton>
+            </Tooltip>
+          )}
+        </Box>
+        )}
+        </Box>
 
         {/* Реакции */}
         {message.reactions && message.reactions.length > 0 && (
@@ -1125,80 +1279,6 @@ function MessageBubble({
         )}
 
         {actionError && <Typography role="alert" color="error" sx={{ fontSize: 13, mt: 0.5 }}>{actionError}</Typography>}
-        {/* Панель монтируется ТОЛЬКО при наведении. Раньше она висела в DOM
-            скрытой для каждого сообщения: 7 IconButton + 7 Tooltip на пузырь,
-            то есть ~2800 лишних узлов на 200 сообщений — и они участвовали в
-            каждом цикле reconcile. Раз позиционируется относительно родителя,
-            порядок в DOM и логика ховера не меняются. */}
-        {isHovered && (
-        <Box
-          onClick={e => e.stopPropagation()}
-          onPointerDown={e => e.stopPropagation()}
-          onMouseEnter={(e) => { hoverSelf(); updateActionsPlacement(e.currentTarget.parentElement as HTMLElement); }}
-          onMouseLeave={hoverNone}
-          sx={{
-          display: 'flex', alignItems: 'center', gap: 0.5,
-          justifyContent: isOwnSide ? 'flex-end' : 'flex-start',
-          alignSelf: isOwnSide ? 'flex-end' : 'flex-start',
-          width: 'max-content',
-          maxWidth: 'calc(100vw - 24px)',
-          boxSizing: 'border-box',
-          flexWrap: 'nowrap',
-          overflowX: 'auto',
-          overflowY: 'hidden',
-          scrollbarWidth: 'none',
-          '&::-webkit-scrollbar': { display: 'none' },
-          touchAction: 'pan-x',
-          opacity: isHovered ? 1 : 0, transition: 'opacity 180ms',
-          p: 0.25,
-          // Панель под пузырём. Держим её вплотную (top:100%) и с невидимой
-          // «зоной наведения» сверху через padding — чтобы курсор не терял
-          // hover при переходе с пузыря на панель. Плюс собственные mouse-
-          // хендлеры удерживают isHovered, пока курсор над панелью.
-          // top немного «залезает» внутрь родителя, а pt возвращает визуальный
-          // отступ — так между пузырём и панелью нет разрыва, на котором курсор
-          // покидал бы родительский Box и mouseleave гасил панель.
-          position: 'absolute',
-          top: actionsPlacement === 'below' ? 'calc(100% - 8px)' : 'auto',
-          bottom: actionsPlacement === 'above' ? 'calc(100% - 8px)' : 'auto',
-          left: isOwnSide ? 'auto' : 0,
-          right: isOwnSide ? 0 : 'auto',
-          pt: actionsPlacement === 'below' ? '12px' : 0,
-          pb: actionsPlacement === 'above' ? '12px' : 0,
-          bgcolor: theme.bgHeader,
-          border: `1px solid ${theme.border}`,
-          borderRadius: 2,
-          boxShadow: '0 5px 18px rgba(0,0,0,0.35)',
-          zIndex: 10,
-          pointerEvents: 'auto',
-        }} className="msg-actions">
-          {!channelPost && <Tooltip title="Ответить">
-            <IconButton size="small" onClick={() => onReply(message)} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><Reply sx={{ fontSize: 16 }} /></IconButton>
-          </Tooltip>}
-          <Tooltip title="Переслать">
-            <IconButton size="small" onClick={() => onForward(message)} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><Forward sx={{ fontSize: 16 }} /></IconButton>
-          </Tooltip>
-          <Tooltip title="Копировать">
-            <IconButton size="small" onClick={() => { navigator.clipboard.writeText(message.content || ''); }} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><ContentCopy sx={{ fontSize: 16 }} /></IconButton>
-          </Tooltip>
-          <Tooltip title="Реакция">
-            <IconButton size="small" onClick={(e) => setReactionAnchor(e.currentTarget)} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><AddReaction sx={{ fontSize: 16 }} /></IconButton>
-          </Tooltip>
-          <Tooltip title={message.isPinned ? 'Открепить' : 'Закрепить'}>
-            <IconButton size="small" onClick={handleTogglePin} sx={{ color: message.isPinned ? theme.accent : theme.textSec, flexShrink: 0, ...membranePressSx }}><PushPin sx={{ fontSize: 16 }} /></IconButton>
-          </Tooltip>
-          {canEdit && !editing && (
-            <Tooltip title="Редактировать">
-              <IconButton size="small" onClick={() => { setEditText(message.content || ''); setEditing(true); }} sx={{ color: theme.textSec, ...membranePressSx }}><Edit sx={{ fontSize: 16 }} /></IconButton>
-            </Tooltip>
-          )}
-          {canDelete && (
-            <Tooltip title="Удалить">
-              <IconButton size="small" onClick={handleDelete} sx={{ color: '#f44336', ...membranePressSx }}><Delete sx={{ fontSize: 16 }} /></IconButton>
-            </Tooltip>
-          )}
-        </Box>
-        )}
       </Box>
 
       {/* Попап выбора реакции */}
@@ -1252,8 +1332,8 @@ function MessageBubble({
 }
 
 // Мемоизируем пузырь: перерисовка только когда message/isOwn НЕ изменились,
-// но принудительно при смене темы (accent / themeVersion). isHovered больше не
-// проп — ховер приходит из микро-стора и меняет ровно два пузыря.
+// но принудительно при смене темы (accent / themeVersion). Панель действий больше
+// не проп — она приходит из микро-стора и меняет ровно два пузыря.
 export default memo(
   MessageBubble,
   (prev, next) =>

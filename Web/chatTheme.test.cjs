@@ -150,3 +150,124 @@ test('выключенная и отсутствующая персональн�
   assert.equal(resolveChatTheme(base, undefined), base);
   assert.equal(resolveChatTheme(base, null), base);
 });
+
+
+// ── Корпус сообщения: пузырь и панель действий — одна фигура ─────────────────
+
+const bubbleSource = fs.readFileSync(path.join(__dirname, 'src/components/MessageBubble.tsx'), 'utf8');
+
+test('фон, рамку, тень и размытие сообщения рисует один корпус', () => {
+  const shell = bubbleSource.slice(
+    bubbleSource.indexOf('const bubbleShellSx'),
+    bubbleSource.indexOf('const actionIconSx'),
+  );
+  assert.ok(shell.length > 0, 'корпус объявлен');
+  // Фон, скругление, тень и размытие — общие для пузыря и панели.
+  assert.ok(shell.includes('background: shellBackground'), 'фон корпуса = фон пузыря (вместе со скином)');
+  assert.ok(shell.includes('borderRadius: shellRadius'), 'одно скругление на пузырь и панель');
+  assert.ok(shell.includes('boxShadow: !bubbleEnabled'), 'тень у корпуса');
+  assert.ok(shell.includes('backdropFilter: !bubbleEnabled'), 'размытие у корпуса');
+  // Панель занимает ровно ACTIONS_PANEL_HEIGHT и ровно столько же вычитается из
+  // раскладки: сообщение «растёт» только визуально, лента не прыгает.
+  assert.ok(
+    shell.includes("marginBottom: actionsOpen && actionsPlacement === 'below' ? -ACTIONS_PANEL_HEIGHT : 0"),
+    'высота панели вычтена из раскладки',
+  );
+  assert.ok(
+    shell.includes("flexDirection: actionsPlacement === 'above' ? 'column-reverse' : 'column'"),
+    'панель сверху — тот же корпус, развёрнутый вверх',
+  );
+});
+
+test('пузырь внутри корпуса не рисует фон и рамку повторно', () => {
+  const bubble = bubbleSource.slice(
+    bubbleSource.indexOf('data-vera-bubble'),
+    bubbleSource.indexOf("'& > *'"),
+  );
+  assert.ok(bubble.length > 0, 'содержимое пузыря на месте');
+  // Двойная заливка и лишняя рамка на стыке — то, из-за чего панель выглядела
+  // «приклеенной» отдельной плашкой.
+  assert.ok(!/^\s*background:/m.test(bubble), 'фон рисует только корпус');
+  assert.ok(!bubble.includes('boxShadow'), 'тень рисует только корпус');
+  assert.ok(!/^\s*border:/m.test(bubble), 'рамку рисует только корпус');
+  assert.ok(bubble.includes("backdropFilter: 'none'"), 'размытие не дублируется');
+  // content-visibility должен остаться на пузыре: paint containment обрезал бы
+  // панель, которая выходит за его пределы.
+  assert.ok(
+    bubble.includes("contentVisibility: bubbleEnabled ? 'auto' : 'visible'"),
+    'content-visibility остаётся на содержимом, а не на корпусе',
+  );
+  assert.ok(bubble.includes('...innerSkinSx'), 'цвет текста и отступы остаются на пузыре');
+});
+
+test('скругление панели совпадает со скруглением пузыря', () => {
+  const radius = bubbleSource.slice(
+    bubbleSource.indexOf('const bubbleRadiusCss'),
+    bubbleSource.indexOf('const bubbleShadow'),
+  );
+  assert.ok(radius.includes('var(--vera-bubble-radius, 16px)'), 'радиус берётся из настройки пузыря');
+  assert.ok(/isOwnSide[\s\S]*?\$\{bubbleRadiusCss\} \$\{bubbleRadiusCss\} 4px \$\{bubbleRadiusCss\}/.test(radius), 'свои: угол-хвостик справа');
+  assert.ok(radius.includes('`${bubbleRadiusCss} ${bubbleRadiusCss} ${bubbleRadiusCss} 4px`'), 'чужие: угол-хвостик слева');
+  // Скругление скина (магазин/авторы) тоже достаётся корпусу.
+  assert.ok(
+    bubbleSource.includes('const [shellSkinSx, innerSkinSx] = splitBubbleSkin(bubbleSkinSx)'),
+    'скин делится на корпус и содержимое',
+  );
+  assert.ok(bubbleSource.includes('borderRadius: shellRadius'), 'корпус использует выбранное скругление');
+});
+
+test('панель действий продолжает корпус и открывается из уголка пузыря', () => {
+  // Панель вместе со своим sx: от условия монтирования до закрывающего </Box>.
+  const start = bubbleSource.indexOf('{actionsOpen && (');
+  const panel = bubbleSource.slice(start, bubbleSource.indexOf('</Box>', start));
+  assert.ok(panel.length > 0, 'кнопки на месте');
+  assert.ok(bubbleSource.includes('const actionIconSx'), 'общий стиль иконок объявлен');
+  assert.ok(panel.includes('actionIconSx'), 'иконки берут общий стиль');
+  assert.ok(!panel.includes('color: theme.textSec'), 'иконки панели не используют theme.textSec');
+  // Высота панели — та же константа, которой корпус компенсирует её в раскладке.
+  assert.ok(panel.includes('height: ACTIONS_PANEL_HEIGHT'), 'высота панели = константе');
+  assert.ok(panel.includes("alignSelf: 'stretch'"), 'панель во всю ширину корпуса');
+  assert.ok(panel.includes('veraActionsIn'), 'иконки выезжают из-под пузыря');
+  // Своего фона и тени у панели нет — их рисует корпус.
+  assert.ok(!panel.includes('boxShadow'), 'у панели нет своей тени');
+  assert.ok(!panel.includes("position: 'absolute'"), 'панель не висит поверх, а продолжает корпус');
+  // Открывается из нижнего уголка пузыря, а не на любое наведение.
+  assert.ok(bubbleSource.includes('inActionsCorner('), 'уголок вызова');
+  assert.ok(!/onPointerEnter=\{[^}]*hoverSelf/.test(bubbleSource), 'наведение на пузырь панель не открывает');
+});
+
+
+// ── Редактор тем: плашка и режим чата ────────────────────────────────────────
+
+const editorSource = fs.readFileSync(path.join(__dirname, 'src/components/ThemeEditor.tsx'), 'utf8');
+
+test('редактор тем открывается плашкой во всю высоту, а не карточкой 820px', () => {
+  assert.ok(editorSource.includes("maxWidth: 'min(1680px, 100%)'"), 'плашка широкая — почти во весь экран');
+  assert.ok(editorSource.includes("height: '100%'"), 'плашка во всю высоту');
+  assert.ok(editorSource.includes("borderRadius: 22, width: '100%',"), 'плашка скруглена, но не в край экрана');
+  assert.ok(editorSource.includes("backdropFilter: 'blur(22px)"), 'размытие как у нижней навигации');
+  assert.ok(editorSource.includes('env(safe-area-inset-top)'), 'отступы учитывают вырез телефона');
+  assert.ok(editorSource.includes('plateBody') && editorSource.includes('plateFooter'), 'есть прокручиваемое тело и липкий низ');
+  assert.ok(/plateBody[\s\S]{0,200}overflowY:\s*'auto'/.test(editorSource), 'тело прокручивается');
+});
+
+test('редактор чата не предлагает то, чего в чате нет', () => {
+  // Поля сайдбара и списка в окне чата не рисуются — сверено с обращениями
+  // к theme.* в ChatWindow/MessageBubble.
+  for (const label of ['Сайдбар', 'Активный элемент', 'Время в списке чатов']) {
+    const line = editorSource.split('\n').find((l) => l.includes(`label="${label}"`));
+    assert.ok(line, `поле «${label}» есть в редакторе`);
+    assert.ok(line.includes('!isChat'), `«${label}» должно быть скрыто в режиме чата`);
+  }
+  assert.ok(/\{!isChat && \(\s*<>/.test(editorSource), 'блоки сайдбара скрыты в режиме чата');
+  assert.ok(editorSource.includes('!isChat && (\n        <div style={{'), 'ИИ-генерация скрыта в режиме чата');
+});
+
+test('переключатель применения темы попадает в шапку плашки, а не в лишнее окно', () => {
+  const dialog = fs.readFileSync(path.join(__dirname, 'src/components/ChatThemeDialog.tsx'), 'utf8');
+  assert.ok(dialog.includes('mode="chat"'), 'редактор чата запускается в режиме chat');
+  assert.ok(dialog.includes('headerExtra'), 'переключатель передаётся в шапку');
+  // Раньше плашка накрывалась ещё и полноэкранным Dialog — двойная накладка.
+  assert.ok(!dialog.includes('fullScreen'), 'лишний полноэкранный Dialog убран');
+  assert.ok(editorSource.includes('headerExtra'), 'редактор умеет принимать элемент в шапку');
+});
