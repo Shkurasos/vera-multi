@@ -1,10 +1,13 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { Box, Typography, TextField, Button, InputAdornment, IconButton } from '@mui/material';
+import { Box, Typography, TextField, Button, InputAdornment, IconButton, ToggleButton, ToggleButtonGroup } from '@mui/material';
 import { ContentCopy } from '@mui/icons-material';
-import { useThemeStore, THEMES, CUSTOM_THEME_ID_START, Theme, themeToLink, themeFromLink } from '../store/themeStore';
+import { useThemeStore, THEMES, CUSTOM_THEME_ID_START, Theme, themeToLink, themeFromLink, snapshotThemeSettings } from '../store/themeStore';
 import { aiApi } from '../services/botsApi';
 import { useShopStore } from '../store/shopStore';
 import VpIcon from './VpIcon';
+import {
+  WallpaperPanel, SoundPanel, UiStylePanel, AnimationsPanel, AppearancePanel, LayoutPanel,
+} from './ThemeSettingsPanels';
 
 // ─── SVG паттерны ─────────────────────────────────────────────────────────────
 function svgUrl(content: string) {
@@ -145,6 +148,10 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
+  // Вкладки редактора: первая — сама тема, остальные — настройки, которые
+  // живут в теме (обои, звук, иконки, анимации, внешний вид, макет).
+  // В режиме темы чата (isChat) эти настройки не относятся к чату — вкладок нет.
+  const [tab, setTab] = useState<'theme' | 'wallpaper' | 'sound' | 'ui' | 'anim' | 'look' | 'layout'>('theme');
 
   const handleAiGenerate = async () => {
     const desc = aiPrompt.trim();
@@ -186,8 +193,13 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
     if (onApply) {
       onApply(draft);
     } else {
-      saveCustomTheme(draft);
-      setTheme(draft.id);
+      // Настройки темы (обои, звук, иконки/стиль, анимации, внешний вид, макет)
+      // снимаются с текущих сторов и живут внутри темы: при её переключении
+      // applyThemeSettings запишет их обратно. В режиме чата их не трогаем —
+      // это глобальные настройки, а не свойства отдельного чата.
+      const saved: Theme = isChat ? draft : { ...draft, settings: snapshotThemeSettings() };
+      saveCustomTheme(saved);
+      setTheme(saved.id);
     }
     onClose();
   };
@@ -261,16 +273,16 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
     position: 'fixed', inset: 0, zIndex: 9999,
     background: 'rgba(0,0,0,0.55)',
     backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
-    display: 'flex', alignItems: 'stretch', justifyContent: 'center',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
     padding: 'max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left))',
   };
   const modal: React.CSSProperties = {
     background: theme.sidebarGradient || theme.bgSidebar, color: theme.text,
     backdropFilter: 'blur(22px) saturate(1.35)', WebkitBackdropFilter: 'blur(22px) saturate(1.35)',
     borderRadius: 22, width: '100%',
-    // Занимает почти весь экран, но с полями: это плашка, а не полноэкранное
-    // окно музыки — по краям остаётся видно приложение под ней.
-    maxWidth: 'min(1680px, 100%)', height: '100%',
+    // Открывается по центру экрана, как музыкальный плеер: не на всю высоту,
+    // а карточкой с полями — приложение видно вокруг.
+    maxWidth: 'min(1680px, 100%)', height: '86vh', maxHeight: 'calc(100vh - 16px)',
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
     border: '1px solid ' + theme.border,
     boxShadow: '0 28px 80px rgba(0,0,0,0.55)',
@@ -299,6 +311,34 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
     padding: '3px 9px', borderRadius: 6, fontSize: 12, cursor: 'pointer', border: '1px solid',
   };
 
+  // ── Вкладки ────────────────────────────────────────────────────────────────
+  const TABS: [typeof tab, string][] = [
+    ['theme', 'Тема'], ['wallpaper', 'Обои'], ['sound', 'Звук'],
+    ['ui', 'Иконки и стиль'], ['anim', 'Анимации'], ['look', 'Внешний вид'], ['layout', 'Макет'],
+  ];
+  const tabBar = !isChat ? (
+    <Box sx={{
+      position: 'sticky', top: 0, zIndex: 3, py: 1, mb: 1.5,
+      mx: '-20px', px: 2, background: 'rgba(0,0,0,0.3)',
+      backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+      borderBottom: `1px solid ${theme.border}`,
+    }}>
+      <ToggleButtonGroup exclusive size="small" value={tab}
+        onChange={(_, v) => v && setTab(v)}
+        sx={{ flexWrap: 'wrap', gap: 0.5 }}>
+        {TABS.map(([id, label]) => (
+          <ToggleButton key={id} value={id}
+            sx={{
+              textTransform: 'none', color: theme.text, borderColor: theme.border,
+              '&.Mui-selected': { bgcolor: theme.accent + '28', color: theme.accent, borderColor: theme.accent },
+            }}>
+            {label}
+          </ToggleButton>
+        ))}
+      </ToggleButtonGroup>
+    </Box>
+  ) : null;
+
   return (
     <div style={overlay} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={modal}>
@@ -321,6 +361,9 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
         </div>
 
         <div style={plateBody}>
+         {tabBar}
+         {tab === 'theme' && (
+         <>
          {/* Мои сохранённые темы */}
          {!onApply && customThemes.length > 0 && (
            <div style={{ marginBottom: 14 }}>
@@ -716,6 +759,14 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
           </div>
         </div>
 
+        </>
+        )}
+        {tab === 'wallpaper' && <WallpaperPanel />}
+        {tab === 'sound' && <SoundPanel />}
+        {tab === 'ui' && <UiStylePanel />}
+        {tab === 'anim' && <AnimationsPanel />}
+        {tab === 'look' && <AppearancePanel />}
+        {tab === 'layout' && <LayoutPanel />}
         </div>
 
         {/* Кнопки */}

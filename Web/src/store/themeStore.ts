@@ -2,8 +2,50 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { usersApi } from '../services/api';
 import { enableStoreSync } from '../services/storeSyncSimple';
+// Настройки, которые живут В ТЕМЕ (обои, звук, иконки, анимации, внешний вид,
+// макет). Ни один из этих сторов не импортирует themeStore — цикла нет.
+import { useChatBgPrefsStore, type UserWallpaperItem } from './chatBgPrefsStore';
+import { useChatSoundStore, type ChatSoundSetting } from './chatSoundStore';
+import { useUiPrefsStore, type IconPack, type UiStyle, type ChatShape } from './uiPrefsStore';
+import { useAnimStore, type AnimKey } from './animStore';
+import { useUserSettingsStore, type LayoutSettings } from './userSettingsStore';
 
 export type ThemeFinish = 'solid' | 'glass' | 'matte' | 'metal';
+
+/**
+ * Настройки, которые применяются ТОЛЬКО вместе с темой и живут внутри неё:
+ * обои для всех чатов, звук уведомления по умолчанию, иконки и стиль
+ * интерфейса, анимации, внешний вид и макет. При переключении темы они
+ * записываются в привычные сторы (см. applyThemeSettings) — всё остальное
+ * приложение их оттуда и читает, поэтому код рендера не менялся.
+ */
+export interface ThemeSettings {
+  /** Обои для всех чатов (глобальный scope chatBgPrefsStore). */
+  wallpaper?: {
+    /** id стоковых обоев, либо 'custom-photo' / 'custom-live' / 'none'. */
+    stockId: string;
+    /** dataURL своего фото-обоев (для 'custom-photo'). */
+    photo?: string | null;
+    /** Имя файла своего фото. */
+    photoName?: string;
+    /** Ключ видео в IndexedDB chatLiveBgStorage (для 'custom-live'). */
+    liveValue?: string;
+    /** Базовая яркость фона 0..1. */
+    brightness?: number;
+    /** Галерея своих фото/видео темы (scope 'global'). */
+    userWallpapers?: UserWallpaperItem[];
+  };
+  /** Звук уведомлений по умолчанию. */
+  sound?: { globalSound: ChatSoundSetting | null; globalVolume: number };
+  /** Иконки и стиль интерфейса. */
+  ui?: { iconPack: IconPack; uiStyle: UiStyle; chatShape: ChatShape; chatBorder: boolean; chatFill: boolean };
+  /** Включённые группы анимаций. */
+  animations?: Partial<Record<AnimKey, boolean>>;
+  /** Внешний вид: яркость приложения, масштаб текста, шрифт. */
+  appearance?: { brightness: number; textScale: number; globalFontFamily: string };
+  /** Макет: раскладка окна (стороны, плотность, радиусы и т.д.). */
+  layout?: Partial<LayoutSettings>;
+}
 
 export interface Theme {
   id: number;
@@ -68,6 +110,10 @@ export interface Theme {
   chatTimeColor?: string;
   // Фото чата (аватар чата), base64/data URL, независимо от темы
   chatPhoto?: string;
+  // Настройки, которые применяются вместе с темой: обои, звук, иконки/стиль,
+  // анимации, внешний вид и макет. Хранятся здесь; при переключении темы
+  // записываются в привычные сторы (applyThemeSettings).
+  settings?: ThemeSettings;
 }
 
 function adjustBrightness(hex: string, amount: number): string {
@@ -889,6 +935,9 @@ export const useThemeStore = create<ThemeState>()(
         const builtin = THEMES.find(t => t.id === id);
         const t = custom || builtin || THEMES[0];
         set({ themeId: id, theme: t, themeVersion: get().themeVersion + 1 });
+        // Настройки темы (обои/звук/иконки/анимации/внешний вид/макет)
+        // применяются к привычным сторам приложения.
+        applyThemeSettings(t);
         // Сохраняем тему в БД пользователя (если есть токен)
         try {
           if (localStorage.getItem('vera_token')) {
@@ -905,7 +954,7 @@ export const useThemeStore = create<ThemeState>()(
           : [...customs, t];
         set({ customThemes: updated });
         // Если эта тема сейчас активна — применяем изменения
-                if (get().themeId === t.id) set({ theme: t, themeVersion: get().themeVersion + 1 });
+                if (get().themeId === t.id) { set({ theme: t, themeVersion: get().themeVersion + 1 }); applyThemeSettings(t); }
       },
       deleteCustomTheme: (id) => {
         const updated = get().customThemes.filter(c => c.id !== id);
@@ -915,6 +964,7 @@ export const useThemeStore = create<ThemeState>()(
       },
       applyCustomTheme: (t) => {
         set({ theme: t, themeId: t.id, themeVersion: get().themeVersion + 1 });
+        applyThemeSettings(t);
       },
       setChatPhoto: (photo) => set({ chatPhoto: photo }),
       setChatBgImage: (photo, opacity = 0.35) => {
@@ -946,6 +996,11 @@ export const useThemeStore = create<ThemeState>()(
           if (out.chatBgImage && out.chatBgImage.startsWith('data:') && out.chatBgImage.length > LIMIT) {
             delete out.chatBgImage;
             delete out.chatBgImageOpacity;
+          }
+          // Фото-обои темы — тоже data URL: не даём им занять весь localStorage.
+          if (out.settings?.wallpaper?.photo && out.settings.wallpaper.photo.startsWith('data:')
+              && out.settings.wallpaper.photo.length > LIMIT) {
+            out.settings = { ...out.settings, wallpaper: { ...out.settings.wallpaper, photo: undefined } };
           }
           return out;
         };
@@ -999,3 +1054,93 @@ export const useThemeStore = create<ThemeState>()(
 // Тема, кастомные скины и фон чата принадлежат аккаунту и должны
 // восстанавливаться на новом устройстве после привязки по QR.
 enableStoreSync('theme', useThemeStore);
+
+/**
+ * Снимок текущих глобальных настроек — кладётся в тему при её сохранении.
+ * Читает те же сторы, в которые потом пишет applyThemeSettings.
+ */
+export function snapshotThemeSettings(): ThemeSettings {
+  const bg = useChatBgPrefsStore.getState();
+  const snd = useChatSoundStore.getState();
+  const ui = useUiPrefsStore.getState();
+  const anim = useAnimStore.getState();
+  const us = useUserSettingsStore.getState();
+  return {
+    wallpaper: {
+      stockId: bg.globalStockWallpaper,
+      photo: bg.userPhotoWallpaper,
+      photoName: bg.userPhotoName,
+      liveValue: bg.globalLiveValue,
+      brightness: bg.defaultBrightness,
+      // Галерея своих фото/видео НЕ дублируется в тему: она общая (её же
+      // читает движок обоев), а копия data URL в каждой теме быстрее всего
+      // убьёт квоту localStorage. Тема хранит только ВЫБРАННЫЕ обои.
+    },
+    sound: { globalSound: snd.globalSound, globalVolume: snd.globalVolume },
+    ui: {
+      iconPack: ui.iconPack, uiStyle: ui.uiStyle, chatShape: ui.chatShape,
+      chatBorder: ui.chatBorder, chatFill: ui.chatFill,
+    },
+    animations: { ...anim.enabled },
+    appearance: {
+      brightness: us.brightness, textScale: us.textScale, globalFontFamily: us.globalFontFamily,
+    },
+    layout: { ...us.layout },
+  };
+}
+
+/**
+ * Применяет настройки темы к «живым» сторам приложения. Вызывается при
+ * переключении/сохранении темы. Всё best-effort: сломанный или старый
+ * объект настроек не должен ломать переключение темы.
+ */
+export function applyThemeSettings(t?: Theme) {
+  const s = t?.settings;
+  if (!s) return;
+  try {
+    if (s.wallpaper) {
+      const bg = useChatBgPrefsStore.getState();
+      // Фото/видео — раньше stockId: сам stockId и кодирует custom-* варианты.
+      if (s.wallpaper.photo !== undefined) {
+        if (s.wallpaper.photo) bg.setUserPhotoWallpaper(s.wallpaper.photo, s.wallpaper.photoName || 'Моё фото');
+        else bg.clearUserPhotoWallpaper();
+      }
+      if (s.wallpaper.liveValue) bg.setGlobalLiveWallpaper(s.wallpaper.liveValue);
+      if (s.wallpaper.stockId) bg.setGlobalStockWallpaper(s.wallpaper.stockId);
+      if (s.wallpaper.userWallpapers) {
+        useChatBgPrefsStore.setState({
+          userWallpapers: { ...bg.userWallpapers, global: s.wallpaper.userWallpapers },
+        });
+      }
+      if (typeof s.wallpaper.brightness === 'number') {
+        useChatBgPrefsStore.setState({ defaultBrightness: s.wallpaper.brightness });
+      }
+    }
+    if (s.sound) {
+      const snd = useChatSoundStore.getState();
+      snd.setGlobalSound(s.sound.globalSound ?? null);
+      if (typeof s.sound.globalVolume === 'number') snd.setGlobalVolume(s.sound.globalVolume);
+    }
+    if (s.ui) {
+      const ui = useUiPrefsStore.getState();
+      ui.setIconPack(s.ui.iconPack);
+      ui.setUiStyle(s.ui.uiStyle);
+      ui.setChatShape(s.ui.chatShape);
+      ui.setChatBorder(s.ui.chatBorder);
+      ui.setChatFill(s.ui.chatFill);
+    }
+    if (s.animations) useAnimStore.getState().setEnabledMap(s.animations);
+    if (s.appearance) {
+      const us = useUserSettingsStore.getState();
+      us.set('brightness', s.appearance.brightness);
+      us.set('textScale', s.appearance.textScale);
+      us.set('globalFontFamily', s.appearance.globalFontFamily);
+    }
+    if (s.layout) {
+      const us = useUserSettingsStore.getState();
+      for (const [key, value] of Object.entries(s.layout)) {
+        if (value !== undefined) us.setLayout(key as keyof LayoutSettings, value as never);
+      }
+    }
+  } catch { /* best-effort */ }
+}

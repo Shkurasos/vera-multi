@@ -73,6 +73,8 @@ interface AnimState {
   enabled: EnabledMap;
   isEnabled: (key: AnimKey) => boolean;
   set: (key: AnimKey, on: boolean) => void;
+  /** Применить готовую карту из темы (один прогон DOM). */
+  setEnabledMap: (map: Partial<Record<AnimKey, boolean>>) => void;
   setAll: (on: boolean) => void;
 }
 
@@ -83,6 +85,12 @@ export const useAnimStore = create<AnimState>()(
       isEnabled: (key) => !!get().enabled[key],
       set: (key, on) => {
         const enabled = { ...get().enabled, [key]: on };
+        set({ enabled });
+        applyDom(enabled);
+      },
+      setEnabledMap: (map) => {
+        // Полная карта из темы: дефолты + значения темы, затем один прогон DOM.
+        const enabled = { ...defaultMap(), ...map };
         set({ enabled });
         applyDom(enabled);
       },

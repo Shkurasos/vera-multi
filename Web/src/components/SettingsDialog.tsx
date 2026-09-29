@@ -1,31 +1,22 @@
-import React, { useEffect, useState } from 'react';
-import BubbleSettingsControls from './BubbleSettingsControls';
+import React, { useState } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button, Typography, Box,
-  List, ListItemButton, ListItemIcon, ListItemText, Divider, Slider, Switch,
+  List, ListItemButton, ListItemIcon, ListItemText, Divider, Switch,
   MenuItem, Select, TextField, Alert, Accordion, AccordionSummary, AccordionDetails, Stack,
-  ToggleButton, ToggleButtonGroup,
 } from '@mui/material';
 import {
   Link as LinkIcon, DevicesOther, ChevronRight, ExpandMore, AutoAwesome,
-  Brightness6, TextFields, Language, DataUsage, Notifications, Security, Lock, Public,
-  ViewSidebar, RestartAlt, Storefront, Palette, Wallpaper, VolumeUp, Download,
+  Language, DataUsage, Notifications, Security, Lock, Public,
+  Download,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useThemeStore } from '../store/themeStore';
-import WallpaperSettingsDialog from './WallpaperSettingsDialog';
-import GlobalSoundSettingsDialog from './GlobalSoundSettingsDialog';
-import FontPicker from './FontPicker';
 import {
   useUserSettingsStore, hashPassword,
   PrivacyScope, PreviewMode, AutoDeleteMonths,
-  SidePos, VertPos, PlayerPos, Density,
 } from '../store/userSettingsStore';
 import InviteLinkDialog from './InviteLinkDialog';
-import LayoutDesignerDialog from './LayoutDesignerDialog';
-import { APP_FONT_OPTIONS } from '../utils/appFont';
 import { useShopStore } from '../store/shopStore';
-import { useUiPrefsStore, ICON_PACKS, UI_STYLES, CHAT_SHAPES, IconPack, UiStyle, ChatShape } from '../store/uiPrefsStore';
 import { useAnimStore, ANIM_GROUPS } from '../store/animStore';
 import { useAuthStore } from '../store/authStore';
 
@@ -38,24 +29,12 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
   const { theme } = useThemeStore();
   const navigate = useNavigate();
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [designerOpen, setDesignerOpen] = useState(false);
-  const [wallpaperOpen, setWallpaperOpen] = useState(false);
-  const [soundOpen, setSoundOpen] = useState(false);
-  const [sidebarWidthMax, setSidebarWidthMax] = useState(() => Math.max(200, Math.floor(window.innerWidth / 10) * 5));
   const shopSetOpen = useShopStore((x) => x.setOpen);
   const s = useUserSettingsStore();
-  const { iconPack, uiStyle, chatShape, chatBorder, chatFill, setIconPack, setUiStyle, setChatShape, setChatBorder, setChatFill } = useUiPrefsStore();
   const { enabled: animEnabled, set: setAnim, setAll: setAllAnims } = useAnimStore();
   const currentUser = useAuthStore((state) => state.user);
   const isAdmin = Boolean(currentUser?.isAdmin);
   const allAnimsOn = ANIM_GROUPS.every((g) => animEnabled[g.key]);
-  const effectiveSidebarWidth = Math.min(s.layout.sidebarWidth, sidebarWidthMax);
-
-  useEffect(() => {
-    const updateSidebarWidthMax = () => setSidebarWidthMax(Math.max(200, Math.floor(window.innerWidth / 10) * 5));
-    window.addEventListener('resize', updateSidebarWidthMax);
-    return () => window.removeEventListener('resize', updateSidebarWidthMax);
-  }, []);
 
 
   const [pwd1, setPwd1] = useState('');
@@ -110,22 +89,6 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
                 secondaryTypographyProps={{ sx: { color: theme.textSec, fontSize: 12 } }} />
               <ChevronRight sx={{ color: theme.textSec }} />
             </ListItemButton>
-            <Divider sx={{ borderColor: theme.border }} />
-            <ListItemButton onClick={() => setWallpaperOpen(true)} sx={{ py: 1.5 }}>
-              <ListItemIcon sx={{ color: theme.accent, minWidth: 40 }}><Wallpaper /></ListItemIcon>
-              <ListItemText primary="Обои для всех чатов" secondary="Выбор стоковых обоев по умолчанию"
-                primaryTypographyProps={{ sx: { color: theme.text, fontWeight: 600 } }}
-                secondaryTypographyProps={{ sx: { color: theme.textSec, fontSize: 12 } }} />
-              <ChevronRight sx={{ color: theme.textSec }} />
-            </ListItemButton>
-            <Divider sx={{ borderColor: theme.border }} />
-            <ListItemButton onClick={() => setSoundOpen(true)} sx={{ py: 1.5 }}>
-              <ListItemIcon sx={{ color: theme.accent, minWidth: 40 }}><VolumeUp /></ListItemIcon>
-              <ListItemText primary="Звук уведомлений по умолчанию" secondary="Применяется ко всем чатам"
-                primaryTypographyProps={{ sx: { color: theme.text, fontWeight: 600 } }}
-                secondaryTypographyProps={{ sx: { color: theme.textSec, fontSize: 12 } }} />
-              <ChevronRight sx={{ color: theme.textSec }} />
-            </ListItemButton>
           </List>
 
           <Box sx={{ p: 2 }}>
@@ -153,184 +116,14 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
                 ))}
               </AccordionDetails>
             </Accordion>}
-            <Accordion sx={sectionSx} disableGutters>
-              <AccordionSummary expandIcon={<ExpandMore sx={{ color: theme.textSec }} />}>
-                <Palette sx={{ mr: 1, color: theme.accent }} />
-                <Typography sx={{ fontWeight: 600 }}>Иконки и стиль интерфейса</Typography>
-              </AccordionSummary>
-              <AccordionDetails>
-                <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 1 }}>
-                  Пак иконок
-                </Typography>
-                <ToggleButtonGroup
-                  exclusive
-                  fullWidth
-                  size="small"
-                  value={iconPack}
-                  onChange={(_, v) => v && setIconPack(v as IconPack)}
-                  sx={{ mb: 0.5, flexWrap: 'wrap', gap: 0.5 }}
-                >
-                  {ICON_PACKS.map((p) => (
-                    <ToggleButton
-                      key={p.id}
-                      value={p.id}
-                      sx={{
-                        flex: '1 1 45%', textTransform: 'none', color: theme.text,
-                        borderColor: theme.border,
-                        '&.Mui-selected': { bgcolor: theme.accent + '25', color: theme.text, borderColor: theme.accent },
-                      }}
-                    >
-                      {p.label}
-                    </ToggleButton>
-                  ))}
-                </ToggleButtonGroup>
-                <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 2 }}>
-                  {ICON_PACKS.find((p) => p.id === iconPack)?.desc}
-                </Typography>
 
-                <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 1 }}>
-                  Стиль интерфейса
-                </Typography>
-                <ToggleButtonGroup
-                  exclusive
-                  fullWidth
-                  size="small"
-                  value={uiStyle}
-                  onChange={(_, v) => v && setUiStyle(v as UiStyle)}
-                  sx={{ flexWrap: 'wrap', gap: 0.5 }}
-                >
-                  {UI_STYLES.map((u) => (
-                    <ToggleButton
-                      key={u.id}
-                      value={u.id}
-                      sx={{
-                        flex: '1 1 30%', textTransform: 'none', color: theme.text,
-                        borderColor: theme.border,
-                        '&.Mui-selected': { bgcolor: theme.accent + '25', color: theme.text, borderColor: theme.accent },
-                      }}
-                    >
-                      {u.label}
-                    </ToggleButton>
-                  ))}
-                </ToggleButtonGroup>
-                <Typography sx={{ fontSize: 12, color: theme.textSec, mt: 1 }}>
-                  {UI_STYLES.find((u) => u.id === uiStyle)?.desc}
-                </Typography>
-
-                <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 1 }}>
-                  Вид чатов
-                </Typography>
-                <ToggleButtonGroup
-                  exclusive
-                  fullWidth
-                  size="small"
-                  value={chatShape}
-                  onChange={(_, v) => v && setChatShape(v as ChatShape)}
-                  sx={{ flexWrap: 'wrap', gap: 0.5 }}
-                >
-                  {CHAT_SHAPES.map((d) => (
-                    <ToggleButton
-                      key={d.id}
-                      value={d.id}
-                      sx={{
-                        // Превью формы карточки прямо на кнопке.
-                        borderRadius: `${d.radius}px !important`,
-                        flex: '1 1 30%', textTransform: 'none', color: theme.text,
-                        borderColor: theme.border,
-                        '&.Mui-selected': { bgcolor: theme.accent + '25', color: theme.text, borderColor: theme.accent },
-                      }}
-                    >
-                      {d.label}
-                    </ToggleButton>
-                  ))}
-                </ToggleButtonGroup>
-                <Typography sx={{ fontSize: 12, color: theme.textSec, mt: 1 }}>
-                  {CHAT_SHAPES.find((d) => d.id === chatShape)?.desc}
-                </Typography>
-                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 1.5, pr: 0.5 }}>
-                  <Box sx={{ minWidth: 0, pr: 1 }}>
-                    <Typography sx={{ color: theme.text, fontSize: 14 }}>Обводка карточек</Typography>
-                    <Typography sx={{ color: theme.textSec, fontSize: 11 }}>
-                      Выключите, чтобы убрать рамку вокруг чатов совсем
-                    </Typography>
-                  </Box>
-                  <Switch checked={chatBorder} onChange={(_, checked) => setChatBorder(checked)} />
-                </Stack>
-                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 0.5, pr: 0.5 }}>
-                  <Box sx={{ minWidth: 0, pr: 1 }}>
-                    <Typography sx={{ color: theme.text, fontSize: 14 }}>Заливка карточек</Typography>
-                    <Typography sx={{ color: theme.textSec, fontSize: 11 }}>
-                      Выключите — строка станет простой полосой во всю ширину
-                    </Typography>
-                  </Box>
-                  <Switch checked={chatFill} onChange={(_, checked) => setChatFill(checked)} />
-                </Stack>
-                <Alert severity="info" sx={{ mt: 1.5, fontSize: 12 }}>
-                  Изменения применяются сразу и работают поверх любой темы.
-                </Alert>
-              </AccordionDetails>
-            </Accordion>
 
             <Accordion sx={sectionSx} disableGutters>
               <AccordionSummary expandIcon={<ExpandMore sx={{ color: theme.textSec }} />}>
-                <AutoAwesome sx={{ mr: 1, color: theme.accent }} />
-                <Typography sx={{ fontWeight: 600 }}>Анимации</Typography>
+                <Language sx={{ mr: 1, color: theme.accent }} />
+                <Typography sx={{ fontWeight: 600 }}>Язык интерфейса</Typography>
               </AccordionSummary>
               <AccordionDetails>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                  <Box minWidth={0}>
-                    <Typography sx={{ fontSize: 14 }}>Анимации интерфейса</Typography>
-                    <Typography sx={{ fontSize: 12, color: theme.textSec }}>
-                      Плавные микровзаимодействия в стиле Apple
-                    </Typography>
-                  </Box>
-                  <Switch checked={allAnimsOn} onChange={(e) => setAllAnims(e.target.checked)} />
-                </Box>
-                <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 1 }}>
-                  Выключите только те, которые не нравятся, — остальные продолжат работать.
-                </Typography>
-                {ANIM_GROUPS.map((g) => (
-                  <RowToggle
-                    key={g.key}
-                    label={`${g.emoji} ${g.label}`}
-                    hint={g.desc}
-                    checked={animEnabled[g.key]}
-                    onChange={(v) => setAnim(g.key, v)}
-                  />
-                ))}
-                <Alert severity="info" sx={{ mt: 1, fontSize: 12 }}>
-                  Если в системе включен режим Reduce Motion, все анимации автоматически отключаются.
-                </Alert>
-              </AccordionDetails>
-            </Accordion>
-
-            <Accordion sx={sectionSx} disableGutters>
-              <AccordionSummary expandIcon={<ExpandMore sx={{ color: theme.textSec }} />}>
-                <Brightness6 sx={{ mr: 1, color: theme.accent }} />
-                <Typography sx={{ fontWeight: 600 }}>Внешний вид</Typography>
-              </AccordionSummary>
-              <AccordionDetails>
-                <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Яркость</Typography>
-                <Slider min={0.5} max={1.5} step={0.05} value={s.brightness}
-                  onChange={(_, v) => s.set('brightness', Array.isArray(v) ? v[0] : v)}
-                  valueLabelDisplay="auto" valueLabelFormat={(v) => `${Math.round(v * 100)}%`} />
-                <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <TextFields fontSize="small" /> Масштаб текста
-                </Typography>
-                <Slider min={0.8} max={1.6} step={0.05} value={s.textScale}
-                  onChange={(_, v) => s.set('textScale', Array.isArray(v) ? v[0] : v)}
-                  valueLabelDisplay="auto" valueLabelFormat={(v) => `${Math.round(v * 100)}%`} />
-                <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <TextFields fontSize="small" /> Шрифт всего приложения
-                </Typography>
-                <FontPicker
-                  value={s.globalFontFamily}
-                  onChange={(value) => s.set('globalFontFamily', value)}
-                  baseOptions={APP_FONT_OPTIONS}
-                  manage
-                  ariaLabel="Шрифт всего приложения"
-                  hint="Меняет весь текст: кнопки, меню, заголовки, настройки и сообщения. Применяется сразу и сохраняется. Выбранный шрифт имеет приоритет над шрифтами чатов; «По умолчанию» возвращает индивидуальные настройки."
-                />
                 <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
                   <Language fontSize="small" /> Язык интерфейса
                 </Typography>
@@ -347,153 +140,6 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
               </AccordionDetails>
             </Accordion>
 
-            <Accordion sx={sectionSx} disableGutters>
-              <AccordionSummary expandIcon={<ExpandMore sx={{ color: theme.textSec }} />}>
-                <ViewSidebar sx={{ mr: 1, color: theme.accent }} />
-                <Typography sx={{ fontWeight: 600 }}>Макет</Typography>
-              </AccordionSummary>
-              <AccordionDetails>
-                <Stack spacing={2}>
-                  <Button variant="contained" onClick={() => setDesignerOpen(true)}
-                    sx={{ bgcolor: theme.accent, textTransform: 'none', borderRadius: 2,
-                          '&:hover': { bgcolor: theme.accent } }}>
-                    🎨 Открыть визуальный конструктор
-                  </Button>
-
-                  <Box>
-                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Сторона панели чатов (десктоп)</Typography>
-                    <ToggleButtonGroup
-                      exclusive size="small" fullWidth
-                      value={s.layout.sidebarSide}
-                      onChange={(_, v) => v && s.setLayout('sidebarSide', v as SidePos)}
-                    >
-                      <ToggleButton value="left">Слева</ToggleButton>
-                      <ToggleButton value="right">Справа</ToggleButton>
-                      <ToggleButton value="top">Сверху</ToggleButton>
-                      <ToggleButton value="bottom">Снизу</ToggleButton>
-                    </ToggleButtonGroup>
-                  </Box>
-
-                  <Box>
-                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
-                      Ширина панели чатов — {effectiveSidebarWidth}px
-                    </Typography>
-                    <Slider min={200} max={sidebarWidthMax} step={5} value={Math.min(s.layout.sidebarWidth, sidebarWidthMax)}
-                      onChange={(_, v) => s.setLayout('sidebarWidth', Array.isArray(v) ? v[0] : v)} />
-                  </Box>
-
-                  <Box>
-                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Нижняя навигация (мобильный)</Typography>
-                    <ToggleButtonGroup exclusive size="small" fullWidth
-                      value={s.layout.mobileNavPos}
-                      onChange={(_, v) => v && s.setLayout('mobileNavPos', v as VertPos)}>
-                      <ToggleButton value="bottom">Снизу</ToggleButton>
-                      <ToggleButton value="top">Сверху</ToggleButton>
-                    </ToggleButtonGroup>
-                  </Box>
-
-                  <Box>
-                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Плеер</Typography>
-                    <ToggleButtonGroup exclusive size="small" fullWidth
-                      value={s.layout.playerPos}
-                       onChange={(_, v) => v && s.setLayout('playerPos', v as PlayerPos)}>
-                      <ToggleButton value="bottom">Снизу</ToggleButton>
-                      <ToggleButton value="top">Сверху</ToggleButton>
-                       <ToggleButton value="left">Слева</ToggleButton>
-                       <ToggleButton value="right">Справа</ToggleButton>
-                    </ToggleButtonGroup>
-                  </Box>
-
-                  <Box>
-                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Шапка чата</Typography>
-                    <ToggleButtonGroup exclusive size="small" fullWidth
-                      value={s.layout.chatHeaderPos}
-                      onChange={(_, v) => v && s.setLayout('chatHeaderPos', v as VertPos)}>
-                      <ToggleButton value="top">Сверху</ToggleButton>
-                      <ToggleButton value="bottom">Снизу</ToggleButton>
-                    </ToggleButtonGroup>
-                  </Box>
-
-                  <Box>
-                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Поле ввода чата</Typography>
-                    <ToggleButtonGroup exclusive size="small" fullWidth
-                      value={s.layout.chatInputPos}
-                      onChange={(_, v) => v && s.setLayout('chatInputPos', v as VertPos)}>
-                      <ToggleButton value="bottom">Снизу</ToggleButton>
-                      <ToggleButton value="top">Сверху</ToggleButton>
-                    </ToggleButtonGroup>
-                  </Box>
-
-                  <Box>
-                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Плотность интерфейса</Typography>
-                    <ToggleButtonGroup exclusive size="small" fullWidth
-                      value={s.layout.density}
-                      onChange={(_, v) => v && s.setLayout('density', v as Density)}>
-                      <ToggleButton value="compact">Компактно</ToggleButton>
-                      <ToggleButton value="cozy">Обычно</ToggleButton>
-                      <ToggleButton value="roomy">Просторно</ToggleButton>
-                    </ToggleButtonGroup>
-                  </Box>
-
-                  <Box>
-                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
-                      Скругление углов окна чата и панелей — {s.layout.radius}px
-                    </Typography>
-                    <Slider min={0} max={28} step={1} value={s.layout.radius}
-                      onChange={(_, v) => s.setLayout('radius', Array.isArray(v) ? v[0] : v)} />
-                  </Box>
-
-                  <Box>
-                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
-                      Скругление пузырей сообщений — {s.layout.bubbleRadius}px
-                    </Typography>
-                    <Slider min={4} max={30} step={1} value={s.layout.bubbleRadius}
-                      onChange={(_, v) => s.setLayout('bubbleRadius', Array.isArray(v) ? v[0] : v)} />
-                    <Typography sx={{ fontSize: 11, color: theme.textSec }}>
-                      Маленькие значения выглядят строже, большие — мягче и дружелюбнее.
-                    </Typography>
-                  </Box>
-
-                  <Box>
-                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
-                      Пузыри сообщений по умолчанию для всех чатов
-                    </Typography>
-                    <BubbleSettingsControls value={{ enabled: s.layout.bubbleEnabled ?? true, maxWidth: s.layout.messageMaxWidth, textSize: s.layout.bubbleTextSize ?? 15, padding: s.layout.bubblePadding ?? 6 }} onChange={patch => {
-                      if (patch.enabled !== undefined) s.setLayout('bubbleEnabled', patch.enabled);
-                      if (patch.maxWidth !== undefined) s.setLayout('messageMaxWidth', patch.maxWidth);
-                      if (patch.textSize !== undefined) s.setLayout('bubbleTextSize', patch.textSize);
-                      if (patch.padding !== undefined) s.setLayout('bubblePadding', patch.padding);
-                    }} />
-                    <Typography sx={{ fontSize: 11, color: theme.textSec }}>
-                      Применяются к чатам без собственных настроек. Для отдельного чата: ⋮ → Настройки отображения.
-                    </Typography>
-                  </Box>
-
-                  <Box>
-                    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
-                      Ширина боковой панели — {effectiveSidebarWidth}px
-                    </Typography>
-                    <Slider min={200} max={sidebarWidthMax} step={5} value={Math.min(s.layout.sidebarWidth, sidebarWidthMax)}
-                      onChange={(_, v) => s.setLayout('sidebarWidth', Array.isArray(v) ? v[0] : v)} />
-                  </Box>
-
-                  <RowToggle label="Показывать вкладки (Диалоги / Архив / Группы)"
-                    checked={s.layout.showTabs}
-                    onChange={(v) => s.setLayout('showTabs', v)} />
-                  <RowToggle label="Показывать аватары в списке чатов"
-                    checked={s.layout.showAvatarsInList}
-                    onChange={(v) => s.setLayout('showAvatarsInList', v)} />
-
-                  <Alert severity="info" sx={{ fontSize: 12 }}>
-                    Панель чатов можно также перетаскивать за правый край мышью — ширина сохранится.
-                  </Alert>
-                  <Button variant="outlined" startIcon={<RestartAlt />}
-                    onClick={() => s.resetLayout()}>
-                    Сбросить макет по умолчанию
-                  </Button>
-                </Stack>
-              </AccordionDetails>
-            </Accordion>
 
             <Accordion sx={sectionSx} disableGutters>
               <AccordionSummary expandIcon={<ExpandMore sx={{ color: theme.textSec }} />}>
@@ -613,6 +259,8 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
 
           <Box sx={{ px: 2, pb: 2 }}>
             <Typography sx={{ fontSize: 12, color: theme.textSec }}>
+              Обои, звук уведомлений по умолчанию, иконки и стиль, анимации, внешний вид и макет
+              перенесены в редактор тем (🎨 в сайдбаре) — теперь они применяются вместе с темой.
               Индивидуальные звуки уведомлений настраиваются в меню чата (три точки в шапке → «🔔 Уведомления чата»).
             </Typography>
           </Box>
@@ -622,9 +270,6 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
         </DialogActions>
       </Dialog>
       <InviteLinkDialog open={inviteOpen} onClose={() => setInviteOpen(false)} />
-      <LayoutDesignerDialog open={designerOpen} onClose={() => setDesignerOpen(false)} />
-      <WallpaperSettingsDialog open={wallpaperOpen} onClose={() => setWallpaperOpen(false)} />
-      <GlobalSoundSettingsDialog open={soundOpen} onClose={() => setSoundOpen(false)} />
     </>
   );
 }

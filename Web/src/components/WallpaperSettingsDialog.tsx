@@ -20,6 +20,8 @@ import {
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** Всегда редактировать ГЛОБАЛЬНЫЕ обои (для редактора тем), даже если открыт чат. */
+  forceGlobal?: boolean;
 }
 
 /** Читает файл как data URL. */
@@ -62,10 +64,10 @@ function newId(): string {
  * Диалог выбора глобальных обоев (применяются ко всем чатам по умолчанию).
  * Позволяет выбрать стоковые обои или загрузить свои (фото / видео).
  */
-export default function WallpaperSettingsDialog({ open, onClose }: Props) {
+export default function WallpaperSettingsDialog({ open, onClose, forceGlobal }: Props) {
   const theme = useThemeStore((s) => s.theme);
   const activeChatId = useChatStore((s) => s.activeChat?.id);
-  const chatId = activeChatId;
+  const chatId = forceGlobal ? undefined : activeChatId;
   const scope = chatId || 'global';
   const prefs = useChatBgPrefsStore();
   const override = chatId ? prefs.perChatOverrides[chatId] : undefined;
