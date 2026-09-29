@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Box, Typography, TextField, Button, InputAdornment, IconButton, ToggleButton, ToggleButtonGroup } from '@mui/material';
+import { Box, Typography, TextField, Button, InputAdornment, IconButton } from '@mui/material';
 import { ContentCopy } from '@mui/icons-material';
 import { useThemeStore, THEMES, CUSTOM_THEME_ID_START, Theme, themeToLink, themeFromLink, snapshotThemeSettings } from '../store/themeStore';
 import { aiApi } from '../services/botsApi';
@@ -292,17 +292,18 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
   // Прокручиваемая середина между закреплённой шапкой и кнопками.
   const plateBody: React.CSSProperties = {
     flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden',
-    padding: '0 20px 20px', boxSizing: 'border-box',
+    padding: '18px 20px 20px', boxSizing: 'border-box',
   };
   const plateFooter: React.CSSProperties = {
-    flexShrink: 0, display: 'flex', gap: 10, justifyContent: 'flex-end',
-    flexWrap: 'wrap', padding: '14px 20px',
+    flexShrink: 0, display: 'flex', gap: 10, justifyContent: 'space-between',
+    alignItems: 'center', flexWrap: 'wrap', padding: '12px 20px',
     borderTop: '1px solid ' + theme.border,
     background: 'rgba(0,0,0,0.18)',
   };
   const sectionLabel: React.CSSProperties = {
     fontSize: 11, opacity: 0.55, textTransform: 'uppercase',
-    letterSpacing: '0.06em', marginBottom: 8, marginTop: 16, fontWeight: 700,
+    letterSpacing: '0.06em', marginBottom: 10, marginTop: 24, fontWeight: 700,
+    paddingBottom: 7, borderBottom: '1px solid ' + theme.border,
   };
   const inputStyle: React.CSSProperties = {
     width: '100%', padding: '5px 9px', borderRadius: 7,
@@ -313,45 +314,64 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
     padding: '3px 9px', borderRadius: 6, fontSize: 12, cursor: 'pointer', border: '1px solid',
   };
 
-  // ── Вкладки ────────────────────────────────────────────────────────────────
+  // ── Навигация ─────────────────────────────────────────────────────────────
   const TABS: [typeof tab, string][] = [
     ['theme', 'Тема'], ['wallpaper', 'Обои'], ['sound', 'Звук'],
     ['ui', 'Иконки и стиль'], ['anim', 'Анимации'], ['look', 'Внешний вид'], ['layout', 'Макет'],
   ];
-  const tabBar = !isChat ? (
-    <Box sx={{
-      position: 'sticky', top: 0, zIndex: 3, py: 1, mb: 1.5,
-      mx: '-20px', px: 2, background: 'rgba(0,0,0,0.3)',
-      backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-      borderBottom: `1px solid ${theme.border}`,
-    }}>
-      <ToggleButtonGroup exclusive size="small" value={tab}
-        onChange={(_, v) => v && setTab(v)}
-        sx={{ flexWrap: 'wrap', gap: 0.5 }}>
-        {TABS.map(([id, label]) => (
-          <ToggleButton key={id} value={id}
-            sx={{
-              textTransform: 'none', color: theme.text, borderColor: theme.border,
-              '&.Mui-selected': { bgcolor: theme.accent + '28', color: theme.accent, borderColor: theme.accent },
-            }}>
-            {label}
-          </ToggleButton>
-        ))}
-      </ToggleButtonGroup>
-      <div style={{ fontSize: 11, opacity: 0.65, marginTop: 6 }}>
-        Обои, звук, иконки, анимации, внешний вид и макет — настройки этой темы.
-        Они хранятся отдельно для каждой темы: переключил тему — вернулись её
-        собственные значения, а правки остались в той теме, где их сделали.
-      </div>
-    </Box>
-  ) : null;
+  // Разделы — вертикальным списком слева, содержимое — справа. Горизонтальная
+  // полоса из семи кнопок в 86vh выглядела сплошной кашей: в ней не найти
+  // нужный раздел, а где ты сейчас — тоже не видно.
+  const editorLayout: React.CSSProperties = { display: 'flex', gap: 18, alignItems: 'flex-start' };
+  const navRail: React.CSSProperties = {
+    width: 188, flexShrink: 0, alignSelf: 'stretch', display: 'flex', flexDirection: 'column',
+    gap: 2, paddingRight: 16, borderRight: '1px solid ' + theme.border,
+  };
+  const navItem: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 10px',
+    borderRadius: 9, border: 'none', background: 'transparent', color: theme.textSec,
+    fontSize: 13.5, textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
+  };
+  const editorContent: React.CSSProperties = { flex: 1, minWidth: 0 };
+  const nav = (
+    <nav style={navRail}>
+      {(!isChat ? TABS : ([['theme', 'Тема']] as [typeof tab, string][])).map(([id, label]) => (
+        <button
+          key={id}
+          onClick={() => setTab(id)}
+          style={{
+            ...navItem,
+            ...(tab === id ? { background: theme.accent + '1F', color: theme.accent, fontWeight: 600 } : {}),
+          }}
+        >
+          <span style={{
+            width: 3, height: 14, borderRadius: 2, flexShrink: 0,
+            background: tab === id ? theme.accent : 'transparent',
+          }} />
+          {label}
+        </button>
+      ))}
+      {!isChat && (
+        <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.5, marginTop: 'auto', paddingTop: 16, paddingRight: 2 }}>
+          Обои, звук, иконки, анимации, внешний вид и макет — настройки этой
+          темы. У каждой темы они свои.
+        </div>
+      )}
+    </nav>
+  );
 
   const content = (
     <div style={overlay} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={modal}>
         {/* Шапка */}
-        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '16px 20px', borderBottom: '1px solid ' + theme.border }}>
-          <h2 style={{ margin: 0, fontSize: 17 }}>🎨 Редактор темы</h2>
+        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 20px', borderBottom: '1px solid ' + theme.border }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>🎨 Редактор темы</h2>
+            {/* Какая тема редактируется — видно всегда, а не только в поле внизу. */}
+            <div style={{ fontSize: 11.5, opacity: 0.6, marginTop: 3 }}>
+              {isChat ? 'Тема чата' : `Тема: ${draft.name}`}
+            </div>
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {headerExtra}
             {onGoChats && (
@@ -368,7 +388,9 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
         </div>
 
         <div style={plateBody}>
-         {tabBar}
+         <div style={editorLayout}>
+         {nav}
+         <div style={editorContent}>
          {tab === 'theme' && (
          <>
          {/* Мои сохранённые темы */}
@@ -424,8 +446,11 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
          {/* Импорт/экспорт темы — только для общей темы: в чате это способ
     перенести ссылку, а не свойство самого чата. */}
 {!isChat && (
-           <div style={{ marginBottom: 14 }}>
-             <div style={sectionLabel}>Ссылка на тему</div>
+           <details style={{ marginBottom: 14, padding: '10px 12px', border: `1px solid ${theme.border}`, borderRadius: 10 }}>
+             <summary style={{ cursor: 'pointer', fontSize: 12.5, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: theme.textSec }}>
+               Ссылка на тему
+             </summary>
+             <div style={{ marginTop: 10 }}>
              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                <Button size="small" variant="outlined" onClick={generateLink} sx={{ color: theme.accent, borderColor: theme.accent + '50', textTransform: 'none' }}>Скопировать ссылку текущей</Button>
                <Button size="small" variant="text" onClick={importLink} sx={{ color: theme.textSec, textTransform: 'none' }}>Импорт по ссылке</Button>
@@ -440,7 +465,8 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
                  InputProps={{ endAdornment: <InputAdornment position="end"><IconButton size="small" onClick={() => { navigator.clipboard.writeText(themeLink); }} sx={{ color: theme.textSec }}><ContentCopy sx={{ fontSize: 16 }} /></IconButton></InputAdornment> } }
                />
              )}
-           </div>
+             </div>
+           </details>
 )}
 
 {/* Название */}
@@ -454,14 +480,16 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
         {/* ИИ-генератор темы — генерирует палитру всего приложения, чату она
             ни к чему, поэтому в режиме чата блока нет. */}
         {!isChat && (
-        <div style={{
-          marginBottom: 16, padding: 12, borderRadius: 10,
-          border: '1px solid ' + theme.accent + '44',
-          background: `linear-gradient(135deg, ${theme.accent}10, transparent)`,
+        <details style={{
+          marginBottom: 18, padding: '10px 12px', borderRadius: 10,
+          border: '1px solid ' + theme.accent + '33',
+          background: `linear-gradient(135deg, ${theme.accent}0D, transparent)`,
         }}>
-          <div style={{ ...sectionLabel, marginTop: 0, color: theme.accent, opacity: 0.9, display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
-            ✨ Генерация темы ИИ (10 <VpIcon size={13} /> / тема)
-          </div>
+          <summary style={{ cursor: 'pointer', fontSize: 13, fontWeight: 600, color: theme.accent }}>
+            ✨ Сгенерировать тему по описанию
+            <span style={{ opacity: 0.6, fontWeight: 400, fontSize: 11.5, marginLeft: 6 }}>10 <VpIcon size={12} /> / тема</span>
+          </summary>
+          <div style={{ marginTop: 10 }}>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <input
               value={aiPrompt}
@@ -491,7 +519,8 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
           <div style={{ fontSize: 11, opacity: 0.55, marginTop: 6 }}>
             Меняет всю палитру, градиенты и тени. После генерации можно доработать вручную.
           </div>
-        </div>
+          </div>
+        </details>
         )}
 
         {/* Основная сетка */}
@@ -780,10 +809,15 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
             {tab === 'layout' && <LayoutPanel />}
           </ThemeSettingsLayer>
         )}
+         </div>
+         </div>
         </div>
 
         {/* Кнопки */}
         <div style={plateFooter}>
+          <div style={{ fontSize: 11.5, opacity: 0.55, marginRight: 'auto' }}>
+            Правки видны сразу. «Сохранить и применить» записывает их в эту тему.
+          </div>
           <button
             onClick={() => setDraft(d => ({ ...d, id: makeId(), name: d.name + ' (копия)' }))}
             style={{
