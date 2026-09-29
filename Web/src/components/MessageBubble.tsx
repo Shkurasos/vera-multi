@@ -498,6 +498,19 @@ function MessageBubble({
   const setHoveredId = useMessageHoverStore((s) => s.setHoveredId);
   const hoverSelf = () => setHoveredId(message.id);
   const hoverNone = () => setHoveredId(null);
+  // Панель действий живёт отдельно от ховера: ховер поднимает пузырь на любое
+  // наведение, а панель открывается только из уголка (мышь) или по долгому
+  // тапу (тач). Стор хранит id открытой панели — в чате максимум одна такая,
+  // а сброс ховера (setHoveredId(null)) её попутно закрывает.
+  const actionsOpen = useMessageHoverStore((s) => s.actionsId === message.id);
+  const storeOpenActions = useMessageHoverStore((s) => s.openActions);
+  const openActions = () => storeOpenActions(message.id);
+  // Прямоугольник сообщения снимается РОВНО один раз на вход указателя и дальше
+  // только читается из памяти. Повторный getBoundingClientRect на каждом
+  // pointermove (как в сломанной версии) читал уже сдвинутую подъёмом рамку:
+  // тест уголка переворачивался туда-сюда, панель мигала сама по себе,
+  // сообщение дрожало, а постоянные layout-пересчёты съедали FPS.
+  const bubbleRectRef = useRef<DOMRect | null>(null);
 
   const [showActions, setShowActions] = useState(false);
   const [openReply, setOpenReply] = useState(false);
@@ -622,6 +635,18 @@ function MessageBubble({
     setActionsPlacement(spaceBelow < actionBarHeight + gap && spaceAbove > spaceBelow ? 'above' : 'below');
   };
 
+  // Зона открытия — 72×32 у нижнего угла: слева у чужих сообщений, справа у
+  // своих, то есть там же, где и выезжает панель. Читает только сохранённый
+  // прямоугольник и не трогает DOM — открытие панели не может изменить
+  // собственный результат проверки и вызвать мигание.
+  const inActionsCorner = (clientX: number, clientY: number) => {
+    const rect = bubbleRectRef.current;
+    if (!rect) return false;
+    const fromBottom = rect.bottom - clientY;
+    const fromSide = isOwnSide ? rect.right - clientX : clientX - rect.left;
+    return fromBottom <= 32 && fromSide >= 0 && fromSide <= 72;
+  };
+
 
   const bubbleTextColor = isOwn ? (theme.bubbleOwnText || '#fff') : (theme.bubbleOtherText || theme.text);
 
@@ -706,6 +731,21 @@ function MessageBubble({
   const finalBubbleBackground = (equippedBubbleSx as any).background
     || (!bubbleEnabled ? 'transparent' : (isOwn ? (bubbleOwnGradient || bgBubbleOwn) : bgBubbleOther));
   const bubbleNeedsBackdropBlur = bubbleEnabled && isTranslucentColor(finalBubbleBackground);
+  // Фон панели действий — краска самого пузыря, чтобы строка не читалась
+  // отдельной плашкой чужого цвета. Градиент не переносим: у панели своя
+  // геометрия, и на шве было бы видно, как градиент начинается заново, — для
+  // градиентных тем берём базовый цвет пузыря из палитры темы. Пузыри выключены
+  // — остаётся прежняя нейтральная плашка.
+  const panelBackground = !bubbleEnabled
+    ? theme.bgHeader
+    : finalBubbleBackground.includes('gradient')
+      ? (isOwn ? bgBubbleOwn : bgBubbleOther)
+      : finalBubbleBackground;
+  // Скругление панели: свой радиус скина (магазин/авторы), иначе пользовательский
+  // радиус из настройки вёрстки.
+  const panelRadius = typeof (equippedBubbleSx as any).borderRadius === 'number'
+    ? `${(equippedBubbleSx as any).borderRadius}px`
+    : 'var(--vera-bubble-radius, 16px)';
   // ── Цвет времени и «(изменено)» ──────────────────────────────────────
   // Приоритет: настройка темы (персональной темы чата, затем глобальной).
   // Если цвет не задан — как раньше, цвет текста пузыря (с учётом стиля из магазина).
@@ -805,7 +845,20 @@ function MessageBubble({
 
       <Box
         onPointerEnter={(e) => {
-          if (e.pointerType === 'mouse') { hoverSelf(); updateActionsPlacement(e.currentTarget); }
+          if (e.pointerType !== 'mouse') return;
+          // Единственный замер геометрии на весь цикл ховера.
+          bubbleRectRef.current = e.currentTarget.getBoundingClientRect();
+          hoverSelf();
+          updateActionsPlacement(e.currentTarget);
+          // Панель действий открывается, только если вход пришёлся в уголок.
+          if (inActionsCorner(e.clientX, e.clientY)) openActions();
+        }}
+        onPointerMove={(e) => {
+          if (e.pointerType !== 'mouse' || actionsOpen) return;
+          // Сравниваем координаты с прямоугольником, снятым на вход, — никаких
+          // обращений к DOM. Из-за них набор стилей при открытии панели
+          // «переворачивал» проверку, панель мигала, и сообщение дрожало.
+          if (inActionsCorner(e.clientX, e.clientY)) openActions();
         }}
         onTouchStart={(e) => {
           cancelHold();
@@ -821,6 +874,7 @@ function MessageBubble({
             suppressTouchClick.current = true;
             updateActionsPlacement(target);
             hoverSelf();
+            openActions();
           }, 550);
         }}
         onTouchMove={(e) => {
@@ -840,7 +894,7 @@ function MessageBubble({
           e.preventDefault();
           e.stopPropagation();
         }}
-        onPointerLeave={(e) => { if (e.pointerType === 'mouse') hoverNone(); }}
+        onPointerLeave={(e) => { if (e.pointerType === 'mouse') { hoverNone(); bubbleRectRef.current = null; } }}
         sx={{
           // Редактор не должен наследовать пользовательское ограничение ширины
           // обычных пузырей (например, 35%): на узком окне оно делает поле
@@ -875,6 +929,7 @@ function MessageBubble({
               suppressTouchClick.current = true;
               updateActionsPlacement(e.currentTarget);
               hoverSelf();
+              openActions();
             } else if (e.button === 2) setContextMenu({ x: e.clientX, y: e.clientY });
           }}
           onPointerDown={(e) => { if (e.pointerType === 'mouse') touchOrigin.current = null; }}
@@ -1125,17 +1180,19 @@ function MessageBubble({
         )}
 
         {actionError && <Typography role="alert" color="error" sx={{ fontSize: 13, mt: 0.5 }}>{actionError}</Typography>}
-        {/* Панель монтируется ТОЛЬКО при наведении. Раньше она висела в DOM
-            скрытой для каждого сообщения: 7 IconButton + 7 Tooltip на пузырь,
-            то есть ~2800 лишних узлов на 200 сообщений — и они участвовали в
-            каждом цикле reconcile. Раз позиционируется относительно родителя,
-            порядок в DOM и логика ховера не меняются. */}
-        {isHovered && (
+        {/* Панель монтируется ТОЛЬКО когда открыта (вход в уголок пузыря или
+            долгий тап): раньше она висела в DOM скрытой для каждого сообщения —
+            7 IconButton + 7 Tooltip на пузырь, то есть ~2800 лишних узлов на
+            200 сообщений — и участвовала в каждом цикле reconcile. Раз
+            позиционируется относительно родителя, порядок в DOM не меняется. */}
+        {actionsOpen && (
         <Box
           onClick={e => e.stopPropagation()}
           onPointerDown={e => e.stopPropagation()}
-          onMouseEnter={(e) => { hoverSelf(); updateActionsPlacement(e.currentTarget.parentElement as HTMLElement); }}
-          onMouseLeave={hoverNone}
+          // Панель — потомок строки сообщения, поэтому pointerleave на неё не
+          // срабатывает при переходе курсора с пузыря на кнопки: ховер и панель
+          // держит сама строка, размонтирования на шве нет.
+          onMouseEnter={(e) => { openActions(); updateActionsPlacement(e.currentTarget.parentElement as HTMLElement); }}
           sx={{
           display: 'flex', alignItems: 'center', gap: 0.5,
           justifyContent: isOwnSide ? 'flex-end' : 'flex-start',
@@ -1151,13 +1208,10 @@ function MessageBubble({
           touchAction: 'pan-x',
           opacity: isHovered ? 1 : 0, transition: 'opacity 180ms',
           p: 0.25,
-          // Панель под пузырём. Держим её вплотную (top:100%) и с невидимой
-          // «зоной наведения» сверху через padding — чтобы курсор не терял
-          // hover при переходе с пузыря на панель. Плюс собственные mouse-
-          // хендлеры удерживают isHovered, пока курсор над панелью.
-          // top немного «залезает» внутрь родителя, а pt возвращает визуальный
-          // отступ — так между пузырём и панелью нет разрыва, на котором курсор
-          // покидал бы родительский Box и mouseleave гасил панель.
+          // Панель под пузырём и ни на что не давит: position:absolute держит
+          // раскладку ленты прежней, а невидимая «зона наведения» сверху (нахлёст
+          // 8px + pt) нужна, чтобы курсор не терял ховер на переходе с пузыря на
+          // кнопки: строка не покидается, пока указатель внутри сообщения.
           position: 'absolute',
           top: actionsPlacement === 'below' ? 'calc(100% - 8px)' : 'auto',
           bottom: actionsPlacement === 'above' ? 'calc(100% - 8px)' : 'auto',
@@ -1165,10 +1219,15 @@ function MessageBubble({
           right: isOwnSide ? 0 : 'auto',
           pt: actionsPlacement === 'below' ? '12px' : 0,
           pb: actionsPlacement === 'above' ? '12px' : 0,
-          bgcolor: theme.bgHeader,
-          border: `1px solid ${theme.border}`,
-          borderRadius: 2,
-          boxShadow: '0 5px 18px rgba(0,0,0,0.35)',
+          // Строка той же «краски», что и пузырь: без своей рамки, тени и чужого
+          // цвета хедера. Верхние углы квадратные — они уходят в нахлёст под
+          // пузырь и продолжают его прямые стороны, — а нижние повторяют нижние
+          // углы пузыря, поэтому панель читается продолжением сообщения.
+          background: panelBackground,
+          backdropFilter: bubbleNeedsBackdropBlur ? 'blur(18px)' : 'none',
+          border: 'none',
+          boxShadow: 'none',
+          borderRadius: isOwnSide ? `0 0 4px ${panelRadius}` : `0 0 ${panelRadius} 4px`,
           zIndex: 10,
           pointerEvents: 'auto',
         }} className="msg-actions">

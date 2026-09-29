@@ -152,6 +152,55 @@ test('выключенная и отсутствующая персональн�
 });
 
 
+// ── Панель быстрых действий: уголок, шов и стабильный ховер ────────────────────
+
+const bubbleSource = fs.readFileSync(path.join(__dirname, 'src/components/MessageBubble.tsx'), 'utf8');
+
+test('уголок открывает панель без повторных замеров геометрии', () => {
+  // Регрессия: getBoundingClientRect в pointermove читал рамку, уже сдвинутую
+  // подъёмом пузыря, — тест уголка «переворачивался» туда-сюда, панель мигала
+  // сама по себе, сообщение дрожало и лента проседала из-за layout-пересчётов.
+  assert.ok(bubbleSource.includes('onPointerMove={(e) => {'), 'обработчик движения есть');
+  const moveAt = bubbleSource.indexOf('onPointerMove={(e) => {');
+  const handler = bubbleSource.slice(moveAt, bubbleSource.indexOf('}}', moveAt) + 2);
+  assert.ok(!handler.includes('getBoundingClientRect'), 'в pointermove нет обращений к DOM');
+  assert.ok(
+    /bubbleRectRef\.current = e\.currentTarget\.getBoundingClientRect\(\)/.test(bubbleSource),
+    'прямоугольник снимается один раз на вход',
+  );
+  assert.ok(bubbleSource.includes('inActionsCorner('), 'проверка идёт по сохранённому прямоугольнику');
+  assert.ok(bubbleSource.includes('{actionsOpen && ('), 'панель монтируется по своему состоянию, а не по любому ховеру');
+});
+
+test('панель — компактная строчка в цвет пузыря, сообщение не двигается', () => {
+  const start = bubbleSource.indexOf('{actionsOpen && (');
+  const panel = bubbleSource.slice(start, bubbleSource.indexOf('</Box>', start));
+  assert.ok(panel.length > 0, 'кнопки на месте');
+  // Раскладка ленты не меняется: панель висит поверх строки.
+  assert.ok(panel.includes("position: 'absolute'"), 'абсолютное позиционирование');
+  assert.ok(panel.includes("width: 'max-content'"), 'ширина по содержимому, без растяжки в полную ширину');
+  // Шов: фон и скругления — от самого пузыря, своей рамки/тени у панели нет.
+  assert.ok(panel.includes('background: panelBackground'), 'фон панели — фон пузыря');
+  assert.ok(panel.includes("border: 'none'"), 'без собственной рамки');
+  assert.ok(panel.includes("boxShadow: 'none'"), 'без собственной тени');
+  assert.ok(!/bgcolor:\s*theme\.bgHeader/.test(panel), 'не плашка цвета хедера');
+  assert.ok(panel.includes('borderRadius: isOwnSide'), 'нижние углы зеркалят пузырь');
+  assert.ok(panel.includes('4px'), 'хвостик 4px сохранён');
+});
+
+test('скин пузыря остаётся на пузыре', () => {
+  // Скины ломались, когда фон/рамку/тень переносили на внешнюю оболочку:
+  // декоративные слои скина («&::before», background-position, clip/mask)
+  // привязаны к самому пузырю.
+  assert.ok(
+    /isOwnSide \? equippedBubbleSx : mirrorBubble\(equippedBubbleSx\)/.test(bubbleSource),
+    'скин по-прежнему раскидывается по пузырю',
+  );
+  assert.ok(!bubbleSource.includes('splitBubbleSkin'), 'скин не делится на «корпус» и содержимое');
+  assert.ok(!bubbleSource.includes('bubbleShellSx'), 'внешняя оболочка вокруг пузыря не вернулась');
+});
+
+
 // ── Редактор тем: плашка и режим чата ────────────────────────────────────────
 
 const editorSource = fs.readFileSync(path.join(__dirname, 'src/components/ThemeEditor.tsx'), 'utf8');
