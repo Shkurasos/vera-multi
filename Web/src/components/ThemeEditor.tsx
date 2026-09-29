@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Box, Typography, TextField, Button, InputAdornment, IconButton, ToggleButton, ToggleButtonGroup } from '@mui/material';
 import { ContentCopy } from '@mui/icons-material';
 import { useThemeStore, THEMES, CUSTOM_THEME_ID_START, Theme, themeToLink, themeFromLink, snapshotThemeSettings } from '../store/themeStore';
@@ -273,16 +274,16 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
     position: 'fixed', inset: 0, zIndex: 9999,
     background: 'rgba(0,0,0,0.55)',
     backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    display: 'flex', alignItems: 'stretch', justifyContent: 'center',
     padding: 'max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left))',
   };
   const modal: React.CSSProperties = {
     background: theme.sidebarGradient || theme.bgSidebar, color: theme.text,
     backdropFilter: 'blur(22px) saturate(1.35)', WebkitBackdropFilter: 'blur(22px) saturate(1.35)',
     borderRadius: 22, width: '100%',
-    // Открывается по центру экрана, как музыкальный плеер: не на всю высоту,
-    // а карточкой с полями — приложение видно вокруг.
-    maxWidth: 'min(1680px, 100%)', height: '86vh', maxHeight: 'calc(100vh - 16px)',
+    // Плашка на весь экран: маленькие поля по краям, приложение видно вокруг —
+    // так редактор не упирается в панель чатов и не режет половину секций.
+    maxWidth: 'min(1680px, 100%)', height: '100%',
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
     border: '1px solid ' + theme.border,
     boxShadow: '0 28px 80px rgba(0,0,0,0.55)',
@@ -339,7 +340,7 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
     </Box>
   ) : null;
 
-  return (
+  const content = (
     <div style={overlay} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={modal}>
         {/* Шапка */}
@@ -796,4 +797,10 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
       </div>
     </div>
   );
+
+  // Портал в body — обязателен: редактор монтируется внутри сайдбара, а его
+  // корневой Box с backdrop-filter становится containing block для
+  // position:fixed. Без портала оверлей рисовался в панели чатов: узкий и
+  // низкий. С порталом плашка всегда на весь экран, откуда бы её ни открыли.
+  return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
 }

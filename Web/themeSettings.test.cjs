@@ -50,10 +50,14 @@ test('из Настроек убраны перенесённые пункты',
 
 // ── Редактор: по центру, с вкладками ──────────────────────────────────────────
 
-test('редактор открывается по центру экрана', () => {
-  assert.ok(editor.includes("alignItems: 'center'"), 'оверлей центрирует карточку');
-  assert.ok(editor.includes("height: '86vh'"), 'карточка занимает 86vh, а не всю высоту');
-  assert.ok(!editor.includes("alignItems: 'stretch'"), 'полноэкранная «плашка» убрана');
+test('редактор — полноэкранная плашка в портале', () => {
+  // Плашка во всю высоту (как раньше), а не маленькая карточка 86vh.
+  assert.ok(editor.includes("alignItems: 'stretch'"), 'плашка растянута на всю высоту');
+  assert.ok(editor.includes("height: '100%'"), 'плашка во весь экран');
+  assert.ok(editor.includes("maxWidth: 'min(1680px, 100%)'"), 'по ширине — почти весь экран');
+  // Портал в body: иначе backdrop-filter корневого Box сайдбара зажимает
+  // fixed-оверлей рамками панели чатов.
+  assert.ok(/createPortal\(content, document\.body\)/.test(editor), 'оверлей рендерится порталом в body');
 });
 
 test('редактор разбит на вкладки и подключает панели настроек', () => {

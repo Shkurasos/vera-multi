@@ -205,17 +205,21 @@ test('скин пузыря остаётся на пузыре', () => {
 
 const editorSource = fs.readFileSync(path.join(__dirname, 'src/components/ThemeEditor.tsx'), 'utf8');
 
-test('редактор открывается по центру экрана карточкой, как музыка', () => {
-  // Раньше это была плашка во всю высоту (alignItems: stretch + height: 100%).
-  assert.ok(editorSource.includes("alignItems: 'center'"), 'оверлей центрирует карточку');
-  assert.ok(editorSource.includes("height: '86vh'"), 'карточка занимает 86vh и висит по центру');
-  assert.ok(!editorSource.includes("alignItems: 'stretch'"), 'полноэкранная «плашка» убрана');
-  assert.ok(editorSource.includes("maxWidth: 'min(1680px, 100%)'"), 'почти во весь экран по ширине');
+test('редактор — полноэкранная плашка в портале, а не карточка 86vh', () => {
+  // Плашка во всю высоту: маленькие поля, приложение видно по краям.
+  assert.ok(editorSource.includes("alignItems: 'stretch'"), 'плашка растянута на всю высоту');
+  assert.ok(editorSource.includes("height: '100%'"), 'плашка во весь экран');
+  assert.ok(editorSource.includes("maxWidth: 'min(1680px, 100%)'"), 'по ширине — почти весь экран');
   assert.ok(editorSource.includes("borderRadius: 22, width: '100%',"), 'скруглена, но не в край экрана');
   assert.ok(editorSource.includes("backdropFilter: 'blur(22px)"), 'размытие как у нижней навигации');
   assert.ok(editorSource.includes('env(safe-area-inset-top)'), 'отступы учитывают вырез телефона');
   assert.ok(editorSource.includes('plateBody') && editorSource.includes('plateFooter'), 'есть прокручиваемое тело и липкий низ');
   assert.ok(/plateBody[\s\S]{0,200}overflowY:\s*'auto'/.test(editorSource), 'тело прокручивается');
+  // Редактор монтируется внутри сайдбара, а его корневой Box с backdrop-filter
+  // становится containing block для position:fixed — без портала в body плашка
+  // рисуется в панели чатов (узкая и низкая).
+  assert.ok(editorSource.includes('createPortal'), 'оверлей выносится порталом');
+  assert.ok(/createPortal\(content, document\.body\)/.test(editorSource), 'портал именно в body');
 });
 
 test('редактор чата не предлагает то, чего в чате нет', () => {
