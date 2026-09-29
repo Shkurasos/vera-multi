@@ -172,20 +172,24 @@ test('уголок открывает панель без повторных з�
   assert.ok(bubbleSource.includes('{actionsOpen && ('), 'панель монтируется по своему состоянию, а не по любому ховеру');
 });
 
-test('панель — компактная строчка в цвет пузыря, сообщение не двигается', () => {
+test('панель — прозрачная стеклянная плашка со скруглением, сообщение не двигается', () => {
   const start = bubbleSource.indexOf('{actionsOpen && (');
   const panel = bubbleSource.slice(start, bubbleSource.indexOf('</Box>', start));
   assert.ok(panel.length > 0, 'кнопки на месте');
   // Раскладка ленты не меняется: панель висит поверх строки.
   assert.ok(panel.includes("position: 'absolute'"), 'абсолютное позиционирование');
   assert.ok(panel.includes("width: 'max-content'"), 'ширина по содержимому, без растяжки в полную ширину');
-  // Шов: фон и скругления — от самого пузыря, своей рамки/тени у панели нет.
-  assert.ok(panel.includes('background: panelBackground'), 'фон панели — фон пузыря');
-  assert.ok(panel.includes("border: 'none'"), 'без собственной рамки');
-  assert.ok(panel.includes("boxShadow: 'none'"), 'без собственной тени');
-  assert.ok(!/bgcolor:\s*theme\.bgHeader/.test(panel), 'не плашка цвета хедера');
-  assert.ok(panel.includes('borderRadius: isOwnSide'), 'нижние углы зеркалят пузырь');
-  assert.ok(panel.includes('4px'), 'хвостик 4px сохранён');
+  // Прозрачная «стеклянная» плашка: подложка отдельным слоем под кнопками.
+  assert.ok(panel.includes("background: 'transparent'"), 'сама панель прозрачная');
+  assert.ok(panel.includes('&::before'), 'видимая подложка — отдельный слой');
+  assert.ok(panel.includes("isolation: 'isolate'"), 'слой не уезжает под фон чата');
+  assert.ok(/backdropFilter: 'blur\(/.test(panel), 'подложка с размытием');
+  assert.ok(panel.includes('borderRadius: 14'), 'скругление со всех сторон');
+  assert.ok(!panel.includes('panelBackground'), 'цвет пузыря в панель не переносится');
+  // Мостик наведения: панель чуть заходит на пузырь и имеет невидимый верхний
+  // отступ — курсор не теряет ховер на переходе с пузыря на кнопки.
+  assert.ok(panel.includes("calc(100% - 2px)"), 'панель примыкает к пузырю');
+  assert.ok(panel.includes("pt: actionsPlacement === 'below' ? '12px' : 0"), 'прозрачный мостик наведения');
 });
 
 test('скин пузыря остаётся на пузыре', () => {

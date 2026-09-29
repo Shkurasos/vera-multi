@@ -731,21 +731,9 @@ function MessageBubble({
   const finalBubbleBackground = (equippedBubbleSx as any).background
     || (!bubbleEnabled ? 'transparent' : (isOwn ? (bubbleOwnGradient || bgBubbleOwn) : bgBubbleOther));
   const bubbleNeedsBackdropBlur = bubbleEnabled && isTranslucentColor(finalBubbleBackground);
-  // Фон панели действий — краска самого пузыря, чтобы строка не читалась
-  // отдельной плашкой чужого цвета. Градиент не переносим: у панели своя
-  // геометрия, и на шве было бы видно, как градиент начинается заново, — для
-  // градиентных тем берём базовый цвет пузыря из палитры темы. Пузыри выключены
-  // — остаётся прежняя нейтральная плашка.
-  const panelBackground = !bubbleEnabled
-    ? theme.bgHeader
-    : finalBubbleBackground.includes('gradient')
-      ? (isOwn ? bgBubbleOwn : bgBubbleOther)
-      : finalBubbleBackground;
-  // Скругление панели: свой радиус скина (магазин/авторы), иначе пользовательский
-  // радиус из настройки вёрстки.
-  const panelRadius = typeof (equippedBubbleSx as any).borderRadius === 'number'
-    ? `${(equippedBubbleSx as any).borderRadius}px`
-    : 'var(--vera-bubble-radius, 16px)';
+  // Панель действий больше не красится в цвет пузыря: это отдельная прозрачная
+  // «стеклянная» плашка (см. sx панели), поэтому скины и градиенты на неё не
+  // влияют вообще.
   // ── Цвет времени и «(изменено)» ──────────────────────────────────────
   // Приоритет: настройка темы (персональной темы чата, затем глобальной).
   // Если цвет не задан — как раньше, цвет текста пузыря (с учётом стиля из магазина).
@@ -1209,25 +1197,39 @@ function MessageBubble({
           opacity: isHovered ? 1 : 0, transition: 'opacity 180ms',
           p: 0.25,
           // Панель под пузырём и ни на что не давит: position:absolute держит
-          // раскладку ленты прежней, а невидимая «зона наведения» сверху (нахлёст
-          // 8px + pt) нужна, чтобы курсор не терял ховер на переходе с пузыря на
-          // кнопки: строка не покидается, пока указатель внутри сообщения.
+          // раскладку ленты прежней. Видимую плашку рисует ::before, а сама
+          // панель сверху остаётся прозрачной полосой-мостиком — на ней курсор
+          // не теряет ховер при переходе с пузыря на кнопки.
           position: 'absolute',
-          top: actionsPlacement === 'below' ? 'calc(100% - 8px)' : 'auto',
-          bottom: actionsPlacement === 'above' ? 'calc(100% - 8px)' : 'auto',
+          top: actionsPlacement === 'below' ? 'calc(100% - 2px)' : 'auto',
+          bottom: actionsPlacement === 'above' ? 'calc(100% - 2px)' : 'auto',
           left: isOwnSide ? 'auto' : 0,
           right: isOwnSide ? 0 : 'auto',
           pt: actionsPlacement === 'below' ? '12px' : 0,
           pb: actionsPlacement === 'above' ? '12px' : 0,
-          // Строка той же «краски», что и пузырь: без своей рамки, тени и чужого
-          // цвета хедера. Верхние углы квадратные — они уходят в нахлёст под
-          // пузырь и продолжают его прямые стороны, — а нижние повторяют нижние
-          // углы пузыря, поэтому панель читается продолжением сообщения.
-          background: panelBackground,
-          backdropFilter: bubbleNeedsBackdropBlur ? 'blur(18px)' : 'none',
+          // Прозрачная «стеклянная» плашка: подложка с полупрозрачным фоном и
+          // размытием, скругление со всех сторон, тонкая рамка и мягкая тень.
+          // isolation удерживает слой внутри панели, чтобы ::before с z-index:-1
+          // не уехал под фон чата.
+          background: 'transparent',
           border: 'none',
           boxShadow: 'none',
-          borderRadius: isOwnSide ? `0 0 4px ${panelRadius}` : `0 0 ${panelRadius} 4px`,
+          isolation: 'isolate',
+          '&::before': {
+            content: '""',
+            position: 'absolute',
+            left: 0, right: 0,
+            top: actionsPlacement === 'above' ? 0 : '12px',
+            bottom: actionsPlacement === 'above' ? '12px' : 0,
+            zIndex: -1,
+            pointerEvents: 'none',
+            background: withAlpha(theme.bgInput, 0.72),
+            backdropFilter: 'blur(16px) saturate(1.25)',
+            WebkitBackdropFilter: 'blur(16px) saturate(1.25)',
+            border: `1px solid ${theme.border}`,
+            borderRadius: 14,
+            boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
+          },
           zIndex: 10,
           pointerEvents: 'auto',
         }} className="msg-actions">
