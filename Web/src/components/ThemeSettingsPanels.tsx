@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Box, Typography, Button, Slider, Switch, Alert,
+  Box, Typography, Button, Slider, Switch, Alert, ThemeProvider, createTheme, useTheme,
   ToggleButton, ToggleButtonGroup,
 } from '@mui/material';
 import { RestartAlt, TextFields, ViewSidebar } from '@mui/icons-material';
@@ -29,6 +29,21 @@ import { APP_FONT_OPTIONS } from '../utils/appFont';
  * существующий код рендера (обои, data-атрибуты иконок/анимаций, звуки,
  * раскладка) продолжает работать без изменений.
  */
+
+// ── Слой порталов над плашкой редактора ──────────────────────────────────────
+// Плашка редактора — оверлей с z-index 9999, а MUI по умолчанию ставит
+// модальные окна на 1300. Поэтому всё, что открывается ИЗ редактора (диалог
+// обоев, конструктор макета, списки шрифтов, тултипы), оказывалось под
+// плашкой и не нажималось. Вложенный ThemeProvider с завышенной шкалой
+// поднимает и само окно, и его тултипы/меню.
+export function ThemeSettingsLayer({ children }: { children: React.ReactNode }) {
+  const outer = useTheme();
+  const elevated = useMemo(
+    () => createTheme(outer, { zIndex: { modal: 10100, popper: 10100, snackbar: 10200, tooltip: 10200 } }),
+    [outer],
+  );
+  return <ThemeProvider theme={elevated}>{children}</ThemeProvider>;
+}
 
 function RowToggle({ label, hint, checked, onChange }: {
   label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void;

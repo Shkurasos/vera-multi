@@ -8,6 +8,7 @@ import { useShopStore } from '../store/shopStore';
 import VpIcon from './VpIcon';
 import {
   WallpaperPanel, SoundPanel, UiStylePanel, AnimationsPanel, AppearancePanel, LayoutPanel,
+  ThemeSettingsLayer,
 } from './ThemeSettingsPanels';
 
 // ─── SVG паттерны ─────────────────────────────────────────────────────────────
@@ -762,12 +763,18 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
 
         </>
         )}
-        {tab === 'wallpaper' && <WallpaperPanel />}
-        {tab === 'sound' && <SoundPanel />}
-        {tab === 'ui' && <UiStylePanel />}
-        {tab === 'anim' && <AnimationsPanel />}
-        {tab === 'look' && <AppearancePanel />}
-        {tab === 'layout' && <LayoutPanel />}
+        {tab !== 'theme' && (
+          // Всё, что открывается из этих вкладок (диалог обоев, конструктор
+          // макета, списки шрифтов), обязано быть ВЫШЕ плашки редактора.
+          <ThemeSettingsLayer>
+            {tab === 'wallpaper' && <WallpaperPanel />}
+            {tab === 'sound' && <SoundPanel />}
+            {tab === 'ui' && <UiStylePanel />}
+            {tab === 'anim' && <AnimationsPanel />}
+            {tab === 'look' && <AppearancePanel />}
+            {tab === 'layout' && <LayoutPanel />}
+          </ThemeSettingsLayer>
+        )}
         </div>
 
         {/* Кнопки */}

@@ -77,3 +77,14 @@ test('обои в редакторе всегда глобальные (для �
   assert.ok(editor.includes('forceGlobal') || panels.includes('forceGlobal'), 'диалог обоев открыт в режиме глобальных');
   assert.ok(read('src/components/WallpaperSettingsDialog.tsx').includes('forceGlobal'), 'у диалога есть prop forceGlobal');
 });
+
+test('окна из редактора открываются поверх плашки, а не под ней', () => {
+  // Плашка редактора — z-index 9999, а MUI по умолчанию ставит модальные окна
+  // на 1300: без поднятия шкалы диалог обоев и конструктор макета оказывались
+  // под плашкой и по клику не выбирались.
+  assert.ok(panels.includes('export function ThemeSettingsLayer'), 'слой поднятых порталов есть');
+  assert.ok(panels.includes('modal: 10100'), 'шкала modal поднята выше плашки');
+  assert.ok(panels.includes('tooltip: 10200'), 'тултипы и меню внутри окон тоже подняты');
+  assert.ok(editor.includes('<ThemeSettingsLayer>'), 'вкладки настроек обёрнуты в слой');
+  assert.ok(/tab !== 'theme' && \([\s\S]{0,200}<ThemeSettingsLayer>/.test(editor), 'слой только для вкладок настроек');
+});
