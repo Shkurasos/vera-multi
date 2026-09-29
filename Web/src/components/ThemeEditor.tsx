@@ -338,6 +338,11 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
           </ToggleButton>
         ))}
       </ToggleButtonGroup>
+      <div style={{ fontSize: 11, opacity: 0.65, marginTop: 6 }}>
+        Обои, звук, иконки, анимации, внешний вид и макет — настройки этой темы.
+        Они хранятся отдельно для каждой темы: переключил тему — вернулись её
+        собственные значения, а правки остались в той теме, где их сделали.
+      </div>
     </Box>
   ) : null;
 

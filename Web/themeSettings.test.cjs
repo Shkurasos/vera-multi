@@ -23,13 +23,41 @@ test('ThemeSettings содержит все перенесённые групп�
 test('переключение и сохранение темы применяют её настройки', () => {
   assert.ok(themeStore.includes('export function applyThemeSettings'), 'функция применения экспортирована');
   assert.ok(themeStore.includes('export function snapshotThemeSettings'), 'снимок настроек экспортирован');
-  // setTheme, saveCustomTheme (активная тема) и applyCustomTheme вызывают применение.
+  // setTheme и applyCustomTheme применяют настройки выбранной темы.
   const calls = themeStore.match(/applyThemeSettings\(/g) || [];
-  assert.ok(calls.length >= 4, `applyThemeSettings вызывается при переключении/сохранении (найдено ${calls.length})`);
-  // Снимок читает все шесть сторов.
+  assert.ok(calls.length >= 3, `applyThemeSettings вызывается при переключении (найдено ${calls.length})`);
+  // Снимок читает все пять сторов с настройками.
   for (const store of ['useChatBgPrefsStore', 'useChatSoundStore', 'useUiPrefsStore', 'useAnimStore', 'useUserSettingsStore']) {
     assert.ok(themeStore.includes(store), `снимок читает ${store}`);
   }
+});
+
+test('настройки принадлежат каждой теме отдельно и не текут между темами', () => {
+  assert.ok(themeStore.includes('settingsByTheme: Record<string, ThemeSettings>'), 'есть per-theme хранилище');
+  // Уходя из темы — снимаем снимок именно в неё: правки остаются её.
+  assert.ok(
+    /if \(from !== null && from !== id\) storeThemeSettings\(from, snapshotThemeSettings\(\)/.test(themeStore),
+    'снимок пишется в тему, с которой ушли',
+  );
+  // Входя в тему — берём её собственные настройки.
+  assert.ok(themeStore.includes('const settings = takeThemeSettings(id, t, get, set)'), 'берутся настройки выбранной темы');
+  assert.ok(themeStore.includes('applyThemeSettings(settings)'), 'применяются именно они');
+  // Первое посещение засеивает тему и запоминает — дальше она ни с кем не делится.
+  assert.ok(
+    /const seeded: ThemeSettings = t\.settings \? t\.settings : snapshotThemeSettings\(\)/.test(themeStore),
+    'первое посещение засеивает тему',
+  );
+  // Сохранение и удаление темы работают с её же настройками.
+  assert.ok(
+    themeStore.includes('storeThemeSettings(t.id, t.settings || snapshotThemeSettings()'),
+    'сохранение темы пишет её настройки',
+  );
+  assert.ok(
+    themeStore.includes('const { [String(id)]: _dropped, ...rest } = get().settingsByTheme'),
+    'удаление темы убирает её настройки',
+  );
+  // Персист: настройки не теряются при перезагрузке.
+  assert.ok(themeStore.includes('settingsByTheme: p.settingsByTheme || {}'), 'восстанавливаются при загрузке');
 });
 
 // ── Настройки больше не живут в «Настройках» ─────────────────────────────────

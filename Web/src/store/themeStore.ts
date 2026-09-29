@@ -901,6 +901,15 @@ interface ThemeState {
   theme: Theme;
   themeVersion: number;
   customThemes: Theme[];
+  /**
+   * Настройки КАЖДОЙ темы отдельно (ключ — id темы строкой, как в JSON).
+   * Значение — снимок, снятый с живых сторов, пока эта тема была активна.
+   * Переключение темы сохраняет настройки в ту, с которой ушли, и
+   * восстанавливает настройки выбранной, поэтому обои/звук/иконки/анимации/
+   * внешний вид/макет не «текут» между темами и принадлежат только своей.
+   */
+  settingsByTheme: Record<string, ThemeSettings>;
+  setThemeSettings: (id: number, settings: ThemeSettings) => void;
   chatPhoto?: string;
   // Фото-фон чата (обои), отдельно от аватарки чата
   chatBgImage?: string;
@@ -925,19 +934,30 @@ try {
 export const useThemeStore = create<ThemeState>()(
   persist(
     (set, get) => ({
-            themeId: 0,
+      themeId: 0,
       theme: THEMES[0],
       themeVersion: 0,
       customThemes: [],
+      settingsByTheme: {},
+      setThemeSettings: (id, settings) => set({
+        settingsByTheme: { ...get().settingsByTheme, [String(id)]: settings },
+      }),
       setTheme: (id) => {
         // Сначала ищем в кастомных, потом во встроенных
         const custom = get().customThemes.find(t => t.id === id);
         const builtin = THEMES.find(t => t.id === id);
         const t = custom || builtin || THEMES[0];
+        // Настройки, которые сейчас на экране, принадлежат ТЕМЕ, с которой мы
+        // уходим: снимаем снимок, чтобы правки не потерялись.
+        const from = get().themeId;
+        if (from !== null && from !== id) storeThemeSettings(from, snapshotThemeSettings(), get, set);
+        // Целевая тема получает СВОИ настройки; при первом посещении они
+        // засеиваются её собственным settings (тема из ссылки/магазина) или
+        // тем, что сейчас на экране, — и дальше принадлежат только ей.
+        const settings = takeThemeSettings(id, t, get, set);
         set({ themeId: id, theme: t, themeVersion: get().themeVersion + 1 });
-        // Настройки темы (обои/звук/иконки/анимации/внешний вид/макет)
-        // применяются к привычным сторам приложения.
-        applyThemeSettings(t);
+        // Применяем настройки ИМЕННО этой темы.
+        applyThemeSettings(settings);
         // Сохраняем тему в БД пользователя (если есть токен)
         try {
           if (localStorage.getItem('vera_token')) {
@@ -953,18 +973,27 @@ export const useThemeStore = create<ThemeState>()(
           ? customs.map(c => c.id === t.id ? t : c)
           : [...customs, t];
         set({ customThemes: updated });
+        // Настройки темы: снимок из редактора — и в саму тему (чтобы уехать со
+        // ссылкой/в каталог), и в per-theme хранилище.
+        storeThemeSettings(t.id, t.settings || snapshotThemeSettings(), get, set);
         // Если эта тема сейчас активна — применяем изменения
-                if (get().themeId === t.id) { set({ theme: t, themeVersion: get().themeVersion + 1 }); applyThemeSettings(t); }
+                if (get().themeId === t.id) { set({ theme: t, themeVersion: get().themeVersion + 1 }); }
       },
       deleteCustomTheme: (id) => {
         const updated = get().customThemes.filter(c => c.id !== id);
         set({ customThemes: updated });
+        // Настройки удалённой темы тоже уходят.
+        const { [String(id)]: _dropped, ...rest } = get().settingsByTheme;
+        set({ settingsByTheme: rest });
         // Если удалили активную — вернуть на Vera Dark
         if (get().themeId === id) set({ themeId: 0, theme: THEMES[0], themeVersion: get().themeVersion + 1 });
       },
       applyCustomTheme: (t) => {
+        const from = get().themeId;
+        if (from !== null && from !== t.id) storeThemeSettings(from, snapshotThemeSettings(), get, set);
+        const settings = takeThemeSettings(t.id, t, get, set);
         set({ theme: t, themeId: t.id, themeVersion: get().themeVersion + 1 });
-        applyThemeSettings(t);
+        applyThemeSettings(settings);
       },
       setChatPhoto: (photo) => set({ chatPhoto: photo }),
       setChatBgImage: (photo, opacity = 0.35) => {
@@ -1007,6 +1036,16 @@ export const useThemeStore = create<ThemeState>()(
         return {
           themeId: s.themeId,
           customThemes: s.customThemes.map(clean).filter(Boolean) as Theme[],
+          // Настройки каждой темы — тоже с тем же ограничением на фото.
+          settingsByTheme: Object.fromEntries(
+            Object.entries(s.settingsByTheme || {}).map(([key, value]) => {
+              const photo = value?.wallpaper?.photo;
+              if (photo && photo.startsWith('data:') && photo.length > LIMIT) {
+                return [key, { ...value, wallpaper: { ...value.wallpaper!, photo: undefined } }];
+              }
+              return [key, value];
+            }),
+          ),
           chatPhoto: s.chatPhoto && s.chatPhoto.startsWith('data:') && s.chatPhoto.length > LIMIT
             ? undefined
             : s.chatPhoto,
@@ -1040,6 +1079,8 @@ export const useThemeStore = create<ThemeState>()(
           ...current,
           themeId,
           customThemes,
+          // Настройки каждой темы восстанавливаем как есть.
+          settingsByTheme: p.settingsByTheme || {},
           theme,
           themeVersion: current.themeVersion || 0,
           chatPhoto: p.chatPhoto,
@@ -1090,13 +1131,43 @@ export function snapshotThemeSettings(): ThemeSettings {
 }
 
 /**
+ * Записывает настройки КОНКРЕТНОЙ теме. Все правки, сделанные, пока тема была
+ * активна, попадают именно сюда — и ни в какую другую.
+ */
+function storeThemeSettings(
+  id: number,
+  settings: ThemeSettings,
+  get: () => ThemeState,
+  set: (p: Partial<ThemeState>) => void,
+) {
+  set({ settingsByTheme: { ...get().settingsByTheme, [String(id)]: settings } });
+}
+
+/**
+ * Настройки темы, к которой переключаемся: её собственные. Если тема ещё ни
+ * разу не была активна, она засеивается — собственным settings (тема из ссылки
+ * или магазина) либо тем, что сейчас на экране, — и с этого момента принадлежит
+ * только ей.
+ */
+function takeThemeSettings(
+  id: number,
+  t: Theme,
+  get: () => ThemeState,
+  set: (p: Partial<ThemeState>) => void,
+): ThemeSettings {
+  const existing = get().settingsByTheme[String(id)];
+  if (existing) return existing;
+  const seeded: ThemeSettings = t.settings ? t.settings : snapshotThemeSettings();
+  set({ settingsByTheme: { ...get().settingsByTheme, [String(id)]: seeded } });
+  return seeded;
+}
+
+/**
  * Применяет настройки темы к «живым» сторам приложения. Вызывается при
  * переключении/сохранении темы. Всё best-effort: сломанный или старый
  * объект настроек не должен ломать переключение темы.
  */
-export function applyThemeSettings(t?: Theme) {
-  const s = t?.settings;
-  if (!s) return;
+export function applyThemeSettings(s?: ThemeSettings) {
   try {
     if (s.wallpaper) {
       const bg = useChatBgPrefsStore.getState();
