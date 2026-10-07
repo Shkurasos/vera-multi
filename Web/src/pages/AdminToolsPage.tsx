@@ -9,6 +9,7 @@ import { adminApi, aiLmmApi } from '../services/botsApi';
 import { adminApi as walletAdminApi } from '../services/api';
 import { ScanResult, ProxyLogEntry, RepeaterEntry } from '../types/bots';
 import ModerationPanel from '../components/ModerationPanel';
+import AdminThemeEditor from '../components/AdminThemeEditor';
 
 export default function AdminToolsPage() {
   const navigate = useNavigate();
@@ -193,9 +194,21 @@ export default function AdminToolsPage() {
   const llmOnline = llmHealth?.status === 'ok';
   if (!user?.isAdmin) return <Box sx={{ p: 4 }}><Typography>🔒 Доступ только для администратора.</Typography></Box>;
 
+  // Прокрутка — здесь, а не на body: и body, и обёртка Routes в MainLayout стоят
+  // на overflow: hidden (приложение — как Telegram, без скролла документа), и
+  // каждая полноэкранная страница обязана скроллиться сама. Без overflowY панель
+  // просто обрезалась по высоте экрана и не листалась ни вниз, ни вверх.
   return (
-    <Box sx={{ p: 3, color: '#fff', maxWidth: 900, mx: 'auto' }}>
+    <Box sx={{
+      height: '100%', overflowY: 'auto', overscrollBehavior: 'contain',
+      p: 3, color: '#fff', maxWidth: 900, mx: 'auto',
+      boxSizing: 'border-box',
+      pb: { xs: 76, md: 3 }, // запас под мобильную нижнюю навигацию
+      '&::-webkit-scrollbar': { width: 5 },
+      '&::-webkit-scrollbar-thumb': { bgcolor: 'rgba(255,255,255,0.16)', borderRadius: 4 },
+    }}>
       <ModerationPanel />
+      <AdminThemeEditor />
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant="h5">Панель администратора</Typography>
         <Button variant="outlined" onClick={() => navigate('/')} aria-label="Закрыть панель администратора">Закрыть (X)</Button>

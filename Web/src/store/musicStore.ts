@@ -195,6 +195,12 @@ export const useMusicStore = create<MusicState>()(
         return {
           queue: nextQueue,
           currentTrack: fallbackTrack,
+          // И id синхронизируем. playbackTrackId сохраняется в localStorage,
+          // и loadTracks() по нему восстанавливает currentTrack после
+          // перезагрузки. Со старым id убранный из очереди трек возвращался в
+          // плеере — как будто его и не убирали. deleteTrack здесь прав, а
+          // removeFromQueue забывал.
+          playbackTrackId: fallbackTrack ? fallbackTrack.id : null,
           currentIndex: fallbackTrack ? nextQueue.findIndex((track) => track.id === fallbackTrack.id) : -1,
           isPlaying: Boolean(fallbackTrack),
           progress: 0,

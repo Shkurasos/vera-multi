@@ -17,7 +17,7 @@ function setup() {
     app: { get: (p, a, fn) => routes[p] = fn, post: (p, a, fn) => routes[p] = fn },
     saveDb() {}, pushWalletEmit() {}, emitMarketUpdated() {},
   };
-  vm.runInNewContext(source.slice(source.indexOf('function activeListingsForSeller'), source.indexOf('function emitMarketUpdated')), context);
+  vm.runInNewContext(source.slice(source.indexOf('// Питомцы хранятся отдельно от скинов'), source.indexOf('function emitMarketUpdated')), context);
   vm.runInNewContext(source.slice(source.indexOf('// Shared skin marketplace.'), source.indexOf('const CREATOR_FEE_RUB')), context);
   const call = (route, userId = 'seller', body = {}) => {
     const res = { code: 200, status(code) { this.code = code; return this; }, json(data) { this.data = data; return this; } };

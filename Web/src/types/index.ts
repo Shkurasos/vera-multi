@@ -158,6 +158,37 @@ export interface Track {
   uploadedById?: string;
   playsCount: number;
   createdAt: string;
+  /** Жанр — нужен для публикации в общей библиотеке. */
+  genre?: string | null;
+  /** Трек выложен всем (общая библиотека). */
+  isPublic?: boolean;
+  /** Когда опубликован: сортировка «новые». */
+  publishedAt?: string | null;
+  /** В каком альбоме лежит. */
+  albumId?: string | null;
+  /** Откуда трек сохранён — для защиты от дублей и удаления оригинала. */
+  savedFromId?: string | null;
+  /** Автор трека, если он чужой. */
+  uploadedBy?: User | null;
+}
+
+/** Альбом: группа треков с общей обложкой. */
+export interface MusicAlbum {
+  id: string;
+  title: string;
+  artist?: string | null;
+  genre?: string | null;
+  description?: string | null;
+  coverUrl?: string | null;
+  ownerId?: string;
+  owner?: User | null;
+  isPublic?: boolean;
+  trackIds: string[];
+  tracks?: Track[];
+  trackCount?: number;
+  savedFromId?: string | null;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 export interface Playlist {

@@ -16,14 +16,15 @@ vm.runInContext(
 const { muiPaletteFromTheme, MUI_DARK_FALLBACK } = context.exports;
 
 // contrast.ts нужен для расчёта контраста, themeStore — для проверки тем.
-function loadModule(file) {
+function loadModule(file, stubs = {}) {
   const c = vm.createContext({
     console, exports: {}, module: { exports: {} },
     window: { location: {} },
     localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
     require: (name) => {
+      if (stubs[name]) return stubs[name];
       if (name === 'zustand') return { create: () => (factory) => factory(() => {}, () => ({})) };
-      if (name === 'zustand/middleware') return { persist: (factory) => factory };
+      if (name === 'zustand/middleware') return { persist: (factory) => factory, createJSONStorage: (get) => get() };
       if (name.includes('storeSyncSimple')) return { enableStoreSync: () => {} };
       return { usersApi: { get: () => Promise.resolve({ data: {} }) } };
     },
@@ -37,7 +38,10 @@ function loadModule(file) {
   return c.exports;
 }
 const { isLightColor } = loadModule('src/utils/contrast.ts');
-const { THEMES } = loadModule('src/store/themeStore.ts');
+// Пресеты тем подключаются к каталогу на старте, поэтому грузим их по-настоящему:
+// иначе темы пришли бы в тест без своих настроек.
+const { themePreset } = loadModule('src/store/themePresets.ts');
+const { THEMES } = loadModule('src/store/themeStore.ts', { './themePresets': { themePreset } });
 
 /** Относительный контраст текста к фону (WCAG), с учётом rgba-подложки. */
 function parseColor(value) {

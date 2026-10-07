@@ -16,6 +16,11 @@ Server/data/
 Server/uploads/
 Server/vera.json
 
+# выгрузка правок тем/обоев, которые делает админ (см. Server/backup-content.js)
+# Нужна в репозитории: иначе при выкладке исходников на другую машину все
+# правки тем и загруженные фото-обои теряются — они лежат в runtime-данных.
+!Server/content/
+
 # logs / env
 *.log
 *procs.txt

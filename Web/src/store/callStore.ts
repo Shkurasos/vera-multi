@@ -98,9 +98,18 @@ export const useCallStore = create<CallStoreState>((set, get) => ({
 
   async joinCall(chatId, kind) {
     const { attachRoom } = await import('../services/callPeers');
-    set({ joining: true, activeChatId: chatId, kind, minimized: false, ring: null, peers: {} });
+    // В видео-звонке камера уже захвачена (constraints = audio+video),
+    // поэтому cam обязан быть true сразу: иначе тайл рендерит аватар вместо
+    // картинки, хотя поток идёт, и собеседник видит «камера выключена».
+    const cam = kind === 'video';
+    set({
+      joining: true, activeChatId: chatId, kind, minimized: false, ring: null, peers: {},
+      local: { ...get().local, cam },
+    });
     try { await attachRoom(chatId, kind); }
     finally { set({ joining: false }); }
+    const s = getSocket();
+    if (s) s.emit('callroom:state', { chatId, patch: { cam } });
   },
 
   leaveCall() {

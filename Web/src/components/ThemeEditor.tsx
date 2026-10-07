@@ -1,15 +1,17 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Box, Typography, TextField, Button, InputAdornment, IconButton } from '@mui/material';
 import { ContentCopy } from '@mui/icons-material';
-import { useThemeStore, THEMES, CUSTOM_THEME_ID_START, Theme, themeToLink, themeFromLink, snapshotThemeSettings } from '../store/themeStore';
+import { useThemeStore, CUSTOM_THEME_ID_START, Theme, themeToLink, themeFromLink, snapshotThemeSettings } from '../store/themeStore';
 import { aiApi } from '../services/botsApi';
+import { communityThemesApi, CommunityTheme } from '../services/api';
 import { useShopStore } from '../store/shopStore';
 import VpIcon from './VpIcon';
 import {
   WallpaperPanel, SoundPanel, UiStylePanel, AnimationsPanel, AppearancePanel, LayoutPanel,
   ThemeSettingsLayer,
 } from './ThemeSettingsPanels';
+import { autoBubbleGradient, regenerateAutoGradient, bubbleBackground } from '../utils/bubbleGradient';
 
 // ─── SVG паттерны ─────────────────────────────────────────────────────────────
 function svgUrl(content: string) {
@@ -96,8 +98,159 @@ function ColorField({ label, value, onChange }: ColorFieldProps) {
   );
 }
 
+interface ColorFieldProps { label: string; value: string; onChange: (v: string) => void }
+
+/**
+ * Цвет пузыря вместе с галочкой «градиент».
+ *
+ * Галочка — это и есть переключатель режима: стоит — рисуем градиент, снята —
+ * сплошной цвет. Отдельного поля «включить/выключить» не заводим: состояние
+ * галочки выводится из наличия строки градиента, поэтому лишних рассинхронов
+ * «галочка стоит, а градиент пустой» не бывает по определению.
+ *
+ * Галочка появляется только когда цвет разбирается: для hsl() и `var()` градиент
+ * построить не из чего, и галочка смотрелась бы рабочей, а ничего бы не делала.
+ */
+function BubbleColorField({
+  label, color, gradient, onColor, onGradient,
+}: {
+  label: string;
+  color: string;
+  gradient?: string;
+  onColor: (v: string) => void;
+  onGradient: (v: string) => void;
+}) {
+  const on = !!gradient;
+  // Считаем, что градиент нам по силам, ровно если из цвета выйдет не пустота.
+  const canGradient = autoBubbleGradient(color) !== color;
+  const toggleGradient = () => onGradient(on ? '' : autoBubbleGradient(color));
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <span style={{ fontSize: 12, flex: 1 }}>{label}</span>
+        <label
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5, cursor: canGradient ? 'pointer' : 'default',
+            fontSize: 11, opacity: canGradient ? 0.9 : 0.4, userSelect: 'none', flexShrink: 0,
+          }}
+          title={canGradient ? 'Градиент вместо сплошного цвета' : 'Этот цвет нельзя превратить в градиент'}
+        >
+          <input
+            type="checkbox"
+            checked={on}
+            disabled={!canGradient}
+            onChange={toggleGradient}
+            style={{ width: 15, height: 15, cursor: canGradient ? 'pointer' : 'default', margin: 0 }}
+          />
+          градиент
+        </label>
+      </div>
+      <ColorField
+        label=""
+        value={on ? autoBubbleGradient(color) : color}
+        onChange={v => {
+          // Галочка снята — поле правит сплошной цвет. Стоит — градиент
+          // пересобирается под новый цвет, но рукописный CSS не трогаем.
+          if (on) onGradient(regenerateAutoGradient(v, color, gradient));
+          else onColor(v);
+        }}
+      />
+      {on && (
+        <div style={{ fontSize: 11, opacity: 0.55, marginTop: 2 }}>
+          Галочка снята — снова сплошной цвет. Свой CSS можно вписать в поле ниже.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function makeId() {
   return CUSTOM_THEME_ID_START + (Date.now() % 9000000);
+}
+
+function communityAssetUrl(url: string | null) {
+  if (!url) return '';
+  return /^https?:\/\//i.test(url) ? url : window.location.origin + (url.startsWith('/') ? url : '/' + url);
+}
+
+function CommunityThemesPanel({
+  draft, theme, saveCustomTheme, setTheme,
+}: { draft: Theme; theme: Theme; saveCustomTheme: (theme: Theme) => void; setTheme: (id: number) => void }) {
+  const [items, setItems] = useState<CommunityTheme[]>([]);
+  const [query, setQuery] = useState('');
+  const [name, setName] = useState(draft.name || 'Тема сообщества');
+  const [description, setDescription] = useState('');
+  const [preview, setPreview] = useState<File>();
+  const [asset, setAsset] = useState<File>();
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const load = useCallback(async (q = query) => {
+    try { setItems((await communityThemesApi.list(q)).data.themes || []); }
+    catch { setMessage('Не удалось загрузить каталог'); }
+  }, [query]);
+  useEffect(() => { void load(''); }, [load]);
+
+  const upload = async () => {
+    setBusy(true); setMessage('');
+    try {
+      const blob = new Blob([JSON.stringify({ ...draft, settings: draft.settings || undefined })], { type: 'application/json' });
+      await communityThemesApi.upload(blob, name, description, preview, asset);
+      setDescription(''); setPreview(undefined); setAsset(undefined); setMessage('Тема опубликована'); await load();
+    } catch (e: any) { setMessage(e?.response?.data?.message || 'Ошибка публикации'); }
+    finally { setBusy(false); }
+  };
+  const install = async (item: CommunityTheme) => {
+    setBusy(true); setMessage('');
+    try {
+      const result = await communityThemesApi.install(item.id);
+      const installed = { ...result.data.theme.theme, id: makeId(), name: item.name } as Theme;
+      saveCustomTheme(installed); setTheme(installed.id); setMessage(`«${item.name}» установлена`);
+    } catch (e: any) { setMessage(e?.response?.data?.message || 'Не удалось установить тему'); }
+    finally { setBusy(false); }
+  };
+  const remove = async (item: CommunityTheme) => {
+    if (!window.confirm(`Удалить публикацию «${item.name}»?`)) return;
+    try { await communityThemesApi.remove(item.id); await load(); }
+    catch (e: any) { setMessage(e?.response?.data?.message || 'Не удалось удалить публикацию'); }
+  };
+  const downloadTheme = async (item: CommunityTheme) => {
+    try {
+      const response = await communityThemesApi.download(item.id);
+      const url = URL.createObjectURL(response.data);
+      const link = document.createElement('a'); link.href = url; link.download = `${item.name.replace(/[^a-z0-9_-]+/gi, '_') || 'theme'}.json`;
+      document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+    } catch { setMessage('Не удалось скачать тему'); }
+  };
+
+  return <div>
+    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Community Themes</div>
+    <div style={{ fontSize: 12, opacity: .65, marginBottom: 12 }}>Публикуйте тему вместе с превью, обоями или шрифтом.</div>
+    <div style={{ display: 'grid', gap: 7, marginBottom: 16 }}>
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="Название темы" style={{ padding: 8, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.bgInput, color: theme.text }} />
+      <input value={description} onChange={e => setDescription(e.target.value)} placeholder="Описание" style={{ padding: 8, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.bgInput, color: theme.text }} />
+      <label style={{ fontSize: 12 }}>Превью <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={e => setPreview(e.target.files?.[0])} /></label>
+      <label style={{ fontSize: 12 }}>Фото или шрифт <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,.ttf,.otf,.woff,.woff2" onChange={e => setAsset(e.target.files?.[0])} /></label>
+      <button disabled={busy || !name.trim()} onClick={() => void upload()} style={{ padding: '8px 12px', border: 0, borderRadius: 7, background: theme.accent, color: '#fff', cursor: 'pointer' }}>Опубликовать текущую тему</button>
+    </div>
+    <div style={{ display: 'flex', gap: 7, marginBottom: 12 }}>
+      <input value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void load(); }} placeholder="Поиск по каталогу" style={{ flex: 1, padding: 8, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.bgInput, color: theme.text }} />
+      <button onClick={() => void load()} style={{ padding: '6px 10px', borderRadius: 6, border: `1px solid ${theme.border}`, background: 'transparent', color: theme.text, cursor: 'pointer' }}>Найти</button>
+    </div>
+    {message && <div style={{ fontSize: 12, color: theme.accent, marginBottom: 8 }}>{message}</div>}
+    <div style={{ display: 'grid', gap: 8 }}>
+      {items.map(item => <div key={item.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: 8, border: `1px solid ${theme.border}`, borderRadius: 7 }}>
+        {item.previewUrl ? <img src={communityAssetUrl(item.previewUrl)} alt="" style={{ width: 54, height: 42, objectFit: 'cover', borderRadius: 5 }} /> : <div style={{ width: 54, height: 42, background: item.theme?.accent || theme.accent, borderRadius: 5 }} />}
+        <div style={{ minWidth: 0, flex: 1 }}><div style={{ fontWeight: 600 }}>{item.name}</div><div style={{ fontSize: 11, opacity: .65, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description || `Автор: ${item.authorName}`} · {item.downloads} установок</div></div>
+        <button onClick={() => void install(item)} disabled={busy} style={{ padding: '6px 9px', border: `1px solid ${theme.accent}`, borderRadius: 6, background: 'transparent', color: theme.accent, cursor: 'pointer' }}>Установить</button>
+        <button onClick={() => void downloadTheme(item)} style={{ padding: '6px 9px', border: `1px solid ${theme.border}`, borderRadius: 6, background: 'transparent', color: theme.text, cursor: 'pointer' }}>JSON</button>
+        {item.assetUrl && <a href={communityAssetUrl(item.assetUrl)} download style={{ fontSize: 12, color: theme.accent }}>Скачать</a>}
+        <button onClick={() => void remove(item)} title="Удалить свою публикацию" style={{ border: 0, background: 'transparent', color: '#f87171', cursor: 'pointer' }}>×</button>
+      </div>)}
+      {!items.length && <div style={{ fontSize: 12, opacity: .6 }}>Публикаций пока нет.</div>}
+    </div>
+  </div>;
 }
 
 interface Props {
@@ -121,7 +274,7 @@ interface Props {
 
 export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 'app', headerExtra }: Props) {
   const isChat = mode === 'chat';
-  const { theme, customThemes, saveCustomTheme, deleteCustomTheme, setTheme, themeId } = useThemeStore();
+  const { theme, customThemes, saveCustomTheme, deleteCustomTheme, setTheme, themeId, builtinThemes } = useThemeStore();
 
   const [draft, setDraft] = useState<Theme>(() => {
     // Если передан initialTheme (из магазина) — используем его
@@ -135,6 +288,7 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
       chatPatternSizeMin: 860,
       chatPatternSizeMax: 1400,
       bubbleOwnGradient: theme.bubbleOwnGradient || '',
+      bubbleOtherGradient: theme.bubbleOtherGradient || '',
       bubbleOwnShadow: theme.bubbleOwnShadow || '',
       bubbleOtherShadow: theme.bubbleOtherShadow || '',
       sidebarGradient: theme.sidebarGradient || '',
@@ -153,7 +307,7 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
   // Вкладки редактора: первая — сама тема, остальные — настройки, которые
   // живут в теме (обои, звук, иконки, анимации, внешний вид, макет).
   // В режиме темы чата (isChat) эти настройки не относятся к чату — вкладок нет.
-  const [tab, setTab] = useState<'theme' | 'wallpaper' | 'sound' | 'ui' | 'anim' | 'look' | 'layout'>('theme');
+  const [tab, setTab] = useState<'theme' | 'community' | 'wallpaper' | 'sound' | 'ui' | 'anim' | 'look' | 'layout'>('theme');
 
   const handleAiGenerate = async () => {
     const desc = aiPrompt.trim();
@@ -192,18 +346,25 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
   };
 
   const handleSave = () => {
-    if (onApply) {
-      onApply(draft);
-    } else {
-      // Настройки темы (обои, звук, иконки/стиль, анимации, внешний вид, макет)
-      // снимаются с текущих сторов и живут внутри темы: при её переключении
-      // applyThemeSettings запишет их обратно. В режиме чата их не трогаем —
-      // это глобальные настройки, а не свойства отдельного чата.
-      const saved: Theme = isChat ? draft : { ...draft, settings: snapshotThemeSettings() };
-      saveCustomTheme(saved);
-      setTheme(saved.id);
+    // Закрываем в finally: раньше onClose() стоял после сохранения, и любая
+    // ошибка внутри (например переполнение localStorage при записи темы)
+    // прерывала функцию до закрытия — окно редактора оставалось висеть, а
+    // пользователь не понимал, что кнопка «вообще не работает».
+    try {
+      if (onApply) {
+        onApply(draft);
+      } else {
+        // Настройки темы (обои, звук, иконки/стиль, анимации, внешний вид, макет)
+        // снимаются с текущих сторов и живут внутри темы: при её переключении
+        // applyThemeSettings запишет их обратно. В режиме чата их не трогаем —
+        // это глобальные настройки, а не свойства отдельного чата.
+        const saved: Theme = isChat ? draft : { ...draft, settings: snapshotThemeSettings() };
+        saveCustomTheme(saved);
+        setTheme(saved.id);
+      }
+    } finally {
+      onClose();
     }
-    onClose();
   };
 
   const handleDelete = (id: number) => {
@@ -242,14 +403,14 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
   };
   const previewOwn: React.CSSProperties = {
     alignSelf: 'flex-end', maxWidth: '72%',
-    background: draft.bubbleOwnGradient || draft.bgBubbleOwn,
+    background: bubbleBackground(draft.bgBubbleOwn, draft.bubbleOwnGradient),
     color: draft.bubbleOwnText || '#fff',
     boxShadow: draft.bubbleOwnShadow || undefined,
     borderRadius: '14px 14px 4px 14px', padding: '6px 12px', fontSize: 13,
   };
   const previewOther: React.CSSProperties = {
     alignSelf: 'flex-start', maxWidth: '72%',
-    background: draft.bgBubbleOther,
+    background: bubbleBackground(draft.bgBubbleOther, draft.bubbleOtherGradient),
     color: draft.bubbleOtherText || draft.text,
     boxShadow: draft.bubbleOtherShadow || undefined,
     borderRadius: '14px 14px 14px 4px', padding: '6px 12px', fontSize: 13,
@@ -313,10 +474,29 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
   const patternBtnBase: React.CSSProperties = {
     padding: '3px 9px', borderRadius: 6, fontSize: 12, cursor: 'pointer', border: '1px solid',
   };
+  // Плашка темы в шапке редактора: видно и что СЕЙЧАС стоит, и что
+  // НАСТРАИВАЕТСЯ. Раньше здесь было только имя черновика, поэтому в разделах
+  // настроек («Обои», «Звук», «Внешний вид»…) было невозможно понять, к какой
+  // теме относится правка.
+  const themeBadge: React.CSSProperties = {
+    display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: 260,
+    padding: '3px 9px', borderRadius: 999, fontSize: 12,
+    border: '1px solid ' + theme.border, background: theme.bgInput,
+    color: theme.text, boxSizing: 'border-box',
+  };
+  const badgeDot: React.CSSProperties = {
+    width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+  };
+  // В режиме чата в сторе лежит тема приложения, а не чата — показывать её
+  // как «сейчас стоит» было бы враньём, поэтому там только имя черновика.
+  const activeThemeName = isChat ? null : (theme?.name || 'Без темы');
+  const editingThemeName = draft.name || 'Без названия';
+  // Совпадают ли темы: если нет, правки ещё не записаны в стоящую тему.
+  const sameAsActive = !isChat && draft.id === themeId;
 
   // ── Навигация ─────────────────────────────────────────────────────────────
   const TABS: [typeof tab, string][] = [
-    ['theme', 'Тема'], ['wallpaper', 'Обои'], ['sound', 'Звук'],
+    ['theme', 'Тема'], ['community', 'Community Themes'], ['wallpaper', 'Обои'], ['sound', 'Звук'],
     ['ui', 'Иконки и стиль'], ['anim', 'Анимации'], ['look', 'Внешний вид'], ['layout', 'Макет'],
   ];
   // Разделы — вертикальным списком слева, содержимое — справа. Горизонтальная
@@ -365,11 +545,31 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
       <div style={modal}>
         {/* Шапка */}
         <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 20px', borderBottom: '1px solid ' + theme.border }}>
-          <div>
+          <div style={{ minWidth: 0 }}>
             <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>🎨 Редактор темы</h2>
-            {/* Какая тема редактируется — видно всегда, а не только в поле внизу. */}
-            <div style={{ fontSize: 11.5, opacity: 0.6, marginTop: 3 }}>
-              {isChat ? 'Тема чата' : `Тема: ${draft.name}`}
+            {/* Какая тема стоит и какая настраивается — видно в ЛЮБОМ разделе,
+                а не только на вкладке «Тема». Иначе в «Обоях» или «Звуке» было
+                невозможно понять, к какой теме относится правка. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 5, flexWrap: 'wrap' }}>
+              {activeThemeName !== null && (
+                <span style={themeBadge} title="Тема, применённая в приложении прямо сейчас">
+                  <span style={{ ...badgeDot, background: theme.accent }} />
+                  <span style={{ opacity: 0.6 }}>Стоит:</span>
+                  <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {activeThemeName}
+                  </span>
+                </span>
+              )}
+              <span style={themeBadge} title="Тема, которую вы сейчас редактируете">
+                <span style={{ ...badgeDot, background: draft.accent || theme.accent }} />
+                <span style={{ opacity: 0.6 }}>{activeThemeName !== null ? 'Настраивается:' : 'Тема чата:'}</span>
+                <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {editingThemeName}
+                </span>
+              </span>
+              {!sameAsActive && !isChat && (
+                <span style={{ fontSize: 11, opacity: 0.55 }}>изменения ещё не применены</span>
+              )}
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -423,7 +623,7 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
          <div style={{ marginBottom: 14 }}>
            <div style={sectionLabel}>Встроенные темы</div>
            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-             {THEMES.map(bt => (
+             {builtinThemes.map(bt => (
                <button
                  key={bt.id}
                 onClick={() => { if (!onApply) setTheme(bt.id); handleLoad(bt); }}
@@ -546,11 +746,49 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
             {!isChat && <ColorField label="Активный элемент"  value={draft.bgActive}  onChange={v => upd('bgActive', v)} />}
 
             <div style={sectionLabel}>Пузыри сообщений</div>
-            <ColorField label="Свой пузырь"          value={draft.bgBubbleOwn}
-              onChange={v => setDraft(d => ({ ...d, bgBubbleOwn: v, bubbleOwnGradient: '' }))} />
-            <ColorField label="Чужой пузырь"         value={draft.bgBubbleOther} onChange={v => upd('bgBubbleOther', v)} />
+            {/* Галочка «градиент» — единственный переключатель режима: снята, и пузырь
+                сплошной; стоит, и рисуется градиентом из этого же цвета. */}
+            <BubbleColorField
+              label="Свой пузырь"
+              color={draft.bgBubbleOwn}
+              gradient={draft.bubbleOwnGradient}
+              onColor={v => setDraft(d => ({ ...d, bgBubbleOwn: v, bubbleOwnGradient: '' }))}
+              onGradient={v => setDraft(d => ({ ...d, bubbleOwnGradient: v }))}
+            />
+            <BubbleColorField
+              label="Чужой пузырь"
+              color={draft.bgBubbleOther}
+              gradient={draft.bubbleOtherGradient}
+              onColor={v => setDraft(d => ({ ...d, bgBubbleOther: v, bubbleOtherGradient: '' }))}
+              onGradient={v => setDraft(d => ({ ...d, bubbleOtherGradient: v }))}
+            />
             <ColorField label="Текст своего пузыря"  value={draft.bubbleOwnText || '#ffffff'} onChange={v => upd('bubbleOwnText', v)} />
             <ColorField label="Текст чужого пузыря"  value={draft.bubbleOtherText || draft.text} onChange={v => upd('bubbleOtherText', v)} />
+
+            {/* Рукописный CSS: поле есть только у включённого градиента, иначе оно
+                правило «галочка снята — сплошной цвет» молча нарушало бы. */}
+            <div style={{ ...sectionLabel, marginTop: 12 }}>Градиенты (CSS)</div>
+            {draft.bubbleOwnGradient && (
+              <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 4 }}>Свой пузырь</div>
+            )}
+            <input
+              value={draft.bubbleOwnGradient || ''}
+              onChange={e => upd('bubbleOwnGradient', e.target.value)}
+              placeholder="linear-gradient(135deg, #7c6af7, #4a3f9f)"
+              style={{ ...inputStyle, fontSize: 11, fontFamily: 'monospace' }}
+            />
+            {draft.bubbleOtherGradient && (
+              <div style={{ fontSize: 11, opacity: 0.55, margin: '8px 0 4px' }}>Чужой пузырь</div>
+            )}
+            <input
+              value={draft.bubbleOtherGradient || ''}
+              onChange={e => upd('bubbleOtherGradient', e.target.value)}
+              placeholder="linear-gradient(135deg, #2a2a35, #16161d)"
+              style={{ ...inputStyle, fontSize: 11, fontFamily: 'monospace' }}
+            />
+            <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4 }}>
+              Пока галочка не стоит, поле пустое и градиент не применяется
+            </div>
 
             <div style={sectionLabel}>Время сообщений</div>
             <ColorField label="Время на сообщениях"  value={draft.messageTimeColor || draft.bubbleOtherText || draft.text} onChange={v => upd('messageTimeColor', v)} />
@@ -570,14 +808,7 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
               «Время в списке чатов» — время справа от имени в списке слева.
             </div>
 
-            <div style={{ ...sectionLabel, marginTop: 12 }}>Градиент своего пузыря (CSS)</div>
-            <input
-              value={draft.bubbleOwnGradient || ''}
-              onChange={e => upd('bubbleOwnGradient', e.target.value)}
-              placeholder="linear-gradient(135deg, #7c6af7, #4a3f9f)"
-              style={{ ...inputStyle, fontSize: 11, fontFamily: 'monospace' }}
-            />
-          </div>
+            </div>
 
           {/* Правая колонка */}
           <div>
@@ -797,7 +1028,10 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
 
         </>
         )}
-        {tab !== 'theme' && (
+        {tab === 'community' && !isChat && (
+          <CommunityThemesPanel draft={draft} theme={theme} saveCustomTheme={saveCustomTheme} setTheme={setTheme} />
+        )}
+        {tab !== 'theme' && tab !== 'community' && (
           // Всё, что открывается из этих вкладок (диалог обоев, конструктор
           // макета, списки шрифтов), обязано быть ВЫШЕ плашки редактора.
           <ThemeSettingsLayer>

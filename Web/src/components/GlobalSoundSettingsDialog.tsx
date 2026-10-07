@@ -6,6 +6,7 @@ import {
 import { PlayCircleOutline, StopCircle, Delete, Upload, VolumeUp, VolumeOff } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
 import { useChatSoundStore } from '../store/chatSoundStore';
+import { playChimePreview } from '../utils/notificationSound';
 
 const MAX_SOUND_SIZE = 1.5 * 1024 * 1024;
 
@@ -39,22 +40,9 @@ export function GlobalSoundSettingsContent() {
       setPlaying(true);
       a.play().catch(() => setPlaying(false));
     } else {
-      // Play default beep
-      try {
-        const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
-        const ctx = new Ctx();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain); gain.connect(ctx.destination);
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(880, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.15);
-        gain.gain.setValueAtTime(0.3 * globalVolume, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-        osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.3);
-        setPlaying(true);
-        setTimeout(() => setPlaying(false), 320);
-      } catch { /* ignore */ }
+      // Стандартный звук: тот же синтез, что и в уведомлениях (раньше здесь
+      // была ещё одна копия beep'а с новым AudioContext на каждое нажатие).
+      if (playChimePreview(globalVolume)) setPlaying(true);
     }
   }
 
@@ -99,7 +87,7 @@ export function GlobalSoundSettingsContent() {
           flex: 1, fontSize: 14, color: globalSound ? theme.accent : theme.textSec,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
         }}>
-          {globalSound ? globalSound.name : 'Стандартный beep'}
+          {globalSound ? globalSound.name : 'Стандартный «тинг»'}
         </Typography>
         <Tooltip title={playing ? 'Стоп' : 'Прослушать'}>
           <IconButton size="small" onClick={playPreview} sx={{ color: theme.textSec }}>

@@ -27,6 +27,8 @@ export function resolveChatTheme(baseTheme: Theme, override?: ChatThemeOverride 
     // Свой цвет пузырей отменяет градиент и тень общей темы, иначе смена
     // общей темы меняет цвет своих пузырей в этом чате.
     bubbleOwnGradient: override.bubbleOwnGradient || (ownColor ? undefined : baseTheme.bubbleOwnGradient),
+    // То же про чужие пузыри: свой цвет в этом чате окончательный.
+    bubbleOtherGradient: override.bubbleOtherGradient || (otherColor ? undefined : baseTheme.bubbleOtherGradient),
     bubbleOwnShadow: override.bubbleOwnShadow || (ownColor ? undefined : baseTheme.bubbleOwnShadow),
     bubbleOtherShadow: override.bubbleOtherShadow || (otherColor ? undefined : baseTheme.bubbleOtherShadow),
   } as Theme;

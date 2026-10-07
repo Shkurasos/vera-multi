@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Box, Button, Checkbox, Dialog, DialogContent, DialogTitle, FormControlLabel, MenuItem, TextField, Typography } from '@mui/material';
 import { SHOP_CATALOG, ShopItem, selectShopItem, useShopStore } from '../store/shopStore';
 import { caseCount, casePacks, drawPack, packChance, SkinPack, useLootStore } from '../store/lootStore';
-import { CASE_CATALOG, CaseDefinition, findCase } from '../store/caseCatalog';
+import { CASE_CATALOG, CaseDefinition, caseDescription, findCase } from '../store/caseCatalog';
 import { buildPlaqueSx, buildShopRingSx, RARITY_META } from '../utils/rarityStyles';
 import { useThemeStore } from '../store/themeStore';
 import { skinColors } from '../utils/skinColors';
@@ -11,9 +11,12 @@ import PackArtwork from './PackArtwork';
 import WalletTopup from './WalletTopup';
 import { useAuthStore } from '../store/authStore';
 import { packKeyFromItemId } from '../store/packCatalog';
+import { PET_CATALOG, findPet } from '../store/petCatalog';
+import { usePetStore } from '../store/petStore';
+import PetArtwork from './PetArtwork';
 
 const rarity = (p: SkinPack) => SHOP_CATALOG.find(i => i.id === p.ring)?.rarity || 'common';
-const categories = [['all', 'Все'], ['case', 'Кейсы'], ['profile', 'Обводки'], ['selfcard', 'Плашки'], ['bubble', 'Пузыри']];
+const categories = [['all', 'Все'], ['case', 'Кейсы'], ['pet', 'Питомцы'], ['profile', 'Обводки'], ['selfcard', 'Плашки'], ['bubble', 'Пузыри']];
 
 const CASE_BRANDS = {
   'case-elements': { eyebrow: 'PRIMAL / CONVERGENCE', badge: 'ELEMENTAL', accent: '#a8ffe7', secondary: '#ff996d', tertiary: '#8a83ff' },
@@ -82,9 +85,10 @@ export default function Store({ onClose }: { onClose: () => void }) {
   const shop = useShopStore();
   const isAdmin = useAuthStore(s => !!s.user?.isAdmin);
   const loot = useLootStore();
+  const pets = usePetStore();
   const [error, setError] = useState('');
   const reportError = (error: any) => setError(error.response?.data?.message || 'Не удалось выполнить операцию. Обновите инвентарь.');
-  useEffect(() => { void useLootStore.getState().load().catch(reportError); }, []);
+  useEffect(() => { void useLootStore.getState().load().catch(reportError); void usePetStore.getState().load().catch(() => undefined); }, []);
   // Both dialogs are portaled: apply the same theme-aware controls to each paper.
   const panelSx = {
     bgcolor: theme.bgSidebar || theme.bg,
@@ -159,9 +163,20 @@ export default function Store({ onClose }: { onClose: () => void }) {
     finally { setMarketPending(false); }
   };
   const selectedCase = findCase(selected || '');
-  const selectedPrice = selectedCase ? loot.prices[selectedCase.id] : null;
+  const selectedPet = selectedCase ? null : findPet(selected || '');
+  // Цена преимущественно приходит с сервера (CASE_PRICES); если её ещё нет в выдаче
+  // (старый процесс сервера/гонка загрузки) — берём её из локального каталога,
+  // чтобы кейс не выглядел «бесценным». Покупка всё равно валидируется сервером.
+  const priceOf = (id: string): number | null => {
+    const fromServer = loot.prices[id];
+    if (Number.isSafeInteger(fromServer) && Number(fromServer) > 0) return Number(fromServer);
+    const fromCatalog = findCase(id)?.price;
+    return Number.isSafeInteger(fromCatalog) && Number(fromCatalog) > 0 ? Number(fromCatalog) : null;
+  };
+  const selectedPrice = selectedCase ? priceOf(selectedCase.id) : null;
   const selectedPriceIsSet = Number.isSafeInteger(selectedPrice) && Number(selectedPrice) > 0;
   const [drop, setDrop] = useState<SkinPack | null>(null);
+  const [petDrop, setPetDrop] = useState<string | null>(null);
   const [reel, setReel] = useState<SkinPack[]>([]);
   const [phase, setPhase] = useState<'idle' | 'ready' | 'rolling' | 'result'>('idle');
   useEffect(() => {
@@ -174,17 +189,28 @@ export default function Store({ onClose }: { onClose: () => void }) {
     setError('');
     let result: SkinPack | null;
     try { result = await loot.openCase(selectedCase.id); } catch (error) { reportError(error); return; }
-    if (!result) return;
+    if (!result) {
+      const lastDrop = useLootStore.getState().lastDrop;
+      const petId = lastDrop?.startsWith('pet-') && findPet(lastDrop) ? lastDrop : null;
+      if (petId) {
+        // Питомец не участвует в рулетке паков — показываем результат сразу.
+        setDrop(null); setReel([]); setPetDrop(petId); setPhase('result');
+        return;
+      }
+      return;
+    }
     const sequence = Array.from({ length: 48 }, () => drawPack(Math.random(), selectedCase.id));
     sequence[40] = result;
-    setDrop(result); setReel(sequence); setPhase('ready');
+    setPetDrop(null); setDrop(result); setReel(sequence); setPhase('ready');
   };
   const rows = tab === 'inventory'
-    ? [...CASE_CATALOG.filter(c => caseCount(loot, c.id) > 0).map(c => ({ key: c.id, id: c.id, count: caseCount(loot, c.id) })), ...SHOP_CATALOG.filter(i => isAdmin || i.stock || shop.owned[i.id]).map(i => ({ key: i.id, id: i.id, count: 1 }))]
+    ? [...CASE_CATALOG.filter(c => isAdmin || caseCount(loot, c.id) > 0).map(c => ({ key: c.id, id: c.id, count: caseCount(loot, c.id) })), ...PET_CATALOG.filter(p => isAdmin || pets.ownedPets.includes(p.id)).map(p => ({ key: p.id, id: p.id, count: 1 })), ...SHOP_CATALOG.filter(i => isAdmin || i.stock || shop.owned[i.id]).map(i => ({ key: i.id, id: i.id, count: 1 }))]
     : [...CASE_CATALOG.map(c => ({ key: c.id, id: c.id, count: caseCount(loot, c.id) })), ...shop.marketListings.map(l => ({ key: l.id, id: l.itemId, count: 1 }))];
-  const info = (id: string) => { const item = SHOP_CATALOG.find(i => i.id === id); const definition = findCase(id); return { name: definition ? `Кейс «${definition.name}»` : item?.name || id, category: definition ? 'case' : item?.category, rarity: item?.rarity || 'common', item, definition }; };
+  const info = (id: string) => { const item = SHOP_CATALOG.find(i => i.id === id); const definition = findCase(id); const pet = findPet(id); return { name: definition ? `Кейс «${definition.name}»` : pet ? pet.name : item?.name || id, category: definition ? 'case' : pet ? 'pet' : item?.category, rarity: pet?.rarity || item?.rarity || 'common', item, definition, pet }; };
   const collectionOf = (id: string) => {
     if (findCase(id)) return id;
+    const pet = findPet(id);
+    if (pet) return pet.caseIds[0];
     const pack = packKeyFromItemId(id) || SHOP_CATALOG.find(i => i.id === id)?.value?.pack;
     return pack ? CASE_CATALOG.find(c => c.packs.includes(pack))?.id : undefined;
   };
@@ -196,12 +222,16 @@ export default function Store({ onClose }: { onClose: () => void }) {
     { label: 'Пузырь', id: shop.activeBubble, clear: () => shop.setActiveBubble('') },
   ];
   const favorites = SHOP_CATALOG.filter(i => shop.favoriteIds.includes(i.id) && shop.isOwned(i.id) && !i.stock);
-  const showItem = (id: string) => { setSelected(id); setSalePrice('6'); setError(''); setPhase('idle'); };
+  const showItem = (id: string) => { setSelected(id); setSalePrice('6'); setError(''); setPetDrop(null); setPhase('idle'); };
   const sell = () => {
     if (!selected) return;
     if (selectedCase) return;
     if (!validSalePrice) return;
-    void marketAction(async () => { await shop.listForSale(selected, Number(salePrice)); setSelected(null); setTab('market'); });
+    void marketAction(async () => {
+      await shop.listForSale(selected, Number(salePrice));
+      if (findPet(selected)) void pets.load().catch(() => undefined);
+      setSelected(null); setTab('market');
+    });
   };
   const buyCase = (caseId: string) => {
     setError('');
@@ -246,9 +276,9 @@ export default function Store({ onClose }: { onClose: () => void }) {
         <TextField select size="small" value={sort} onChange={e => setSort(e.target.value)}><MenuItem value="name">По имени</MenuItem><MenuItem value="rarity">По редкости ↓</MenuItem><MenuItem value="quantity">По количеству ↓</MenuItem></TextField>
       </Box>
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(auto-fill,minmax(180px,1fr))' }, gap: { xs: 0.75, sm: 2 } }}>{visible.map(row => { const i = info(row.id); return <Box key={row.key} sx={{ p: { xs: 0.75, sm: 2 }, minWidth: 0, border: `1px solid ${theme.border}`, borderBottom: `3px solid ${RARITY_META[i.rarity].color}`, bgcolor: theme.bgHover, borderRadius: 2 }}>
-        <Button onClick={() => { if (tab === 'inventory' || i.definition) showItem(row.id); }} sx={{ display: 'block', width: '100%', color: theme.text, textTransform: 'none' }}>{i.item ? <Preview item={i.item} /> : i.definition ? <CaseArt definition={i.definition} /> : null}<Typography>{i.name}</Typography></Button><Typography variant="caption">{row.count} шт. · {i.definition ? `${i.definition.packs.length} паков` : RARITY_META[i.rarity].label}</Typography>
+        <Button onClick={() => { if (tab === 'inventory' || i.definition) showItem(row.id); }} sx={{ display: 'block', width: '100%', color: theme.text, textTransform: 'none' }}>{i.item ? <Preview item={i.item} /> : i.definition ? <CaseArt definition={i.definition} /> : i.pet ? <Box sx={{ height: 110, display: 'grid', placeItems: 'center' }}><PetArtwork petId={i.pet.id} size={84} /></Box> : null}<Typography>{i.name}</Typography></Button><Typography variant="caption">{row.count} шт. · {i.definition ? (i.definition.packs.length ? `${i.definition.packs.length} паков` : `${i.definition.rewards.length} питомцев`) : RARITY_META[i.rarity].label}</Typography>
         {tab === 'market' && i.definition && (() => {
-          const price = loot.prices[row.id];
+          const price = priceOf(row.id);
           const priced = Number.isSafeInteger(price) && Number(price) > 0;
           return <Box sx={{ mt: 1 }}>
             <Typography sx={{ fontWeight: 800 }}>{priced ? `${price} ВП` : 'Скоро'}</Typography>
@@ -257,12 +287,14 @@ export default function Store({ onClose }: { onClose: () => void }) {
         })()}
         {tab === 'market' && !i.definition && (() => {
           const listing = shop.marketListings.find(l => l.id === row.key)!;
+          const alreadyOwned = i.pet ? pets.ownedPets.includes(i.pet.id) : !!shop.owned[listing.itemId];
           return <Box><Typography>{listing.price} ВП · {listing.seller}</Typography>
-            {listing.isMine ? <Button disabled={busy} onClick={() => void marketAction(() => shop.cancelListing(listing.id))}>Снять с продажи</Button>
-              : <Button disabled={busy || !!shop.owned[listing.itemId] || shop.balanceVp < listing.price} onClick={() => void marketAction(() => shop.buyListing(listing.id))}>Купить за {listing.price} ВП</Button>}
+            {listing.isMine ? <Button disabled={busy} onClick={() => void marketAction(async () => { await shop.cancelListing(listing.id); if (i.pet) await pets.load().catch(() => undefined); })}>Снять с продажи</Button>
+              : <Button disabled={busy || alreadyOwned || shop.balanceVp < listing.price} onClick={() => void marketAction(async () => { await shop.buyListing(listing.id); if (i.pet) await pets.load().catch(() => undefined); })}>Купить за {listing.price} ВП</Button>}
           </Box>;
         })()}
         {tab === 'inventory' && i.item && !i.item.stock && shop.owned[row.id] && <Button fullWidth disabled={busy} onClick={() => showItem(row.id)}>Выставить на продажу</Button>}
+        {tab === 'inventory' && i.pet && pets.ownedPets.includes(row.id) && <Button fullWidth disabled={busy} onClick={() => showItem(row.id)}>Выставить на продажу</Button>}
         {tab === 'inventory' && i.item && !i.item.stock && <Button size="small" aria-pressed={shop.favoriteIds.includes(row.id)} onClick={() => shop.toggleFavorite(row.id)}>{shop.favoriteIds.includes(row.id) ? '★ В избранном' : '☆ В избранное'}</Button>}
       </Box>; })}</Box>
       {!visible.length && <Typography sx={{ textAlign: 'center', py: 6 }}>Предметов не найдено</Typography>}
@@ -270,19 +302,24 @@ export default function Store({ onClose }: { onClose: () => void }) {
       </Box>
     </DialogContent>
     <Dialog open={!!selected} fullWidth maxWidth="md" onClose={() => !busy && setSelected(null)} PaperProps={{ sx: panelSx }}>
-      <DialogTitle>{selectedCase ? `Кейс «${selectedCase.name}»` : item?.name}</DialogTitle><DialogContent>
+      <DialogTitle>{selectedCase ? `Кейс «${selectedCase.name}»` : selectedPet ? selectedPet.name : item?.name}</DialogTitle><DialogContent>
         {selectedCase ? <>
             {phase === 'idle' && <>
-            <CaseArt definition={selectedCase} /><Typography sx={{ color: theme.textSec }}>Покупка: <strong>{selectedPriceIsSet ? `${selectedPrice} ВП` : 'цена не назначена'}</strong>. Внутри один уникальный пак: обводка, плашка и пузырь. Паки этой коллекции не встречаются в других кейсах.</Typography>
+            <CaseArt definition={selectedCase} /><Typography sx={{ color: theme.textSec }}>Покупка: <strong>{selectedPriceIsSet ? `${selectedPrice} ВП` : 'цена не назначена'}</strong>. {caseDescription(selectedCase) || (selectedCase.packs.length ? 'Внутри один уникальный пак: обводка, плашка и пузырь. Паки этой коллекции не встречаются в других кейсах.' : 'Внутри один случайный питомец из этой коллекции.')}</Typography>
             <Button disabled={busy || !selectedPriceIsSet || shop.balanceVp < Number(selectedPrice)} onClick={() => { setError(''); void loot.buyCase(selectedCase.id).catch(reportError); }}>{selectedPriceIsSet ? `Купить за ${selectedPrice} ВП` : 'Цена не назначена'}</Button>
             {error && <Typography role="alert" color="error">{error}</Typography>}
             <Button disabled={busy || caseCount(loot, selectedCase.id) < 1} onClick={open}>Открыть кейс</Button>
             <Typography sx={{ my: 2 }}>Содержимое и вероятности:</Typography>
             <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 1.5 }}>
               {casePacks(selectedCase.id).map(p => <Box key={p.id}><PackArtwork pack={p} /><Typography variant="caption" sx={{ display: 'block', textAlign: 'center', mt: 0.5, color: theme.textSec }}>{RARITY_META[rarity(p)].label} · {packChance(p, selectedCase.id).toFixed(2)}%</Typography></Box>)}
+              {selectedCase.rewards.filter(reward => reward.key.startsWith('pet-') && findPet(reward.key)).map(reward => {
+                const totalWeight = selectedCase.rewards.reduce((sum, r) => sum + r.weight, 0);
+                const pet = findPet(reward.key)!;
+                return <Box key={reward.key}><Box sx={{ height: 110, display: 'grid', placeItems: 'center' }}><PetArtwork petId={pet.id} size={84} /></Box><Typography variant="caption" sx={{ display: 'block', textAlign: 'center', mt: 0.5, color: theme.textSec }}>{RARITY_META[pet.rarity].label} · {(reward.weight / totalWeight * 100).toFixed(2)}%</Typography></Box>;
+              })}
             </Box>
           </>}
-          {phase !== 'idle' && <Box sx={{ position: 'relative', overflow: 'hidden', height: 155, bgcolor: theme.bgHeader, my: 2, '&:after': { content: '""', position: 'absolute', top: 0, bottom: 0, left: '50%', width: 3, bgcolor: theme.accent } }}>
+          {phase !== 'idle' && reel.length > 0 && <Box sx={{ position: 'relative', overflow: 'hidden', height: 155, bgcolor: theme.bgHeader, my: 2, '&:after': { content: '""', position: 'absolute', top: 0, bottom: 0, left: '50%', width: 3, bgcolor: theme.accent } }}>
             <Box sx={{ display: 'flex', gap: '8px', position: 'absolute', left: '50%', transform: `translateX(-${phase === 'ready' ? 80 : 40 * 168 + 80}px)`, transition: phase === 'ready' ? 'none' : 'transform 5s cubic-bezier(.08,.65,.12,1)' }}>
               {reel.map((p, n) => <Box key={n} sx={{ width: 160, flexShrink: 0, height: 150, boxSizing: 'border-box', p: 0.5, borderBottom: `4px solid ${RARITY_META[rarity(p)].color}` }}><PackArtwork pack={p} compact /></Box>)}
             </Box>
@@ -293,6 +330,23 @@ export default function Store({ onClose }: { onClose: () => void }) {
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0,1fr)', sm: 'repeat(3,minmax(0,1fr))' }, gap: 1 }}>{[drop.ring, drop.selfcard, drop.bubble].map(id => { const part = SHOP_CATALOG.find(i => i.id === id)!; return <Box key={id}><Preview item={part} /><Typography>{part.name}</Typography></Box>; })}</Box>
             <Button onClick={() => loot.equipPack(drop.id)}>Надеть пак</Button>
           </Box>}
+          {phase === 'result' && petDrop && findPet(petDrop) && <Box aria-live="polite">
+            <Typography variant="h5" sx={{ mb: 2 }}>Выпал питомец «{findPet(petDrop)!.name}»</Typography>
+            <PetArtwork petId={petDrop} size={140} />
+            <Typography sx={{ color: RARITY_META[findPet(petDrop)!.rarity].color, mt: 1 }}>{RARITY_META[findPet(petDrop)!.rarity].label}</Typography>
+            <Button disabled={!pets.ownedPets.includes(petDrop)} onClick={() => { void pets.equip(petDrop).catch(reportError); setSelected(null); }}>{pets.equippedPet?.id === petDrop ? 'Питомец уже надет' : 'Надеть питомца'}</Button>
+          </Box>}
+        </> : selectedPet ? <><Box sx={{ display: 'grid', placeItems: 'center', py: 2 }}><PetArtwork petId={selectedPet.id} size={140} /></Box>
+          <Typography sx={{ color: RARITY_META[selectedPet.rarity].color }}>{RARITY_META[selectedPet.rarity].label}</Typography>
+          <Typography sx={{ color: theme.textSec, mt: 1 }}>{selectedPet.name} — спутник, который живёт на экране рядом с чатом. Его можно перетаскивать, изменить размер и имя в профиле.</Typography>
+          {pets.ownedPets.includes(selectedPet.id)
+            ? <><Button disabled={busy} onClick={() => { void pets.equip(pets.equippedPet?.id === selectedPet.id ? null : selectedPet.id).catch(reportError); }}>{pets.equippedPet?.id === selectedPet.id ? 'Снять питомца' : 'Надеть питомца'}</Button>
+            <Box sx={{ mt: 2 }}>
+              <TextField type="number" label="Цена, ВП" value={salePrice} disabled={busy} onChange={e => setSalePrice(e.target.value)} inputProps={{ min: 6, max: 100000000, step: 1 }} error={!validSalePrice} helperText="Целое число от 6 до 100000000 ВП" />
+              <Typography>Комиссия 15%. Вы получите: {validSalePrice ? Math.floor(Number(salePrice) * 85 / 100) : 0} ВП</Typography>
+              <Button disabled={busy || !validSalePrice} onClick={sell}>Выставить за {validSalePrice ? salePrice : '—'} ВП</Button>
+            </Box></>
+            : <Typography sx={{ color: theme.textSec, mt: 1 }}>Питомец ещё не получен — его можно выпасть из кейса.</Typography>}
         </> : item && <><Preview item={item} /><Typography>{item.description}</Typography>{!item.stock && <FormControlLabel control={<Checkbox checked={shop.colorModes[item.id] === 'theme'} onChange={e => shop.setColorMode(item.id, e.target.checked ? 'theme' : 'stock')} />} label="Под цвет темы (без галочки — стоковый цвет)" />}<Box><Button disabled={busy} onClick={() => selectShopItem(item.id)}>{item.stock ? 'Использовать стандартный вид' : 'Надеть / снять'}</Button>{!item.stock && shop.owned[item.id] && <Box sx={{ mt: 2 }}>
           <TextField type="number" label="Цена, ВП" value={salePrice} disabled={busy} onChange={e => setSalePrice(e.target.value)} inputProps={{ min: 6, max: 100000000, step: 1 }} error={!validSalePrice} helperText="Целое число от 6 до 100000000 ВП" />
           <Typography>Комиссия 15%. Вы получите: {validSalePrice ? Math.floor(Number(salePrice) * 85 / 100) : 0} ВП</Typography>

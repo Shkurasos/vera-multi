@@ -8,7 +8,7 @@ import { useThemeStore } from '../store/themeStore';
 import { readableTextOn } from '../utils/contrast';
 import { useChatStore } from '../store/chatStore';
 import {
-  useChatBgPrefsStore, STOCK_WALLPAPERS,
+  useChatBgPrefsStore, useAllStockWallpapers, wallpaperCssClass,
   CUSTOM_PHOTO_WALLPAPER_ID, CUSTOM_LIVE_WALLPAPER_ID,
 } from '../store/chatBgPrefsStore';
 import type { UserWallpaperItem } from '../store/chatBgPrefsStore';
@@ -83,6 +83,9 @@ export default function WallpaperSettingsDialog({ open, onClose, forceGlobal }: 
     } else prefs.setChatWallpaper(chatId, { type: 'stock', value });
   };
   const userPhotoName = useChatBgPrefsStore((s) => s.userPhotoName);
+  // Галерея = заводские обои + те, что загрузил админ. Раньше тут была
+  // константа STOCK_WALLPAPERS, и загруженные админом фоны в списке не появлялись.
+  const allStockWallpapers = useAllStockWallpapers();
   const setUserPhotoWallpaper = useChatBgPrefsStore((s) => s.setUserPhotoWallpaper);
   const clearUserPhotoWallpaper = useChatBgPrefsStore((s) => s.clearUserPhotoWallpaper);
   const bumpLiveBg = useChatBgPrefsStore((s) => s.bumpLiveBg);
@@ -425,7 +428,7 @@ return (
           Стоковые обои
         </Typography>
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 1.5 }}>
-          {STOCK_WALLPAPERS.map((wp) => {
+          {allStockWallpapers.map((wp) => {
             const isSelected = globalStockWallpaper === wp.id;
             return (
               <Box
@@ -460,6 +463,14 @@ return (
                   >
                     ✖️
                   </Box>
+                ) : wp.type === 'base' ? (
+                  // Базовый фон темы — общий класс из <style>, а не строка в
+                  // sx: иначе галерея хешировала бы десятки килобайт css
+                  // для каждой плитки при каждом рендере.
+                  <Box
+                    className={wallpaperCssClass(wp)}
+                    sx={{ width: '100%', height: '100%' }}
+                  />
                 ) : (
                   <Box
                     sx={{

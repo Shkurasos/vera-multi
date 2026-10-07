@@ -29,9 +29,10 @@ import CallAudioSink from './components/CallAudioSink';
 import { bindSocketHandlers as bindCallHandlers } from './services/callPeers';
 import { peer, isPeerAvailable } from './services/peer';
 import { useUserSettingsStore } from './store/userSettingsStore';
-import { useThemeStore } from './store/themeStore';
+import { useThemeStore, bindBuiltinThemesSocket, refreshBuiltinThemes } from './store/themeStore';
 import { useShopStore } from './store/shopStore';
 import { useLootStore } from './store/lootStore';
+import { usePetStore } from './store/petStore';
 import { useCustomEquipStore } from './store/customEquipStore';
 import { useChatThemeStore } from './store/chatThemeStore';
 import { useChatBgPrefsStore } from './store/chatBgPrefsStore';
@@ -41,6 +42,7 @@ import ChatSettingsOfferDialog from './components/ChatSettingsOfferDialog';
 import AppLockGate from './components/AppLockGate';
 import DevInspector from './components/DevInspector';
 import { GlobalStyles } from '@mui/material';
+import { playDefaultChime, disposeNotificationSound } from './utils/notificationSound';
 
 // Магазин/инвентарь/кейсы — тяжёлый оверлей (арт паков, каталоги кейсов,
 // кошелёк). Открывается редко, поэтому грузим его по требованию, а не в
@@ -48,25 +50,8 @@ import { GlobalStyles } from '@mui/material';
 // когда open === true.
 const StoreOpen = React.lazy(() => import('./components/Store').then((m) => ({ default: m.StoreOpen })));
 
-// Звук уведомления
-let audioCtx: AudioContext | null = null;
-function playDefaultBeep(volume: number = 1) {
-  try {
-    if (!audioCtx) audioCtx = new AudioContext();
-    const ctx = audioCtx;
-    const oscillator = ctx.createOscillator();
-    const gainNode = ctx.createGain();
-    oscillator.connect(gainNode);
-    gainNode.connect(ctx.destination);
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(880, ctx.currentTime);
-    oscillator.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.15);
-    gainNode.gain.setValueAtTime(0.3 * volume, ctx.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-    oscillator.start(ctx.currentTime);
-    oscillator.stop(ctx.currentTime + 0.3);
-  } catch {}
-}
+// Звук уведомления: синтез живёт в utils/notificationSound. Раньше здесь была
+// его копия (и вторая в ChatWindow) — две почти одинаковые реализации beep'а.
 function playNotificationSound(chatId?: string) {
   try {
     if (chatId) {
@@ -77,21 +62,27 @@ function playNotificationSound(chatId?: string) {
       if (custom?.url) {
         const a = new Audio(custom.url);
         a.volume = volume;
-        a.play().catch(() => playDefaultBeep(volume));
+        a.play().catch(() => playDefaultChime(volume));
         return;
       }
       // Fallback на глобальный звук
       if (store.globalSound?.url) {
         const a = new Audio(store.globalSound.url);
         a.volume = volume;
-        a.play().catch(() => playDefaultBeep(volume));
+        a.play().catch(() => playDefaultChime(volume));
         return;
       }
-      playDefaultBeep(volume);
+      playDefaultChime(volume);
       return;
     }
   } catch {}
-  playDefaultBeep();
+  playDefaultChime();
+}
+
+// Освобождаем AudioContext при уходе со страницы: держать его открытым после
+// pagehide браузеру незачем, а контекст — тяжёлый ресурс.
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => disposeNotificationSound());
 }
 
 /**
@@ -279,6 +270,11 @@ export default function App() {
 
       listenersAttached.current = true;
 
+      // Встроенные темы общие для всех: забираем каталог (правки админа) и
+      // подписываемся на его изменения, чтобы тема обновилась без перезагрузки.
+      bindBuiltinThemesSocket();
+      refreshBuiltinThemes();
+
       socket.on('message:new', (message: any) => {
         if (message.senderId === user?.id) {
           replaceOrAddMessage(message);
@@ -392,10 +388,12 @@ export default function App() {
         useShopStore.getState().mergeOwned(ownedItems || []);
       });
       socket.on('cases:updated', data => useLootStore.getState().hydrate(data));
+      socket.on('pets:updated', data => usePetStore.setState({ ownedPets: data.ownedPets || [], equippedPet: data.equippedPet || null }));
 
       socket.on('connect', () => {
         void useChatStore.getState().loadChats();
         void useLootStore.getState().load().catch(console.error);
+        void usePetStore.getState().load().catch(console.error);
       });
 
       socket.on('disconnect', () => {

@@ -6,10 +6,11 @@ import {
 } from '@mui/material';
 import {
   ChevronRight, Edit, Check, CameraAlt, ExitToApp, PersonAdd, Search, Close,
-  Image as ImageIcon, Videocam, AudioFile, AttachFile, Download,
+  Image as ImageIcon, Videocam, AudioFile, AttachFile, Download, Lock,
 } from '@mui/icons-material';
 import { Chat, User, Message, MessageAttachment } from '../types';
 import { useAuthStore } from '../store/authStore';
+import { useUserBlocksStore } from '../store/userBlocksStore';
 import { useChatStore } from '../store/chatStore';
 import { useThemeStore } from '../store/themeStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
@@ -236,6 +237,27 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
   const isGroup = chat.type === 'group' || chat.type === 'channel';
   const myMember = chat.members?.find(m => m.userId === user?.id);
   const canEdit = isGroup && hasGroupRight(myMember, 'changeInfo');
+
+  // Блокировка доступна только в личке: в группе собеседников много, и запрет
+  // писать «этому пользователю» означал бы запрет писать всем остальным.
+  const blocks = useUserBlocksStore();
+  useEffect(() => { if (!blocks.loaded) blocks.load(); }, []);
+  const peerId = !isGroup ? chat.members?.find((m) => m.userId !== user?.id)?.userId : undefined;
+  const peerBlocked = !!peerId && blocks.isBlocked(peerId);
+  const [blockError, setBlockError] = useState('');
+  const [blockBusy, setBlockBusy] = useState(false);
+  const toggleBlock = async () => {
+    if (!peerId) return;
+    setBlockBusy(true); setBlockError('');
+    try {
+      if (peerBlocked) await blocks.unblock(peerId);
+      else await blocks.block(peerId);
+    } catch (e: any) {
+      setBlockError(e.response?.data?.message || 'Не удалось изменить блокировку');
+    } finally {
+      setBlockBusy(false);
+    }
+  };
   useEffect(() => {
     if (chat.type !== 'channel' || !canEdit) return;
     let cancelled = false;
@@ -877,6 +899,38 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
         )}
 
         {/* Add member + Leave group */}
+        {/* Блокировка — только в личке, где собеседник один. В группе запрет
+            писать «этому пользователю» означал бы запрет писать всем остальным. */}
+        {!isGroup && peerId && (
+          <>
+            <Divider sx={{ borderColor: theme.border, mt: 1 }} />
+            <Box sx={{ px: 2, py: 1.5, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+              <Button
+                fullWidth size="small"
+                // Иконка одна (Lock) для обоих состояний: в shim только она,
+                // а различие состояний уже читается по подписи кнопки.
+                startIcon={<Lock sx={{ fontSize: 18 }} />}
+                disabled={blockBusy}
+                sx={{
+                  color: peerBlocked ? theme.accent : '#f44336',
+                  justifyContent: 'flex-start',
+                  fontSize: 14, textTransform: 'none',
+                  '&:hover': { bgcolor: peerBlocked ? theme.accent + '14' : 'rgba(244,67,54,0.08)' },
+                }}
+                onClick={toggleBlock}
+              >
+                {peerBlocked ? 'Разблокировать' : 'Заблокировать'}
+              </Button>
+              {blockError && <Typography sx={{ fontSize: 12, color: '#f44336' }}>{blockError}</Typography>}
+              {peerBlocked && (
+                <Typography sx={{ fontSize: 11.5, color: theme.textSec }}>
+                  Пока пользователь заблокирован, вы не можете писать ему, а он — вам.
+                </Typography>
+              )}
+            </Box>
+          </>
+        )}
+
         {isGroup && (
           <>
             <Divider sx={{ borderColor: theme.border, mt: 1 }} />

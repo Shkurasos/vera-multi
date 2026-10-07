@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Checkbox, FormControlLabel, Typography } from '@mui/material';
-import { useThemeStore, THEMES, Theme } from '../store/themeStore';
+import { useThemeStore, useBuiltinThemes, Theme } from '../store/themeStore';
 import { useChatThemeStore } from '../store/chatThemeStore';
 import { ThemeEditor } from './ThemeEditor';
 
@@ -19,20 +19,22 @@ interface Props {
  */
 export default function ChatThemeDialog({ chatId, open, onClose }: Props) {
   const { theme } = useThemeStore();
+  // Встроенные темы — с правками админа (удалённые недоступны, новые видны).
+  const builtinThemes = useBuiltinThemes();
   const current = useChatThemeStore((s) => (chatId ? s.themes[chatId] : undefined));
   const setChatTheme = useChatThemeStore((s) => s.setChatTheme);
   const enabled = current?.enabled !== false;
 
   const initialTheme = useMemo<Theme>(() => {
     const saved = current || {};
-    const base = THEMES.find((item) => item.id === saved.sourceThemeId) || theme;
+    const base = builtinThemes.find((item) => item.id === saved.sourceThemeId) || theme;
     return {
       ...base,
       ...saved,
       id: saved.id || base.id,
       name: saved.name || `${base.name} для чата`,
     };
-  }, [current, theme]);
+  }, [current, theme, builtinThemes]);
 
   if (!open) return null;
 

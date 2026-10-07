@@ -7,6 +7,17 @@ const ts = require('typescript');
 
 const source = fs.readFileSync(path.join(__dirname, 'src/store/chatBgPrefsStore.ts'), 'utf8');
 
+// Базовые фоны тем грузим по-настоящему: каталог обоев строится из них, и
+// тест должен видеть настоящий список, а не заглушку.
+const baseWallpapers = vm.createContext({ console, exports: {}, module: { exports: {} } });
+vm.runInContext(
+  ts.transpileModule(
+    fs.readFileSync(path.join(__dirname, 'src/store/baseWallpapers.ts'), 'utf8'),
+    { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } },
+  ).outputText,
+  baseWallpapers,
+);
+
 // Минимальная эмуляция zustand (как в chatSkinStore.test.cjs).
 let store;
 const setFn = (update) => {
@@ -20,9 +31,16 @@ const context = vm.createContext({
   exports: {},
   module: { exports: {} },
   require: (name) => {
+    // useAllStockWallpapers — хук на useMemo; в тесте он не вызывается.
+    if (name === 'react') return { useMemo: (fn) => fn(), createElement: () => ({}) };
     if (name === 'zustand') return { create: () => (factory) => { store = factory(setFn, getFn); return store; } };
     if (name === 'zustand/middleware') return { persist: (factory) => factory };
     if (name === '../services/storeSyncSimple') return { enableStoreSync: () => {} };
+    if (name === './baseWallpapers') return baseWallpapers.exports;
+    // Стор фонов админа тут не нужен: тесты проверяют свои обои, а не общий каталог.
+    if (name === './adminWallpapersStore') {
+      return { useAdminWallpaperItems: () => [], useAdminWallpapers: () => [] };
+    }
     throw new Error('unexpected require: ' + name);
   },
 });

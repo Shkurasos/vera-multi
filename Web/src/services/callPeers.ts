@@ -113,22 +113,19 @@ function createPeer(otherId: string): PeerConn {
     if (!target.getTracks().find((t) => t.id === e.track.id)) {
       target.addTrack(e.track);
     }
-    if (isScreen) {
-      useCallStore.getState()._setPeer(otherId, {
-        screenStream: new MediaStream(conn.screenStream.getTracks()),
-      });
+    // ВАЖНО: стор обновляем на ЛЮБОМ треке, а не только на аудио.
+    // Раньше _setPeer лежал внутри if (kind === "audio"), из-за чего
+    // видеотрек попадал в conn.remoteStream, но в стор не попадал — тайл
+    // продолжал рендерить MediaStream без видео (чёрный квадрат), и
+    // видеозвонок выглядел как «картинки нет». Аудио при этом работало,
+    // поэтому баг маскировался под «звук есть, видео нет».
+    if (e.track.kind === "audio" && !conn.vaCleanup) {
+      conn.vaCleanup = attachVoiceActivity(conn.remoteStream, otherId);
     }
-    // Аудио-трек — обновляем стрим в сторе, чтобы CallAudioSink перезватил srcObject.
-    if (e.track.kind === 'audio') {
-      if (!conn.vaCleanup) {
-        conn.vaCleanup = attachVoiceActivity(conn.remoteStream, otherId);
-      }
-      useCallStore.getState()._setPeer(otherId, {
-        stream: new MediaStream(conn.remoteStream.getTracks()),
-        screenStream: conn.screenStream.getTracks().length ? new MediaStream(conn.screenStream.getTracks()) : undefined,
-      });
-    }
-    // Видео — тайл обновится сам из того же conn.remoteStream (CallTile subscribes stream).
+    useCallStore.getState()._setPeer(otherId, {
+      stream: new MediaStream(conn.remoteStream.getTracks()),
+      screenStream: conn.screenStream.getTracks().length ? new MediaStream(conn.screenStream.getTracks()) : undefined,
+    });
   };
 
   pc.onconnectionstatechange = () => {

@@ -366,6 +366,26 @@ export const SHOP_CATALOG: ShopItem[] = [
     value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(46,125,50,0.3) 0%, rgba(27,94,32,0.5) 100%)' },
     previewColor: 'linear-gradient(135deg,#2e7d32,#1b5e20)', price: 50 },
 ];
+/**
+ * PERF: индекс каталога по applyKey + id.
+ *
+ * В MessageBubble на каждый пузырь приходилось делать четыре `SHOP_CATALOG.find`
+ * по всему списку. Список статичен (зашит в клиент), поэтому линейный поиск
+ * на каждый рендер — чистая трата: в чате на 200 сообщений это 800 проходов
+ * при каждом скролле и каждой смене темы.
+ *
+ * Ключ составной: `applyKey|id`, потому что один applyKey (avatarRing)
+ * встречается у десятков предметов, и искать нужно именно по связке.
+ */
+const SHOP_ITEM_INDEX: Map<string, ShopItem> = new Map(
+  SHOP_CATALOG.map(item => [`${item.applyKey}|${item.id}`, item]),
+);
+
+/** Предмет по applyKey и id за O(1). Аналог find, но без перебора каталога. */
+export function findShopItem(applyKey: string, id?: string | null): ShopItem | undefined {
+  if (!id) return undefined;
+  return SHOP_ITEM_INDEX.get(`${applyKey}|${id}`);
+}
 
 // ─── Линейка редкостей (21×2 = 42 платных предмета) ────────────────────────
 // Генерируется из RARITY_META (общий источник истины для UI-стилей и цен).

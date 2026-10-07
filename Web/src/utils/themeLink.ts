@@ -39,6 +39,7 @@ export function themeToLink(theme: Theme): string {
       ci: theme.chatBgImage,
       co: theme.chatBgImageOpacity,
       og: theme.bubbleOwnGradient,
+      og2: theme.bubbleOtherGradient,
       os: theme.bubbleOwnShadow,
       ps: theme.bubbleOtherShadow,
       sg: theme.sidebarGradient,
@@ -94,6 +95,8 @@ export function themeFromLink(link: string): Theme | null {
       chatBgImage: p.ci,
       chatBgImageOpacity: p.co ?? 0.35,
       bubbleOwnGradient: p.og,
+      // Старые ссылки ключа og2 не содержат — тогда чужие пузыри сплошные.
+      bubbleOtherGradient: p.og2,
       bubbleOwnShadow: p.os,
       bubbleOtherShadow: p.ps,
       sidebarGradient: p.sg,

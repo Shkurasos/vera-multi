@@ -10,7 +10,60 @@ const settings = read('src/components/SettingsDialog.tsx');
 const editor = read('src/components/ThemeEditor.tsx');
 const panels = read('src/components/ThemeSettingsPanels.tsx');
 
-// ── Модель: настройки живут в теме ────────────────────────────────────────────
+// ── Фон темы применяется и на старте, и без снимка настроек ────────────────────
+
+test('applyThemeSettings не падает на undefined и молча не теряет настройки', () => {
+  // Сигнатура объявляет s опциональным, но тело делало s.wallpaper без
+  // проверки. TypeError глотался общим try/catch — и не применялось НИЧЕГО,
+  // включая фон, при этом в консоли пусто.
+  const body = themeStore.slice(themeStore.indexOf('export function applyThemeSettings'));
+  assert.match(body, /if \(!s\) return;/, 'есть ранний выход на пустой настройке');
+  // Ранний выход обязан идти ДО try: иначе исключение всё равно пройдёт внутрь.
+  assert.ok(
+    /if \(!s\) return;[\s\S]{0,80}try \{/.test(body),
+    'проверка стоит до try/catch',
+  );
+});
+
+test('на старте фон берётся из пресета, если снимка настроек нет', () => {
+  // Встроенные темы хранят свой базовый фон в THEME_PRESETS. Если у активной
+  // темы нет записи в settingsByTheme и у самой темы нет settings, раньше
+  // в applyThemeSettings уходил undefined — на старте не применялось ничего.
+  assert.ok(
+    /s\.settingsByTheme\[String\(s\.themeId\)\] \|\| t\.settings \|\| themePreset\(s\.themeId\)/.test(themeStore),
+    'последним рубежом идёт пресет темы',
+  );
+  assert.ok(
+    /import \{ themePreset \} from '\.\/themePresets'/.test(themeStore),
+    'пресет импортирован',
+  );
+});
+
+// ── Шапка редактора: видно, что стоит и что настраивается ─────────────────────
+
+
+test('в шапке редактора видно и текущую тему, и редактируемую', () => {
+  // Разделы настроек («Обои», «Звук», «Внешний вид»…) принадлежат конкретной
+  // теме, поэтому шапка обязана называть обе: что СЕЙЧАС стоит в приложении
+  // и что НАСТРАИВАЕТСЯ. Одного имени черновика не хватало — в разделах
+  // настроек было непонятно, к какой теме относится правка.
+  assert.ok(editor.includes('Стоит:'), 'плашка «Стоит» есть');
+  assert.ok(editor.includes('Настраивается:'), 'плашка «Настраивается» есть');
+  // Стоящая тема берётся из стора (themeId), а не выводится из черновика.
+  assert.ok(
+    /const activeThemeName = isChat \? null : \(theme\?\.name/.test(editor),
+    'имя стоящей темы берётся из стора',
+  );
+  // В режиме чата в сторе лежит тема приложения, а не чата: показывать её
+  // как «стоит» было бы враньём, поэтому там другая подпись.
+  assert.ok(editor.includes('Тема чата:'), 'в режиме чата подпись другая');
+  // Шапка стоит ВНУТРИ прокручиваемой середины? Нет — она вне plateBody,
+  // поэтому подписи не уезжают вверх при прокрутке длинного раздела.
+  const headerAt = editor.indexOf('Стоит:');
+  const bodyAt = editor.indexOf('const plateBody');
+  assert.ok(headerAt > bodyAt, 'шапка объявлена рядом с разметкой плашки');
+});
+
 
 test('ThemeSettings содержит все перенесённые группы настроек', () => {
   assert.ok(themeStore.includes('export interface ThemeSettings'), 'тип объявлен');
@@ -56,8 +109,28 @@ test('настройки принадлежат каждой теме отдел
     themeStore.includes('const { [String(id)]: _dropped, ...rest } = get().settingsByTheme'),
     'удаление темы убирает её настройки',
   );
-  // Персист: настройки не теряются при перезагрузке.
-  assert.ok(themeStore.includes('settingsByTheme: p.settingsByTheme || {}'), 'восстанавливаются при загрузке');
+  // Персист: настройки не теряются при перезагрузке. Снимки, сделанные до
+  // появления базовых фонов, при этом ДОПОЛНЯЮТСЯ фоном их темы.
+  assert.ok(
+    themeStore.includes('settingsByTheme: fillMissingThemeWallpapers(p.settingsByTheme)'),
+    'настройки каждой темы восстанавливаются при загрузке через миграцию',
+  );
+  // Миграция вынесена в отдельную функцию — поведение проверяется ею в
+  // baseWallpapers.test.cjs на настоящих данных, здесь только факт вызова.
+  assert.ok(
+    themeStore.includes('export function fillMissingThemeWallpapers'),
+    'миграция снимков оформлена отдельной функцией',
+  );
+  // Важно: stockId берётся из пресета ЯВНО. Через spread он перекрывался бы
+  // 'none' из старого снимка, и фон не появлялся бы никогда.
+  assert.ok(
+    themeStore.includes('stockId: preset.wallpaper.stockId'),
+    'фон темы подставляется явно, а не через spread',
+  );
+  assert.ok(
+    themeStore.includes('hasOwnWallpaper'),
+    'свой выбор пользователя миграция не трогает',
+  );
 });
 
 // ── Настройки больше не живут в «Настройках» ─────────────────────────────────

@@ -181,6 +181,44 @@ interface ChatState {
 }
 
 const VERA_AI_ID = 'vera-ai';
+
+/**
+ * Удалённые здесь сообщения — «надгробья».
+ *
+ * Жалоба: «жму удалить, сообщение пропадает и тут же возвращается».
+ *
+ * Причина в том, что состояние собирается из трёх источников, и удаление
+ * доставалось не всем сразу:
+ *   1) локальный архив в IndexedDB (копия живёт и после удаления, пока
+ *      deleteArchivedMessage допишет транзакцию — а он асинхронный);
+ *   2) HTTP-ответ loadMessages, запрос которого мог уйти ДО удаления и прийти
+ *      после него (снимок сервера ещё содержал сообщение);
+ *   3) эхо сокета.
+ * Любой из них успевает вернуть сообщение обратно — отсюда «иногда».
+ *
+ * Поэтому удаление запоминается здесь и отфильтровывается при любом слиянии.
+ * Правка с сервера (message:edited) id не воскресит, а новое сообщение с тем
+ * же id невозможно: id — uuid.
+ */
+const deletedMessageIds = new Set<string>();
+/** Потолок: иначе на долгой сессии множество росло бы без ограничения. */
+const DELETED_MEMORY_MAX = 2000;
+
+function markDeleted(messageId: string): void {
+  if (!messageId || String(messageId).startsWith('temp-')) return;
+  deletedMessageIds.add(messageId);
+  if (deletedMessageIds.size > DELETED_MEMORY_MAX) {
+    // Порядок вставки в Set сохраняется, поэтому сносим самые старые записи.
+    const oldest = deletedMessageIds.values().next().value as string | undefined;
+    if (oldest) deletedMessageIds.delete(oldest);
+  }
+}
+
+/** Убрать из списка всё, что уже удалено. */
+function withoutDeleted<T extends { id: string }>(messages: T[]): T[] {
+  if (deletedMessageIds.size === 0) return messages;
+  return messages.filter((m) => !deletedMessageIds.has(m.id));
+}
 function veraAiChat(): Chat {
   const now = new Date().toISOString();
   return { id: VERA_AI_ID, type: 'private', name: 'Vera AI', description: 'Локальная нейросеть Ollama', avatarUrl: '', isPublic: false, members: [], unreadCount: 0, createdAt: now, updatedAt: now };
@@ -332,7 +370,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       try {
         const archived = await loadArchivedMessages(chatId);
         if (archived.length > 0 && (!get().messages[chatId] || get().messages[chatId].length === 0)) {
-          set((state) => ({ messages: { ...state.messages, [chatId]: archived } }));
+          set((state) => ({ messages: { ...state.messages, [chatId]: withoutDeleted(archived) } }));
         }
       } catch {}
     }
@@ -344,7 +382,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       try {
         const raw = await peer.listMessages(chatId);
         const pinnedMessageId = get().chats.find((c) => c.id === chatId)?.pinnedMessageId;
-        const msgs = raw.map(peerMsgToMsg).filter((m) => !m.isDeleted).map((m) => ({
+        const msgs = raw.map(peerMsgToMsg).filter((m) => !m.isDeleted && !deletedMessageIds.has(m.id)).map((m) => ({
           ...m,
           isPinned: m.id === pinnedMessageId,
         }));
@@ -367,10 +405,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const archived = await loadArchivedMessages(chatId).catch(() => [] as Message[]);
         merged = mergeById(mergeById(archived, get().messages[chatId] || []), incoming);
       }
+      merged = withoutDeleted(merged);
       set((state) => ({
         messages: { ...state.messages, [chatId]: merged.filter(m => !merged.some(saved => (saved as any).clientTempId === m.id)) },
       }));
-      saveArchivedMessages(incoming).catch(() => {});
+      saveArchivedMessages(withoutDeleted(incoming)).catch(() => {});
       if (!before && get().activeChat?.id === chatId && incoming.length) {
         const userId = useAuthStore.getState().user?.id;
         const lastIncoming = [...incoming].reverse().find((m) => m.senderId !== userId);
@@ -674,6 +713,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const resolvedId = resolveActionableId(get().messages, messageId);
     if (!resolvedId) throw new Error(PENDING_SEND_ERROR);
     messageId = resolvedId;
+    // Deletion is committed only after success (or its socket event).
+    // A failed request leaves the message intact; no optimistic rollback needed.
     try {
       if (isPeerAvailable()) {
         // P2P: физически удаляем через peer.updateMessage → пометим deleted=true,
@@ -824,6 +865,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   replaceOrAddMessage: (message) => {
+    if (deletedMessageIds.has(message.id) || message.isDeleted) return;
     saveArchivedMessages([message]).catch(() => {});
     set((state) => {
       const chatMsgs = state.messages[message.chatId] || [];
@@ -873,6 +915,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   addMessage: (message) => {
+    if (deletedMessageIds.has(message.id) || message.isDeleted) return;
     set((state) => {
       const safeChats = state.chats.filter(c => c && c.id);
       const normalizedMessage = attachReplyPreview(message, state.messages);
@@ -915,6 +958,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   updateMessage: (message) => {
+    if (deletedMessageIds.has(message.id) || message.isDeleted) return;
     set((state) => ({
       messages: {
         ...state.messages,
@@ -927,6 +971,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   removeMessage: (messageId, chatId) => {
+    markDeleted(messageId);
+    deleteArchivedMessage(messageId).catch(() => {});
     set((state) => ({
       messages: {
         ...state.messages,

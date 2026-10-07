@@ -1,17 +1,20 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Box, Typography, Button, Slider, Switch, Alert, ThemeProvider, createTheme, useTheme,
-  ToggleButton, ToggleButtonGroup,
+  ToggleButton, ToggleButtonGroup, FormControlLabel,
 } from '@mui/material';
 import { RestartAlt, TextFields, ViewSidebar } from '@mui/icons-material';
-import { useThemeStore } from '../store/themeStore';
+import { useThemeStore, themeBaseWallpaperId } from '../store/themeStore';
 import {
   useUserSettingsStore, type SidePos, type VertPos, type PlayerPos, type Density,
+  type WallClockPos, type WallClockDatePos, type WallClockSecondsPos,
 } from '../store/userSettingsStore';
 import { useUiPrefsStore, ICON_PACKS, UI_STYLES, CHAT_SHAPES } from '../store/uiPrefsStore';
 import { useAnimStore, ANIM_GROUPS } from '../store/animStore';
-import { useChatBgPrefsStore, STOCK_WALLPAPERS } from '../store/chatBgPrefsStore';
+import { useChatBgPrefsStore, useAllStockWallpapers, wallpaperCssClass } from '../store/chatBgPrefsStore';
+import { baseWallpaperClass } from '../store/baseWallpapers';
 import WallpaperSettingsDialog from './WallpaperSettingsDialog';
+import ChatListWallpaperPanel from './ChatListWallpaperPanel';
 import { GlobalSoundSettingsContent } from './GlobalSoundSettingsDialog';
 import LayoutDesignerDialog from './LayoutDesignerDialog';
 import BubbleSettingsControls from './BubbleSettingsControls';
@@ -45,17 +48,19 @@ export function ThemeSettingsLayer({ children }: { children: React.ReactNode }) 
   return <ThemeProvider theme={elevated}>{children}</ThemeProvider>;
 }
 
-function RowToggle({ label, hint, checked, onChange }: {
+function RowToggle({ label, hint, checked, onChange, disabled }: {
   label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void;
+  /** Зависимая настройка выключена — переключатель гасится и не нажимается. */
+  disabled?: boolean;
 }) {
   const theme = useThemeStore((s) => s.theme);
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 0.5 }}>
       <Box sx={{ minWidth: 0, pr: 1 }}>
-        <Typography sx={{ fontSize: 14, color: theme.text }}>{label}</Typography>
+        <Typography sx={{ fontSize: 14, color: disabled ? theme.textSec : theme.text }}>{label}</Typography>
         {hint && <Typography sx={{ fontSize: 12, color: theme.textSec }}>{hint}</Typography>}
       </Box>
-      <Switch checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <Switch checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
     </Box>
   );
 }
@@ -72,9 +77,22 @@ function PanelTitle({ children }: { children: React.ReactNode }) {
 export function WallpaperPanel() {
   const theme = useThemeStore((s) => s.theme);
   const [open, setOpen] = useState(false);
-  const stockId = useChatBgPrefsStore((s) => s.globalStockWallpaper);
+  // Показываем РОДНОЙ фон темы, а не 'none' из стора обоев: тема приходит со
+  // своим фоном сразу, и в панели он должен быть виден выбранным, иначе панель
+  // врала бы, что обоев нет.
+  const themeBaseId = useThemeStore((s) => themeBaseWallpaperId(s));
+  const chosenStockId = useChatBgPrefsStore((s) => s.globalStockWallpaper);
+  const stockId = (!chosenStockId || chosenStockId === 'none') && themeBaseId
+    ? themeBaseId
+    : chosenStockId;
   const photoName = useChatBgPrefsStore((s) => s.userPhotoName);
-  const stock = STOCK_WALLPAPERS.find((w) => w.id === stockId);
+  // Превью обоев темы должно видеть и фоны админа: раньше тут бралась константа
+  // STOCK_WALLPAPERS, и выбранный загруженный фон показывался как «Без обоев».
+  const stockWallpapers = useAllStockWallpapers();
+  const stock = stockWallpapers.find((w) => w.id === stockId);
+  // Базовый фон темы — общий класс из <style>, поэтому в sx только класс.
+  const baseClass = wallpaperCssClass(stock);
+  const stockUrl = stock && 'url' in stock ? stock.url : undefined;
   const title = stockId === 'custom-photo'
     ? (photoName || 'Своё фото')
     : stockId === 'custom-live'
@@ -87,10 +105,10 @@ export function WallpaperPanel() {
         display: 'flex', alignItems: 'center', gap: 1.5, p: 1.5, mb: 1.5,
         border: `1px solid ${theme.border}`, borderRadius: 2, bgcolor: theme.bgInput,
       }}>
-        <Box sx={{
+        <Box className={baseClass} sx={{
           width: 56, height: 40, borderRadius: 1.5, flexShrink: 0,
           border: `1px solid ${theme.border}`, bgcolor: theme.bgHover,
-          backgroundImage: stock?.url ? `url(${stock.url})` : undefined,
+          backgroundImage: stockUrl ? `url(${stockUrl})` : undefined,
           backgroundSize: 'cover', backgroundPosition: 'center',
         }} />
         <Box sx={{ minWidth: 0 }}>
@@ -103,9 +121,14 @@ export function WallpaperPanel() {
         🖼️ Открыть обои
       </Button>
       <Alert severity="info" sx={{ mt: 1.5, fontSize: 12 }}>
-        Здесь же — свои фото и видео. Выбор сохраняется вместе с темой и применяется при её переключении.
+        Базовые фоны тем уже включены в каждую тему — здесь их можно заменить
+        на другие стоковые, свои фото или видео. Выбор сохраняется вместе с темой.
       </Alert>
       <WallpaperSettingsDialog open={open} onClose={() => setOpen(false)} forceGlobal />
+
+      <Box sx={{ mt: 3, pt: 2.5, borderTop: `1px solid ${theme.border}` }}>
+        <ChatListWallpaperPanel />
+      </Box>
     </Box>
   );
 }
@@ -260,6 +283,106 @@ export function AppearancePanel() {
         ariaLabel="Шрифт всего приложения"
         hint="Меняет весь текст: кнопки, меню, заголовки, настройки и сообщения. Применяется сразу и сохраняется. Выбранный шрифт имеет приоритет над шрифтами чатов; «По умолчанию» возвращает индивидуальные настройки."
       />
+{/* ── Обои с календарём и часами ── */}
+      <Box sx={{ mt: 2 }}>
+        <RowToggle
+          label="Обои с календарём и часами"
+          hint="Дата и время поверх фона чата — шрифт берётся из темы/чата"
+          checked={s.wallClockEnabled}
+          onChange={(v) => s.set('wallClockEnabled', v)}
+        />
+        <RowToggle
+          label="Отодвигать сообщения из-под часов (Ex)"
+          hint="Экспериментально: сообщения уходят вбок. Функция ещё дорабатывается, возможны сбои"
+          checked={s.wallClockAvoid}
+          disabled={!s.wallClockEnabled}
+          onChange={(v) => s.set('wallClockAvoid', v)}
+        />
+        <Typography sx={{ fontSize: 13, mt: 1 }}>Показывать часы и календарь</Typography>
+        {([['dialogs', 'Диалоги'], ['board', 'Доски'], ['groups', 'Группы'], ['channels', 'Каналы']] as const).map(([kind, label]) => (
+          <RowToggle key={kind} label={label}
+            checked={s.wallClockChats?.[kind] !== false}
+            onChange={(v) => s.set('wallClockChats', { dialogs: true, board: true, groups: true, channels: true, ...s.wallClockChats, [kind]: v })}
+          />
+        ))}
+        <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 1, mb: 0.5 }}>
+          Расположение на обоях
+        </Typography>
+        <ToggleButtonGroup
+          exclusive size="small" fullWidth
+          value={s.wallClockPos}
+          onChange={(_, v: WallClockPos | null) => { if (v) s.set('wallClockPos', v); }}
+        >
+          <ToggleButton value="center">По середине</ToggleButton>
+          <ToggleButton value="top">Сверху</ToggleButton>
+          <ToggleButton value="bottom">Снизу</ToggleButton>
+        </ToggleButtonGroup>
+        <Typography sx={{ fontSize: 11, color: theme.textSec, mt: 0.5 }}>
+          Часы идут поверх любых обоев чата; сверху и снизу добавлен отступ, чтобы не мешать шапке и полю ввода.
+        </Typography>
+        <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5 }}>
+          Где стоит дата
+        </Typography>
+        <ToggleButtonGroup
+          exclusive size="small" fullWidth
+          value={s.wallClockDatePos}
+          onChange={(_, v: WallClockDatePos | null) => { if (v) s.set('wallClockDatePos', v); }}
+        >
+          <ToggleButton value="above">Над временем</ToggleButton>
+          <ToggleButton value="below">Под временем</ToggleButton>
+          <ToggleButton value="left">Слева</ToggleButton>
+          <ToggleButton value="right">Справа</ToggleButton>
+        </ToggleButtonGroup>
+        <FormControlLabel
+          sx={{ mt: 1.5, alignItems: 'center' }}
+          control={
+            <Switch
+              size="small" checked={s.wallClockSeconds}
+              onChange={(e) => s.set('wallClockSeconds', e.target.checked)}
+            />
+          }
+          label={<Typography sx={{ fontSize: 13, color: theme.textSec }}>Показывать секунды</Typography>}
+        />
+        {s.wallClockSeconds && (
+          <>
+            <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 1, mb: 0.5 }}>
+              Где стоят секунды
+            </Typography>
+            <ToggleButtonGroup
+              exclusive size="small" fullWidth
+              value={s.wallClockSecondsPos}
+              onChange={(_, v: WallClockSecondsPos | null) => { if (v) s.set('wallClockSecondsPos', v); }}
+            >
+              <ToggleButton value="above">Над временем</ToggleButton>
+              <ToggleButton value="below">Под временем</ToggleButton>
+              <ToggleButton value="left">Слева</ToggleButton>
+              <ToggleButton value="right">Справа</ToggleButton>
+              <ToggleButton value="topLeft">Сверху слева</ToggleButton>
+              <ToggleButton value="topRight">Сверху справа</ToggleButton>
+              <ToggleButton value="bottomLeft">Снизу слева</ToggleButton>
+              <ToggleButton value="bottomRight">Снизу справа</ToggleButton>
+            </ToggleButtonGroup>
+            <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5 }}>Размер секунд</Typography>
+            <Slider
+              min={0.6} max={1.6} step={0.05} value={s.wallClockSecondsScale}
+              onChange={(_, v) => s.set('wallClockSecondsScale', Array.isArray(v) ? v[0] : v)}
+              valueLabelDisplay="auto" valueLabelFormat={(v) => `${Math.round(v * 100)}%`}
+            />
+          </>
+        )}
+        <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5 }}>Размер времени</Typography>
+        <Slider
+          min={0.6} max={1.6} step={0.05} value={s.wallClockTimeScale}
+          onChange={(_, v) => s.set('wallClockTimeScale', Array.isArray(v) ? v[0] : v)}
+          valueLabelDisplay="auto" valueLabelFormat={(v) => `${Math.round(v * 100)}%`}
+        />
+        <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5 }}>Размер даты</Typography>
+        <Slider
+          min={0.6} max={1.6} step={0.05} value={s.wallClockDateScale}
+          onChange={(_, v) => s.set('wallClockDateScale', Array.isArray(v) ? v[0] : v)}
+          valueLabelDisplay="auto" valueLabelFormat={(v) => `${Math.round(v * 100)}%`}
+        />
+      </Box>
       <Alert severity="info" sx={{ mt: 1.5, fontSize: 12 }}>
         Яркость, масштаб и шрифт сохраняются вместе с темой.
       </Alert>

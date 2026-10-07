@@ -46,8 +46,14 @@ export default function BotFatherPage() {
     navigator.clipboard?.writeText(token);
   };
 
+  // Как и AdminToolsPage, скроллится сама: body и обёртка Routes в MainLayout
+  // стоят на overflow: hidden, поэтому страница без overflowY не листается.
   return (
-    <Box sx={{ p: 3, color: '#fff' }}>
+    <Box sx={{
+      height: '100%', overflowY: 'auto', overscrollBehavior: 'contain',
+      p: 3, color: '#fff', boxSizing: 'border-box',
+      pb: { xs: 76, md: 3 }, // запас под мобильную нижнюю навигацию
+    }}>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
         <Typography variant="h5" fontWeight={700}>🤖 BotFather</Typography>
         <Button variant="contained" startIcon={<Add />} onClick={() => setCreateOpen(true)}>Новый бот</Button>

@@ -4,6 +4,7 @@ import {
 } from '@mui/material';
 import { useThemeStore } from '../store/themeStore';
 import { useCustomFontsStore } from '../store/customFontsStore';
+import { useAdminFontOptions } from '../store/adminFontsStore';
 import { FONT_FILE_ACCEPT, customFontCss, formatFontSize } from '../utils/customFonts';
 
 export interface FontOption {
@@ -49,9 +50,20 @@ export default function FontPicker({
   useEffect(() => { void hydrate(); }, [hydrate]);
 
   const customOptions = fonts.map((font) => ({ font, value: customFontCss(font.family) }));
+  // Общие шрифты админа приходят с сервера и выглядят как стоковые: выбираются
+  // без загрузки файла. Подмешиваем к базовым, поэтому видны и в настройках
+  // приложения, и в шрифтах чатов (компонент один на оба места).
+  const adminOptions = useAdminFontOptions();
+  const options = baseOptions.slice();
+  const seenOption = new Set(options.map((o) => o.value));
+  for (const o of adminOptions) {
+    if (seenOption.has(o.value)) continue;
+    seenOption.add(o.value);
+    options.push(o);
+  }
   // Шрифт могли удалить или он загружен на другом устройстве — показываем
   // значение как есть, чтобы селект не выглядел пустым.
-  const known = baseOptions.some((option) => option.value === value)
+  const known = seenOption.has(value)
     || customOptions.some((option) => option.value === value);
 
   const pickFile = async (file: File | undefined) => {
@@ -73,7 +85,7 @@ export default function FontPicker({
         MenuProps={{ PaperProps: { 'data-font-preview': true } as React.HTMLAttributes<HTMLDivElement> }}
         sx={{ fontFamily: value, '& .MuiSelect-select': dense ? { py: 1 } : undefined }}
       >
-        {baseOptions.map((option) => (
+        {options.map((option) => (
           <MenuItem key={option.value} value={option.value} sx={{ fontFamily: option.value }}>
             {option.label}
           </MenuItem>

@@ -174,6 +174,8 @@ Vera_Multi/
 | Messages | `/api/messages` | `GET /:chatId?before=`, `POST /:chatId/send`, `PATCH /:id`, `DELETE /:id`, pin, reaction, mark-read, search |
 | Files | `/api/files` | `POST /upload` (multipart) |
 | Music | `/api/music` | треки: `GET/POST`, загрузка файла, импорт URL/ZIP, плейлисты (алиас `/api/playlists`) |
+| Music shared | `/api/music/shared`, `/api/music/albums`, `/api/music/cover`, `/api/music/genres` | **общая библиотека** (см. `music-share.js`): список с поиском/сортировкой, публикация трека и альбома (обложка+название+жанр+исполнитель), сохранение чужого себе. Жанр — из закрытого списка `music-genres.js` (69 жанров в 10 группах + 233 синонима), приводится к канону |
+| Proto board | `/api/proto-boards/*` | **доска** (см. `proto-board.js`): карточки/нити/фото на сервере + права `owner`/`editor`/`viewer`, приглашение и отзыв доступа. Группа становится доской, если её имя начинается с «\|». Владельцем доски становится **тот, кто её открыл** (не хозяин чата — иначе создатель получал `null`, то есть зрителя, и составом управлять было некому); хозяин чата при этом получает `editor`. Проверка `ownerId` идёт **до** списка `access`, поэтому запись в списке не может отобрать права у владельца |
 | Sync | `/api/sync/stores` | `GET`, `GET /:name`, `PUT /:name`, `DELETE /:name` |
 | Devices | `/api/devices` | `GET /`, `POST /link/create`, `POST /link/accept` |
 | Wallet | `/api/wallet` | баланс, пополнение (NOWPayments IPN) |
@@ -302,6 +304,10 @@ Vera_Multi/
 | `ChatWallpaper.tsx` | Движок обоев: 15 типов (time, parallax, touch, gradient, particles, waves, grid, aurora, matrix, snow, rain, stars, noise, blob) | `wallpaperSpec` → CSS |
 | `ChatThemeDialog.tsx` | Диалог персональной темы чата (пресеты + свои) | `chatThemeStore` |
 | `WallpaperSettingsDialog.tsx` | Обои чата: стоковые фото + **несколько своих фото/видео** (галерея, выбор любого, удаление); легаси-одиночные обои мигрируют в список | `chatBgPrefsStore`, `chatLiveBgStorage` |
+| `ChatListWallpaperPanel.tsx` | **Обои меню со списком чатов** (отдельные от чатовых): своё фото с ручной обрезкой, галерея, затемнение и размытие под читаемость. Живут во вкладке «Обои» редактора тем | `chatBgPrefsStore` (`CHAT_LIST_SCOPE`), `PhotoCropDialog`, `usePhotoBgUrl` |
+| `DeskBoard.tsx` | **Доска**: пробковый холст настраиваемого размера (кнопки «±» в HUD справа снизу, размер общий для всех и сохраняется), карточки (фото/заметка/сообщение), **папки** (рамка с ярлыком: карточка, отпущенная внутри, ложится в папку; папка едет вместе с содержимым; удаление папки не стирает карточки) и нити-связи между ними. Показывается вместо ленты сообщений у группы, чьё имя начинается с «\|» (раньше — «proto»/«desk», правило заменено). Поле ввода карточек — своё, **со смайликами** (вставка в позицию курсора); общая строка ввода чата на доске скрыта. Ввод сообщения прямо на доске, диалог «Доступ» для владельца | `useDeskBoard`, `utils/deskBoard` |
+| `DeskCard.tsx` | Карточка доски: перетаскивание (с порогом в 3px, чтобы щелчок не считался жестом), приколотый угол, режим «начало нити», три вида содержимого, режим зрителя (`readOnly`) | — |
+| `PhotoCropDialog.tsx` | Обрезка фото под пропорции: рамка, перетаскивание мышью, зум колесом, 5 соотношений сторон. Свой, без библиотек; геометрия — в `utils/cropMath.ts` | `utils/cropMath` |
 | `NotificationSettingsDialog.tsx` | Звук/громкость уведомлений чата | `chatSoundStore`, `chatPrefsStore` |
 | `GlobalSoundSettingsDialog.tsx` | Глобальный звук уведомлений + громкость | `chatSoundStore` |
 | `LayoutDesignerDialog.tsx` | Конструктор раскладки: стороны сайдбара/плеера/шапки/инпута, плотность, радиусы, ширина сообщений | `userSettingsStore` |
@@ -325,7 +331,8 @@ Vera_Multi/
 | Компонент | Назначение | Связи |
 |---|---|---|
 | `MusicPlayer.tsx` | Глобальный плеер (всегда в App): play/pause/next/prev/volume/repeat/shuffle/queue, мини-визуализатор | `musicStore`, `playlistStore`, `musicVisualizerStore` |
-| `MusicLibrary.tsx` | Библиотека треков: список, поиск, импорт файла/URL/ZIP, в плейлист | `musicStore`, `playlistStore`, `musicApi` |
+| `MusicLibrary.tsx` | Библиотека треков: вкладки «Все треки / Плейлисты / Общая библиотека», поиск, импорт файла/URL/ZIP, в плейлист | `musicStore`, `playlistStore`, `sharedMusicStore`, `musicApi` |
+| `SharedMusicPanel.tsx` | **Общая библиотека**: чужие треки и альбомы с поиском и сортировкой, «Сохранить» себе, кнопки **«Трек»** (выложить один свой трек) и **«Альбом»**. Обе формы с одинаковыми полями: обложка, название, исполнитель, жанр (с поиском по списку) и описание; трек выбирается из личной библиотеки | `sharedMusicStore`, `musicApi` |
 | `PlaylistsPanel.tsx` | Плейлисты: CRUD, реордер, публичность, отправка в чат | `playlistStore`, `musicStore` |
 | `MusicVisualizerOverlay.tsx` | Оверлей-визуализатор (bar/glow/pulse/wave) по `level/bass/beat` | `musicVisualizerStore` |
 | `MusicVisualizerSettingsDialog.tsx` | Настройки визуализатора: цвет, стиль, режимы, размещение | `musicVisualizerStore` |
@@ -367,6 +374,7 @@ Vera_Multi/
 | `localArchive.ts` | Локальный зеркальный архив в IndexedDB (`vera-archive-<userId>`, `chats`/`messages`) — история переживает рестарт сервера |
 | `chatLiveBgStorage.ts` | Живые обои (видео) в IndexedDB + blob-URL; **несколько видео**: у каждого свой ключ-скоуп (`<scope>:<id>`), легаси-ключи поддерживаются |
 | `customFontStorage.ts` | Свои шрифты (.ttf/.otf/.woff/.woff2) в IndexedDB: `saveFontFile/loadFontFiles/deleteFontFile` + `injectFontFace/removeFontFace` (`@font-face` со ссылкой на Blob) |
+| `chatBgPhotoStorage.ts` | Свои фото-обои в IndexedDB (`vera-photo-bg`), ключ `<scope>:<id>`; в сторе лежит только ключ. Обслуживает и скоуп `chatlist` |
 | `peer.ts` | **P2P-мост в `window.vera`** (legacy-режим). `isPeerAvailable()`, `peer.*`. Без `window.vera` вызовы падают с понятной ошибкой |
 | `storeSync.ts` | Универсальный `syncedStore()` — middleware синка Zustand-стора (server + socket, last-write-wins) |
 | `storeSyncSimple.ts` | Упрощённый `enableStoreSync(name, api, debounce)` — подключение синка к существующим сторам |
@@ -399,11 +407,14 @@ Vera_Multi/
 | `chatSoundStore.ts` | Звуки уведомлений (data URL) и громкости на чат + глобальный звук | `enableStoreSync` |
 | `chatThemeStore.ts` | Персональные темы чатов (`CHAT_THEME_PRESETS`), overrides | `enableStoreSync` |
 | `chatSkinStore.ts` | **«Мои скины» по чатам**: `overrides[chatId] = { ring?, selfcard?, bubble? }` (`''` — без скина, ключа нет — как в профиле); на сервер уходит через `PUT /api/chats/:id/my-skins` | `enableStoreSync` |
-| `chatBgPrefsStore.ts` | Обои: `STOCK_WALLPAPERS`, глобальные/per-chat, яркость фона; **`userWallpapers[scope]`** — список своих обоев (фото/видео), `globalLiveValue` — выбранное глобальное видео | — |
+| `chatBgPrefsStore.ts` | Обои: `STOCK_WALLPAPERS`, глобальные/per-chat, яркость фона; **`userWallpapers[scope]`** — список своих обоев (фото/видео), `globalLiveValue` — выбранное глобальное видео; **`CHAT_LIST_SCOPE`/`chatListBg`/`chatListDim`/`chatListBlur`** — обои меню со списком чатов (отдельный скоуп, не `perChatOverrides`) | — |
+| `usePhotoBgUrl.ts` | Хуки `usePhotoBgUrl(key)` / `usePhotoBgUrls(keys)`: ключи из стора → object URL картинок из IndexedDB (для галереи и для слоя в `Sidebar`) | `chatBgPhotoStorage` |
+| `cropMath.ts` | Геометрия кадрирования как чистые функции: `fitScale`, `coverZoom`, `clampZoom`, `clampPan`, `cropSourceRect`, `outputSize`, `frameSize` | — |
 | `themeStore.ts` | **Темы**: `THEMES` (каталог), `setTheme`, finish (solid/glass/matte/metal), `themeToLink/themeFromLink` (в `utils/themeLink.ts`), `CUSTOM_THEME_ID_START`, `getFinishStyles`, отдельные цвета времени (`messageTimeColor` на сообщениях, `chatTimeColor` в списке чатов) | persist + сервер |
 | `musicStore.ts` | Библиотека треков, очередь, currentTrack, play/pause/next/prev, volume, repeat, shuffle | — |
 | `musicVisualizerStore.ts` | Настройки визуализатора (цвет, стиль, режимы, размещение) | — |
 | `playlistStore.ts` | Плейлисты (свои + публичные), CRUD, треки, реордер, `getPlaylistTracks` | — |
+| `sharedMusicStore.ts` | **Общая библиотека**: чужие треки/альбомы, поиск + 5 сортировок, публикация и «сохранить себе». Отдельный стор от `musicStore` — иначе общий список перетирал бы личную библиотеку | `musicApi` |
 | `shopStore.ts` | **Инвентарь**: `SHOP_CATALOG`, категории, owned, активный предмет, `selectShopItem`, баланс ВП | `enableStoreSync` |
 | `customEquipStore.ts` | Кастомные предметы авторов: `items` (кэш), `equipped` (что надето), `load/upsert/setEquipped` | — |
 | `deviceStore.ts` | P2P-устройства: `info`, `linked`, `invite`, `init/refreshLinked/makeInvite/acceptInvite` (legacy) | — |

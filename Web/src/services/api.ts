@@ -173,6 +173,11 @@ export const usersApi = {
     api.patch('/users/me', { themeId }),
 };
 
+export const petsApi = {
+  get: () => api.get('/pets'),
+  setEquipment: (petId: string | null, settings?: any) => api.put('/pets/equipment', { petId, settings }),
+};
+
 export const adminApi = {
   grantVp: (username: string, amount: number) => api.post('/admin/wallet/grant', { username, amount }),
   listIpBans: () => api.get('/admin/ip-bans'),
@@ -181,6 +186,100 @@ export const adminApi = {
   unbanIp: (ip: string) => api.delete(`/admin/ip-bans/${encodeURIComponent(ip)}`),
 };
 
+/**
+ * Каталог встроенных тем. Правит его только админ, но читают все клиенты:
+ * заводские темы + правки (`overrides`), удалённые (`removed`) и добавленные
+ * админом стоковые (`added`). Публикация — PUT, остальным клиентам приходит
+ * событием `themes:updated`.
+ */
+export const themesApi = {
+  get: () => api.get<{ themes: any }>('/themes'),
+  save: (payload: { overrides: Record<string, any>; removed: number[]; added: any[] }) =>
+    api.put<{ ok: boolean; themes: any }>('/themes', payload),
+};
+
+export type CommunityTheme = {
+  id: string;
+  name: string;
+  description: string;
+  authorId: string;
+  authorName: string;
+  theme: any;
+  previewUrl: string | null;
+  assetUrl: string | null;
+  assetType: 'font' | 'image' | null;
+  downloads: number;
+  createdAt: string;
+};
+
+export const communityThemesApi = {
+  list: (q = '') => api.get<{ themes: CommunityTheme[] }>('/community/themes', { params: q ? { q } : undefined }),
+  upload: (theme: Blob, name: string, description: string, preview?: File, asset?: File) => {
+    const form = new FormData();
+    form.append('theme', theme, 'theme.json');
+    form.append('name', name);
+    form.append('description', description);
+    if (preview) form.append('preview', preview, preview.name);
+    if (asset) form.append('asset', asset, asset.name);
+    return api.post<{ theme: CommunityTheme }>('/community/themes', form);
+  },
+  install: (id: string) => api.post<{ theme: CommunityTheme }>(`/community/themes/${encodeURIComponent(id)}/install`),
+  download: (id: string) => api.get<Blob>(`/community/themes/${encodeURIComponent(id)}/download`, { responseType: 'blob' }),
+  remove: (id: string) => api.delete(`/community/themes/${encodeURIComponent(id)}`),
+};
+
+/**
+ * Фото-обои: админ загружает файл на сервер (POST /themes/wallpapers) или
+ * заводит css-фон градиентом (POST /themes/wallpapers/base), и они появляются
+ * в общей галерее обоев у ВСЕХ пользователей.
+ *
+ * Загруженные фото НЕ кладутся в localStorage (это мегабайты) — приходят
+ * ссылкой на /uploads/wallpapers/... и живут только на сервере.
+ */
+
+export const wallpapersApi = {
+  get: () => api.get<{ wallpapers: any }>('/themes/wallpapers'),
+  /** Загрузка файла-фона. `file` — File/Blob, name и light уходят формой. */
+  upload: (file: File | Blob, name: string, light?: boolean) => {
+    const form = new FormData();
+    const filename = (file as File).name || 'wallpaper.jpg';
+    form.append('file', file, filename);
+    form.append('name', name);
+    if (light) form.append('light', '1');
+    return api.post('/themes/wallpapers', form);
+  },
+  /** Фон-градиент: только css, без url(). */
+  addBase: (payload: { name: string; css: string; light?: boolean }) =>
+    api.post('/themes/wallpapers/base', payload),
+  /** Переименование / переключение «светлый» / новый css — id не меняется. */
+  update: (id: string, payload: { name?: string; light?: boolean; css?: string }) =>
+    api.put(`/themes/wallpapers/${encodeURIComponent(id)}`, payload),
+  /** Замена картинки фото-фона: id сохраняется, меняется сам файл. */
+  replace: (id: string, file: File | Blob, name?: string, light?: boolean) => {
+    const form = new FormData();
+    form.append('file', file, (file as File).name || 'wallpaper.jpg');
+    if (name) form.append('name', name);
+    if (light) form.append('light', '1');
+    return api.post(`/themes/wallpapers/${encodeURIComponent(id)}/replace`, form);
+  },
+  remove: (id: string) => api.delete(`/themes/wallpapers/${encodeURIComponent(id)}`),
+};
+
+/**
+ * Общие стоковые шрифты админа: он заливает файл на сервер, и шрифт доступен
+ * всем без загрузки. Файл уходит multipart'ом — mime у шрифтов ненадёжен,
+ * сервер определяет тип по расширению.
+ */
+export const fontsApi = {
+  get: () => api.get<{ fonts: any }>('/themes/fonts'),
+  upload: (file: File | Blob, name?: string) => {
+    const form = new FormData();
+    form.append('file', file, (file as File).name || 'font.woff2');
+    if (name) form.append('name', name);
+    return api.post('/themes/fonts', form);
+  },
+  remove: (id: string) => api.delete(`/themes/fonts/${encodeURIComponent(id)}`),
+};
 export const chatsApi = {
   searchChannels: (q: string) => api.get('/channels/search', { params: { q } }),
   joinChannel: (id: string) => api.post(`/channels/${id}/join`),
@@ -208,6 +307,41 @@ export const chatsApi = {
   declineInvite: (token: string) => api.post(`/group-invites/${token}/decline`),
 };
 
+export interface DraftCorrectionResponse {
+  correctedText: string;
+  explanation?: string;
+}
+
+export const languageApi = {
+  correctDraft: (chatId: string, text: string, explain: boolean, signal?: AbortSignal) =>
+    api.post<DraftCorrectionResponse>(`/chats/${encodeURIComponent(chatId)}/language-correction`, { text, explain }, { signal, timeout: 65000 }),
+};
+
+export const protoBoardApi = {
+  get: (chatId: string) => api.get(`/proto-boards/${chatId}`),
+  // Размер доски (width/height) едет сюда же: он часть состояния холста, а не
+  // отдельная настройка. Опционален ради старых вызовов без него.
+  save: (chatId: string, board: { items: any[]; threads: any[]; width?: number; height?: number }) =>
+    api.put(`/proto-boards/${chatId}`, board),
+  saveDrawing: async (chatId: string, drawing: any[]) => {
+    const current = await api.get(`/proto-boards/${chatId}`);
+    return api.put(`/proto-boards/${chatId}`, { ...current.data, drawing });
+  },
+  access: (chatId: string) => api.get(`/proto-boards/${chatId}/access`),
+  grant: (chatId: string, userId: string, level: 'viewer' | 'editor') =>
+    api.post(`/proto-boards/${chatId}/access`, { userId, level }),
+  setLevel: (chatId: string, userId: string, level: 'viewer' | 'editor') =>
+    api.patch(`/proto-boards/${chatId}/access/${userId}`, { level }),
+  revoke: (chatId: string, userId: string) =>
+    api.delete(`/proto-boards/${chatId}/access/${userId}`),
+  uploadPhoto: (chatId: string, file: File) => {
+    const fd = new FormData();
+    fd.append('photo', file);
+    fd.append('chatId', chatId);
+    return api.post('/proto-boards/photo', fd);
+  },
+};
+
 export const aiApi = {
   chat: (message: string) => api.post<{ answer: string; model: string }>('/ai-lmm/chat', { message }),
   learnUrl: (url: string) => api.post<{ ok: boolean; url: string; text: string }>('/ai-lmm/learn-url', { url }),
@@ -231,6 +365,37 @@ export const messagesApi = {
     api.get(`/messages/${chatId}/search`, { params: { q } }),
   addReaction: (chatId: string, messageId: string, emoji: string) =>
     api.post(`/messages/${chatId}/reaction`, { messageId, emoji }),
+};
+
+export interface BlockedUser {
+  id: string;
+  blocked: { id: string; username: string };
+  blocker?: { id: string; username: string };
+  createdAt: string;
+}
+
+export const blocksApi = {
+  list: () => api.get<BlockedUser[]>('/users/blocks'),
+  // Кто заблокировал меня: чату это нужно, чтобы объяснить, почему нельзя писать.
+  listBy: () => api.get<BlockedUser[]>('/users/blocks/by'),
+  block: (userId: string) => api.post<{ ok: boolean; blocked: boolean; already: boolean }>(
+    `/users/${encodeURIComponent(userId)}/block`,
+  ),
+  unblock: (userId: string) => api.delete(`/users/${encodeURIComponent(userId)}/block`),
+};
+
+export const appealsApi = {
+  send: (text: string) => api.post<{ id: string }>('/appeals', { text }),
+  mine: () => api.get<{ id: string; status: string; createdAt: string } | null>('/appeals/mine'),
+  /**
+   * Путь для забаненных: работает по cookie установки, а не по JWT — у
+   * забаненного токена нет вовсе. Ответ сразу говорит, забанен ли аккаунт.
+   */
+  sendBanned: (text: string) => api.post<{ id: string }>('/auth/appeal', { text }),
+  mineBanned: () => api.get<{ banned: boolean; appeal: { id: string; status: string } | null }>('/auth/appeal'),
+  adminList: () => api.get<any[]>('/admin/appeals'),
+  decide: (id: string, action: 'uphold' | 'overturn', note: string) =>
+    api.post<any>(`/admin/appeals/${id}/decision`, { action, note }),
 };
 
 export const reportsApi = {
@@ -277,6 +442,32 @@ export const musicApi = {
   // Скачать все треки плейлиста одним zip. Возвращает Blob.
   downloadPlaylistZip: (playlistId: string) =>
     api.get(`/music/playlists/${playlistId}/zip`, { responseType: 'blob' }),
+  // ── Общая библиотека ────────────────────────────────────────────────────────
+  genres: () => api.get('/music/genres'),
+  sharedTracks: (params?: { q?: string; sort?: string; limit?: number }) =>
+    api.get('/music/shared', { params }),
+  publishTrack: (id: string, data: { title: string; artist: string; genre: string; description?: string; coverUrl?: string }) =>
+    api.post(`/music/${id}/publish`, data),
+  unpublishTrack: (id: string) => api.delete(`/music/${id}/publish`),
+  saveSharedTrack: (id: string) => api.post(`/music/shared/${id}/save`),
+  // Загрузить обложку (трек/альбом) и получить URL.
+  uploadCover: (formData: FormData, onProgress?: (p: number) => void) =>
+    api.post('/music/cover', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (e) => {
+        if (onProgress && e.total) onProgress(Math.round((e.loaded * 100) / e.total));
+      },
+    }),
+  albums: (params?: { scope?: 'mine' | 'shared'; q?: string; sort?: string }) =>
+    api.get('/music/albums', { params }),
+  createAlbum: (data: { title: string; artist: string; genre: string; description?: string; coverUrl: string; trackIds: string[] }) =>
+    api.post('/music/albums', data),
+  updateAlbum: (id: string, data: Partial<{ title: string; artist: string; genre: string; description: string; coverUrl: string }>) =>
+    api.patch(`/music/albums/${id}`, data),
+  deleteAlbum: (id: string) => api.delete(`/music/albums/${id}`),
+  publishAlbum: (id: string, data?: { genre?: string }) => api.post(`/music/albums/${id}/publish`, data || {}),
+  unpublishAlbum: (id: string) => api.delete(`/music/albums/${id}/publish`),
+  saveSharedAlbum: (id: string) => api.post(`/music/albums/${id}/save`),
   // Плейлисты
   getPlaylists: () => api.get('/playlists'),
   createPlaylist: (name: string, description?: string, isPublic?: boolean) => api.post('/playlists', { name, description, isPublic }),

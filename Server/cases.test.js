@@ -66,7 +66,8 @@ test('case catalog contains the requested marketplace prices', () => {
     'case-elements': 500,
     'case-eclipse': 500,
     'case-games': 500,
-    'case-corporation': null,
+    'case-corporation': 200,
+    'case-pets': 1000,
   });
   assert.equal(catalog.find(caseDefinition => caseDefinition.id === 'case-eclipse').name, 'Затемнение');
   assert.equal(catalog.find(caseDefinition => caseDefinition.id === 'case-games').name, 'Легенды видеоигр');

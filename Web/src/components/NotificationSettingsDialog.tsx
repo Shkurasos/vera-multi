@@ -6,6 +6,7 @@ import {
 import { PlayCircleOutline, StopCircle, Delete, Upload, VolumeUp, VolumeOff } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
 import { useChatSoundStore } from '../store/chatSoundStore';
+import { playChimePreview } from '../utils/notificationSound';
 import { useChatPrefsStore } from '../store/chatPrefsStore';
 
 const MAX_SOUND_SIZE = 1.5 * 1024 * 1024;
@@ -50,21 +51,10 @@ export default function NotificationSettingsDialog({
       setPlaying(true);
       a.play().catch(() => setPlaying(false));
     } else {
-      try {
-        const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
-        const ctx = new Ctx();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain); gain.connect(ctx.destination);
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(880, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.15);
-        gain.gain.setValueAtTime(0.3 * volume, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-        osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.3);
-        setPlaying(true);
-        setTimeout(() => setPlaying(false), 320);
-      } catch { /* ignore */ }
+      // Стандартный звук: тот же синтез, что и в уведомлениях (раньше здесь
+      // была третья копия beep'а, которая ещё и создавала новый AudioContext
+      // на каждое нажатие — отсюда подтормаживания при переборе).
+      if (playChimePreview(volume)) setPlaying(true);
     }
   }
 
@@ -114,7 +104,7 @@ export default function NotificationSettingsDialog({
           <Stack direction="row" spacing={1} alignItems="center">
             <Typography sx={{ flex: 1, fontSize: 14, color: current ? theme.accent : theme.textSec,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {current ? current.name : (useChatSoundStore.getState().globalSound ? `По умолчанию: ${useChatSoundStore.getState().globalSound.name}` : 'Стандартный beep')}
+              {current ? current.name : (useChatSoundStore.getState().globalSound ? `По умолчанию: ${useChatSoundStore.getState().globalSound.name}` : 'Стандартный «тинг»')}
             </Typography>
             <Tooltip title={playing ? 'Стоп' : 'Прослушать'}>
               <IconButton size="small" onClick={playPreview} sx={{ color: theme.textSec }}>

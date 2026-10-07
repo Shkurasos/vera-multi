@@ -8,6 +8,7 @@ import { initArchive, closeArchive } from '../services/localArchive';
 import { hydrateSettingsFromServer, startSettingsAutoSync } from './userSettingsStore';
 import { initStoreSyncOnLogin, disableAllStoreSync } from '../services/storeSyncSimple';
 import { prepareSettingsForAccount, disableSettingsSync } from './userSettingsStore';
+import { usePetStore } from './petStore';
 
 async function hydrateAccount(user: User): Promise<void> {
   const changed = localStorage.getItem('vera_sync_active_account') !== user.id;
@@ -16,11 +17,13 @@ async function hydrateAccount(user: User): Promise<void> {
   await initStoreSyncOnLogin(user.id, () => {
     const themeId = Number((user as any).themeId || 0);
     const theme = useThemeStore.getState().customThemes.find(t => t.id === themeId)
-      || THEMES.find(t => t.id === themeId) || THEMES[0];
+      || useThemeStore.getState().builtinThemes.find(t => t.id === themeId)
+      || useThemeStore.getState().builtinThemes[0] || THEMES[0];
     useThemeStore.setState({ themeId, theme, chatPhoto: (user as any).chatPhoto || undefined });
   });
   prepareSettingsForAccount(user.id, changed);
   await hydrateSettingsFromServer();
+  void usePetStore.getState().load().catch(() => undefined);
   startSettingsAutoSync(user.id);
 }
 
@@ -30,6 +33,11 @@ interface AuthState {
   isLoading: boolean;
   isAuthenticated: boolean;
   isPeerMode: boolean;
+  /**
+   * Аккаунт забанен администрацией. Вход не проходит, но приложение должно
+   * показать причину и кнопку апелляции, а не молчаливый экран входа.
+   */
+  isBanned: boolean;
   setUser: (user: User) => void;
   login: (token: string, user: User) => void;
   logout: () => Promise<void>;
@@ -64,6 +72,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   isLoading: true,
   isAuthenticated: false,
   isPeerMode: isPeerAvailable(),
+  isBanned: false,
 
   setUser: (user) => {
     localStorage.setItem('vera_user', JSON.stringify(user));
@@ -131,8 +140,13 @@ export const useAuthStore = create<AuthState>((set) => ({
         set({ user: res.data, isAuthenticated: true, token: existingToken, isLoading: false });
         try { if (res.data?.id) initArchive(res.data.id); } catch {}
         return;
-      } catch {
+      } catch (e: any) {
         // Токен невалиден — попробуем переавторизоваться по устройству ниже.
+        // Бан ловим отдельно: это не «токен протух», а приговор аккаунту.
+        if (e?.response?.data?.code === 'ACCOUNT_BANNED') {
+          set({ isBanned: true });
+          return;
+        }
         localStorage.removeItem('vera_token');
       }
     }
@@ -148,7 +162,13 @@ export const useAuthStore = create<AuthState>((set) => ({
       await hydrateAccount(user);
       set({ token: accessToken, user, isAuthenticated: true, isLoading: false });
       try { if (user?.id) initArchive(user.id); } catch {}
-    } catch (e) {
+    } catch (e: any) {
+      // Сервер отвечает 403 + code: ACCOUNT_BANNED на забаненном аккаунте.
+      // Показываем экран с апелляцией вместо бесконечной попытки войти.
+      if (e?.response?.data?.code === 'ACCOUNT_BANNED') {
+        set({ isBanned: true, isAuthenticated: false });
+        return;
+      }
       console.error('[auth] device login failed', e);
     } finally {
       set({ isLoading: false });

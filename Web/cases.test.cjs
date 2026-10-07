@@ -63,7 +63,9 @@ test('every server reward has matching client pieces, rarity and weight', () => 
     assert.equal(style.boxShadow, `inset 0 1px 0 ${material.accent}44, inset 0 -1px 0 #00000033, 0 5px 16px #00000026`);
     assert.equal(style.color, material.ink);
   }
-  const seen = new Set();
+  const seenPacks = new Set();
+  const seenPets = new Set();
+  const { PET_CATALOG } = load(path.join(__dirname, 'src/store/petCatalog.ts'));
   const { bubbleSkin, selfcardSkin } = load(path.join(__dirname, 'src/utils/bubbleSkin.ts'));
   for (const item of SHOP_CATALOG.filter(item => item.category === 'selfcard' && item.value?.pack)) {
     const bubble = SHOP_CATALOG.find(candidate => candidate.category === 'bubble' && candidate.value?.pack === item.value.pack);
@@ -85,14 +87,21 @@ test('every server reward has matching client pieces, rarity and weight', () => 
     }
   }
   for (const definition of require('./src/store/cases.json')) {
+    const packRewards = definition.rewards.filter(reward => !reward.key.startsWith('pet-'));
+    const petRewards = definition.rewards.filter(reward => reward.key.startsWith('pet-'));
     const pool = casePacks(definition.id);
-    assert.equal(pool.length, definition.rewards.length);
-    assert.ok(Math.abs(pool.reduce((sum, pack) => sum + packChance(pack, definition.id), 0) - 100) < 1e-8);
-    assert.ok(pool.some(pack => pack.id === drawPack(0, definition.id).id));
-    assert.ok(pool.some(pack => pack.id === drawPack(0.999999, definition.id).id));
-    for (const reward of definition.rewards) {
-      assert.ok(!seen.has(reward.key));
-      seen.add(reward.key);
+    assert.equal(pool.length, packRewards.length, definition.id);
+    if (pool.length) {
+      assert.ok(Math.abs(pool.reduce((sum, pack) => sum + packChance(pack, definition.id), 0) - 100) < 1e-8);
+      assert.ok(pool.some(pack => pack.id === drawPack(0, definition.id).id));
+      assert.ok(pool.some(pack => pack.id === drawPack(0.999999, definition.id).id));
+    } else {
+      // Кейс только с питомцами (например, case-pets) — паков в нём нет.
+      assert.ok(petRewards.length > 0, definition.id);
+    }
+    for (const reward of packRewards) {
+      assert.ok(!seenPacks.has(reward.key));
+      seenPacks.add(reward.key);
       const pack = SKIN_PACKS.find(pack => pack.id === `pack-${reward.key}`);
       assert.ok(pack);
       assert.equal(pack.weight, reward.weight);
@@ -101,8 +110,16 @@ test('every server reward has matching client pieces, rarity and weight', () => 
       assert.equal(parts[0].rarity, parts[1].rarity);
       assert.equal(parts[1].rarity, parts[2].rarity);
     }
+    for (const reward of petRewards) {
+      // Питомец может быть наградой сразу в нескольких кейсах — уникальность не требуется.
+      seenPets.add(reward.key);
+      const pet = PET_CATALOG.find(pet => pet.id === reward.key);
+      assert.ok(pet, reward.key);
+      assert.ok(pet.caseIds.includes(definition.id), `${reward.key} → ${definition.id}`);
+    }
   }
-  assert.equal(seen.size, SKIN_PACKS.length);
+  assert.equal(seenPacks.size, SKIN_PACKS.length);
+  assert.equal(seenPets.size, PET_CATALOG.length, 'каждый питомец выпадает хотя бы в одном кейсе');
   const games = casePacks('case-games');
   const dragon = games.find(pack => pack.id === 'pack-games-dragon');
   assert.ok(Math.abs(packChance(dragon, 'case-games') - 0.001) < 1e-12);

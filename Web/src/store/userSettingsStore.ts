@@ -22,6 +22,19 @@ export type PlayerPos = VertPos | 'left' | 'right';
 export type Density = 'compact' | 'cozy' | 'roomy';
 /** Сторона сообщений в чате: auto — свои справа/чужие слева (как обычно), left/right — все с одной стороны. */
 export type MessageAlign = 'auto' | 'left' | 'right';
+/** Положение календаря и часов на обоях чата (внешний вид темы). */
+export type WallClockPos = 'center' | 'top' | 'bottom';
+/** Где стоит дата относительно времени: над ним, под ним, слева или справа. */
+export type WallClockDatePos = 'above' | 'below' | 'left' | 'right';
+/**
+ * Где секунды относительно времени: над ним / под ним / слева / справа, либо
+ * углом — сверху слева, сверху справа, снизу слева, снизу справа. Угловые
+ * варианты нужны отдельно: в ряду или колонке они выразить нельзя, сдвиг от
+ * угла получается диагональным.
+ */
+export type WallClockSecondsPos =
+  | 'above' | 'below' | 'left' | 'right'
+  | 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight';
 
 export interface LayoutSettings {
   sidebarSide: SidePos;        // left | right
@@ -73,6 +86,30 @@ export interface UserSettingsState {
   textScale: number;               // 0.8 .. 1.6 (CSS var --vera-text-scale)
   language: 'ru' | 'en' | 'uk' | 'es';
   globalFontFamily: string;        // глобальный шрифт для всего приложения
+  /** Экспериментальный режим встроенных чатов сторонних сайтов. */
+  experimentalExternalSites: boolean;
+  /** Экспериментальная кнопка коррекции текущего черновика во всех чатах. */
+  languageCorrectionEnabled: boolean;
+  /** Показывать объяснение исправлений для глобальной коррекции текста. */
+  languageCorrectionExplain: boolean;
+  // Обои с календарём и часами поверх фона чата (внешний вид темы)
+  /** Размер цифр времени поверх обоев (множитель базового кегля). */
+  wallClockTimeScale: number;       // 0.6 .. 1.6
+  /** Размер строки даты поверх обоев. */
+  wallClockDateScale: number;       // 0.6 .. 1.6
+  wallClockEnabled: boolean;       // показывать дату и время на обоях
+  wallClockChats: Record<'dialogs' | 'board' | 'groups' | 'channels', boolean>;
+  // Отодвигать сообщения, перекрывающие часы: перекрывый набор навязаних пузырает сам, а текст лента остаётся на месте.
+  wallClockAvoid: boolean;
+  wallClockPos: WallClockPos;      // где на обоях: по середине / сверху / снизу
+  /** Где дата относительно времени: над ним / под ним / слева / справа. */
+  wallClockDatePos: WallClockDatePos;
+  /** Показывать секунды (по умолчанию выключено — они мелькают и отвлекают). */
+  wallClockSeconds: boolean;
+  /** Где секунды относительно времени: над ним / под ним / слева / справа. */
+  wallClockSecondsPos: WallClockSecondsPos;
+  /** Множитель кегля секунд относительно базового. */
+  wallClockSecondsScale: number;
 
   // Данные и экономия трафика
   autoDownloadMedia: boolean;
@@ -121,6 +158,19 @@ const initial: Omit<UserSettingsState, 'set' | 'reset' | 'setLayout' | 'resetLay
   textScale: 1,
   language: 'ru',
   globalFontFamily: 'inherit',
+  experimentalExternalSites: false,
+  languageCorrectionEnabled: false,
+  languageCorrectionExplain: false,
+  wallClockEnabled: false,
+  wallClockChats: { dialogs: true, board: true, groups: true, channels: true },
+  wallClockPos: 'center',
+  wallClockDatePos: 'above',
+  wallClockSeconds: false,
+  wallClockSecondsPos: 'below',
+  wallClockSecondsScale: 1,
+  wallClockAvoid: false,
+  wallClockTimeScale: 1,
+  wallClockDateScale: 1,
 
   autoDownloadMedia: true,
   compressUploads: true,
@@ -192,6 +242,8 @@ export async function hashPassword(pwd: string): Promise<string> {
  */
 const SYNC_KEYS: (keyof UserSettingsState)[] = [
   'brightness', 'textScale', 'language',
+  'experimentalExternalSites', 'languageCorrectionEnabled', 'languageCorrectionExplain',
+  'wallClockEnabled', 'wallClockAvoid', 'wallClockPos', 'wallClockDatePos', 'wallClockSeconds', 'wallClockSecondsPos', 'wallClockSecondsScale', 'wallClockTimeScale', 'wallClockDateScale',
   'autoDownloadMedia', 'compressUploads', 'streamingHighQuality',
   'inAppSounds', 'inAppVibration', 'vibrationEnabled', 'ledIndicator',
   'popupPreview', 'pinnedPriority',

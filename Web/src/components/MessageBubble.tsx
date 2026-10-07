@@ -16,7 +16,7 @@ import { useAuthStore } from '../store/authStore';
 import { useChatSettingsStore } from '../store/chatSettingsStore';
 import { useChatFontStore } from '../store/chatFontStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
-import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
+import { useShopStore, SHOP_CATALOG, findShopItem } from '../store/shopStore';
 import { useEquipmentStore } from '../store/equipmentStore';
 import { useCustomEquipStore } from '../store/customEquipStore';
 import { useChatSkinStore } from '../store/chatSkinStore';
@@ -28,6 +28,7 @@ import { bubbleSkin, selfcardSkin } from '../utils/bubbleSkin';
 import { mirrorBubble } from '../utils/mirrorBubble';
 import { clampBubble } from '../utils/bubbleSettings';
 import { clampAlpha, withAlpha, isTranslucentColor } from '../utils/colorAlpha';
+import { bubbleBackground } from '../utils/bubbleGradient';
 import { useMessageHoverStore } from '../store/messageHoverStore';
 import { messagesApi, voiceApi } from '../services/api';
 import PlaylistMessageCard, { VeraPlaylistPayload } from './PlaylistMessageCard';
@@ -36,6 +37,7 @@ import ContextMenu from './ContextMenu';
 import ChannelComments from './ChannelComments';
 import { hasGroupRight } from '../services/groupPermissions';
 import { membranePressSx, motion } from '../styles/motion';
+import { useClockAvoid } from '../hooks/useClockAvoid';
 
 interface Props {
   message: Message;
@@ -50,6 +52,8 @@ interface Props {
   themeVersion: number;
   /** Фоны пузырей — вынесены в пропсы для реактивности при смене темы. */
   bubbleOwnGradient?: string;
+  /** Градиент чужих пузырей; без него они остаются сплошным bgBubbleOther. */
+  bubbleOtherGradient?: string;
   bgBubbleOwn: string;
   bgBubbleOther: string;
   bubbleOwnShadow?: string;
@@ -69,6 +73,47 @@ interface Props {
 }
 
 const REACTION_EMOJIS = ['👍', '❤️', '🔥', '😂', '😮', '😢', '😡', '🎉', '👎', '⭐'];
+
+/**
+ * Виртуальный якорь из снятого прямоугольника.
+ *
+ * Нужен, потому что панель быстрого доступа условно монтируется: как только
+ * ховер сбрасывается, кнопка реакции исчезает из DOM. С настоящим элементом
+ * MUI измерял бы уже отсоединённый узел (getBoundingClientRect() → нули) и
+ * рисовал попап в левом верхнем углу экрана. Координаты не зависят от того,
+ * жив элемент или нет, поэтому попап остаётся ровно там, где была кнопка.
+ */
+/**
+ * Виртуальный якорь для Popover: прямоугольник, снятый с кнопки.
+ *
+ * Нужен, потому что панель быстрого доступа условно монтируется: как только
+ * ховер сбрасывается, кнопка реакции исчезает из DOM. С настоящим элементом
+ * MUI измерял бы уже отсоединённый узел (getBoundingClientRect() → нули) и
+ * рисовал попап в левом верхнем углу экрана. Координаты не зависят от того,
+ * жив элемент или нет, поэтому попап остаётся ровно там, где была кнопка.
+ *
+ * Форма — та, что ждёт MUI: getBoundingClientRect + nodeType.
+ */
+type VirtualAnchor = {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+  getBoundingClientRect: () => DOMRect;
+  /** MUI ждёт литеральный тип Node['ELEMENT_NODE'] (== 1). */
+  nodeType: 1;
+};
+
+function anchorFromRect(r: DOMRect): VirtualAnchor {
+  return {
+    top: r.top,
+    left: r.left,
+    width: r.width,
+    height: r.height,
+    getBoundingClientRect: () => r,
+    nodeType: 1,
+  };
+}
 
 // Превращает относительный /uploads/... URL в абсолютный, чтобы фото грузилось
 // даже когда клиент открыт через туннель (ngrok / cloudflare / production).
@@ -412,6 +457,7 @@ function MessageBubble({
   accent,
   themeVersion,
   bubbleOwnGradient,
+  bubbleOtherGradient,
   bgBubbleOwn,
   bgBubbleOther,
   bubbleOwnShadow,
@@ -477,7 +523,7 @@ function MessageBubble({
   // Активные покупки из магазина: обводка аватара и «плашка» своих сообщений.
   const shopActiveRing = useShopStore((s) => s.activeRing);
   const shopActiveSelfCard = useShopStore((s) => s.activeSelfCard);
-  const ringItem = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === shopActiveRing);
+  const ringItem = findShopItem('avatarRing', shopActiveRing);
   const shopActiveBubble = useShopStore((s) => s.activeBubble);
 
   // «Мои скины» этого чата (инфопанель): переопределяют глобальные скины
@@ -512,13 +558,28 @@ function MessageBubble({
   // сообщение дрожало, а постоянные layout-пересчёты съедали FPS.
   const bubbleRectRef = useRef<DOMRect | null>(null);
 
+  // Отодвигание от часов: считается по строкам сообщений, поэтому подключается
+  // одинаково для своих и чужих — перекрывают часы они оба.
+  const rowRef = useRef<HTMLDivElement>(null);
+  const bubbleRef = useRef<HTMLDivElement>(null);
+  const clockAvoid = useClockAvoid(bubbleRef, rowRef);
+  const clockAvoidOn = useUserSettingsStore((st) => st.wallClockAvoid);
+
   const [showActions, setShowActions] = useState(false);
   const [openReply, setOpenReply] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [forwardChatId, setForwardChatId] = useState('');
   const [chatListAnchor, setChatListAnchor] = useState<HTMLElement | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-  const [reactionAnchor, setReactionAnchor] = useState<HTMLElement | null>(null);
+  // Якорь попапа реакций — виртуальный (координаты кнопки на момент клика), а не
+  // живой DOM-узел. Панель быстрого доступа условно монтируется ({actionsVisible &&…})
+  // и размонтируется, как только сбрасывается ховер. С живым якорем MUI звал
+  // getBoundingClientRect() у уже отсоединённой кнопки, получал нули и уводил
+  // попап в левый верхний угол экрана. Координаты переживают размонтирование.
+  const [reactionAnchor, setReactionAnchor] = useState<VirtualAnchor | null>(null);
+  // Пока открыт выбор реакции, панель остаётся смонтированной: попап должен
+  // висеть рядом с той панелью, из которой открыт, а не отдельно от неё.
+  const actionsVisible = actionsOpen || reactionAnchor !== null;
   const [actionsPlacement, setActionsPlacement] = useState<'above' | 'below'>('below');
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchOrigin = useRef<{ x: number; y: number } | null>(null);
@@ -586,8 +647,8 @@ function MessageBubble({
     activeSelfCard: 'selfcard' in senderChatSkins ? senderChatSkins.selfcard : (baseSender as any).activeSelfCard,
     activeBubble: 'bubble' in senderChatSkins ? senderChatSkins.bubble : (baseSender as any).activeBubble,
   } : baseSender;
-  const selfCardItem = SHOP_CATALOG.find(i => i.applyKey === 'selfCard' && i.id === (isOwn ? ownSkinId('selfcard', shopActiveSelfCard) : sender?.activeSelfCard));
-  const bubbleItem = SHOP_CATALOG.find(i => i.applyKey === 'bubbleStyle' && i.id === (isOwn ? ownSkinId('bubble', shopActiveBubble) : sender?.activeBubble));
+  const selfCardItem = findShopItem('selfCard', isOwn ? ownSkinId('selfcard', shopActiveSelfCard) : sender?.activeSelfCard);
+  const bubbleItem = findShopItem('bubbleStyle', isOwn ? ownSkinId('bubble', shopActiveBubble) : sender?.activeBubble);
   const senderName = sender ? [sender.firstName, sender.lastName].filter(Boolean).join(' ') || sender.username : 'Бот';
   // Добавляем cache-busting параметр по themeVersion, чтобы браузер перечитал
   // картинку аватара после смены (иначе кэш держит старую).
@@ -673,7 +734,7 @@ function MessageBubble({
       // Градиентные пузыри из магазина: если есть свой градиент (закат/океан/лес),
       // используем его; иначе — градиент текущей темы.
       const customGradient = shopBubbleVal.gradient;
-      shopBubbleSx.background = customGradient || bubbleOwnGradient || bgBubbleOwn;
+      shopBubbleSx.background = customGradient || bubbleBackground(bgBubbleOwn, bubbleOwnGradient);
       shopBubbleSx.border = 'none';
       shopBubbleSx.boxShadow = '0 6px 18px rgba(0,0,0,0.25)';
     } else if (t === 'minimal') {
@@ -728,8 +789,11 @@ function MessageBubble({
   // каждый кадр скролла считать блюр для каждого пузыря. Скины из магазина
   // переопределяют и фон, и блюр ниже (их стиль идёт последним), поэтому здесь
   // достаточно смотреть на ИТОГОВЫЙ фон.
+  const themeBubbleBackground = isOwn
+    ? bubbleBackground(bgBubbleOwn, bubbleOwnGradient)
+    : bubbleBackground(bgBubbleOther, bubbleOtherGradient);
   const finalBubbleBackground = (equippedBubbleSx as any).background
-    || (!bubbleEnabled ? 'transparent' : (isOwn ? (bubbleOwnGradient || bgBubbleOwn) : bgBubbleOther));
+    || (!bubbleEnabled ? 'transparent' : themeBubbleBackground);
   const bubbleNeedsBackdropBlur = bubbleEnabled && isTranslucentColor(finalBubbleBackground);
   // Панель действий больше не красится в цвет пузыря: это отдельная прозрачная
   // «стеклянная» плашка (см. sx панели), поэтому скины и градиенты на неё не
@@ -747,7 +811,7 @@ function MessageBubble({
   // переданная сервером (sender.activeRing). Так обводка привязана к аккаунту покупателя.
   const ownRingId = ownSkinId('ring', shopActiveRing);
   const ringIdForAvatar = isOwn ? ownRingId : (sender?.activeRing || '');
-  const ringItemForAvatar = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === ringIdForAvatar);
+  const ringItemForAvatar = findShopItem('avatarRing', ringIdForAvatar);
   const ringValForAvatar = ringItemForAvatar?.value as any;
   const avatarSx: Record<string, any> = {
     width: 34, height: 34, cursor: 'pointer', flexShrink: 0,
@@ -806,6 +870,7 @@ function MessageBubble({
   return (
     <Box
       id={`msg-${message.id}`}
+      ref={rowRef}
       sx={{
         display: 'flex',
         flexDirection: isOwnSide ? 'row-reverse' : 'row',
@@ -832,6 +897,7 @@ function MessageBubble({
         </Avatar> : <Box sx={{ width: 34, flexShrink: 0 }} />}
 
       <Box
+        ref={bubbleRef}
         onPointerEnter={(e) => {
           if (e.pointerType !== 'mouse') return;
           // Единственный замер геометрии на весь цикл ховера.
@@ -891,6 +957,15 @@ function MessageBubble({
           maxWidth: editing ? '100%' : `${maxWidthPct}%`,
           minWidth: 0,
           position: 'relative',
+          // Отодвижение от часов — сдвиг вбок трансформацией, а не зазором.
+          // Трансформация не участвует в раскладке: лента не растёт, полоса
+          // прокрутки не уезжает, и самое нижнее сообщение остаётся на экране.
+          // Зазор (margin/padding) тут ломал: высота ленты росла на величину
+          // отступа, и нижнее сообщение уходило за край.
+          transform: `translateX(${clockAvoid}px)`,
+          transition: clockAvoidOn
+            ? 'transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1)'
+            : 'none',
         }}
       >
         {!isOwn && !selfCardItem && isGroupStart && (
@@ -937,9 +1012,7 @@ function MessageBubble({
               userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
               '& input, & textarea': { userSelect: 'text', WebkitUserSelect: 'text', WebkitTouchCallout: 'default' },
             },
-            background: !bubbleEnabled ? 'transparent' : (isOwn
-              ? bubbleOwnGradient || bgBubbleOwn
-              : bgBubbleOther),
+            background: !bubbleEnabled ? 'transparent' : themeBubbleBackground,
             color: shopBubbleText || bubbleTextColor,
             boxShadow: isOwn
               ? bubbleOwnShadow
@@ -1132,8 +1205,8 @@ function MessageBubble({
                     <Tooltip title={tooltipText}>
                       <Box sx={{ display: 'flex', alignItems: 'center' }}>
                         {isRead
-                          ? <DoneAll sx={{ fontSize: 14, color: theme.accent }} />
-                          : <Done sx={{ fontSize: 14, color: theme.textSec }} />}
+                          ? <DoneAll sx={{ fontSize: 14, color: messageTimeText }} />
+                          : <Done sx={{ fontSize: 14, color: messageTimeText }} />}
                       </Box>
                     </Tooltip>
                   );
@@ -1173,7 +1246,7 @@ function MessageBubble({
             7 IconButton + 7 Tooltip на пузырь, то есть ~2800 лишних узлов на
             200 сообщений — и участвовала в каждом цикле reconcile. Раз
             позиционируется относительно родителя, порядок в DOM не меняется. */}
-        {actionsOpen && (
+        {actionsVisible && (
         <Box
           onClick={e => e.stopPropagation()}
           onPointerDown={e => e.stopPropagation()}
@@ -1194,7 +1267,7 @@ function MessageBubble({
           scrollbarWidth: 'none',
           '&::-webkit-scrollbar': { display: 'none' },
           touchAction: 'pan-x',
-          opacity: isHovered ? 1 : 0, transition: 'opacity 180ms',
+          opacity: isHovered || reactionAnchor ? 1 : 0, transition: 'opacity 180ms',
           p: 0.25,
           // Панель под пузырём и ни на что не давит: position:absolute держит
           // раскладку ленты прежней. Видимую плашку рисует ::before, а сама
@@ -1243,7 +1316,10 @@ function MessageBubble({
             <IconButton size="small" onClick={() => { navigator.clipboard.writeText(message.content || ''); }} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><ContentCopy sx={{ fontSize: 16 }} /></IconButton>
           </Tooltip>
           <Tooltip title="Реакция">
-            <IconButton size="small" onClick={(e) => setReactionAnchor(e.currentTarget)} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><AddReaction sx={{ fontSize: 16 }} /></IconButton>
+            <IconButton size="small" onClick={(e) => {
+              // Снимаем прямоугольник кнопки ЗДЕСЬ, пока она ещё в DOM.
+              setReactionAnchor(anchorFromRect(e.currentTarget.getBoundingClientRect()));
+            }} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><AddReaction sx={{ fontSize: 16 }} /></IconButton>
           </Tooltip>
           <Tooltip title={message.isPinned ? 'Открепить' : 'Закрепить'}>
             <IconButton size="small" onClick={handleTogglePin} sx={{ color: message.isPinned ? theme.accent : theme.textSec, flexShrink: 0, ...membranePressSx }}><PushPin sx={{ fontSize: 16 }} /></IconButton>

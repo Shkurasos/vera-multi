@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback, Component, ErrorInfo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  Box, Typography, Avatar, IconButton, TextField,
+  Box, Typography, Avatar, IconButton, TextField, CircularProgress,
   Menu, MenuItem, Tooltip, LinearProgress, Popover,
   Dialog, DialogTitle, DialogContent, DialogActions, Button,
   Slider, Divider as MuiDivider, Snackbar, Alert, Checkbox, FormControlLabel,
@@ -13,7 +13,7 @@ import {
   Call, Videocam, NotificationsOff, NotificationsActive,
   FormatSize, ExitToApp, ArrowBack, Palette, KeyboardArrowDown, KeyboardArrowUp,
   // Send и RestartAlt есть в шиме иконок (mui-icons-shim); Handshake там нет.
-  RestartAlt,
+  RestartAlt, AutoAwesome,
 } from '@mui/icons-material';
 import HowToVote from '@mui/icons-material/HowToVote';
 import { CallModal } from './CallModal';
@@ -23,7 +23,9 @@ import { useChatPrefsStore } from '../store/chatPrefsStore';
 import { useChatSoundStore } from '../store/chatSoundStore';
 import NotificationSettingsDialog from './NotificationSettingsDialog';
 import { useAuthStore } from '../store/authStore';
-import { useThemeStore, getFinishStyles } from '../store/themeStore';
+import { useUserBlocksStore } from '../store/userBlocksStore';
+import AppealDialog from './AppealDialog';
+import { useThemeStore, getFinishStyles, themeBaseWallpaperId } from '../store/themeStore';
 import type { Theme } from '../store/themeStore';
 import { muiPaletteFromTheme } from '../utils/muiPalette';
 import { useChatSettingsStore, BUILTIN_FONTS } from '../store/chatSettingsStore';
@@ -32,8 +34,10 @@ import { useDraftsStore } from '../store/draftsStore';
 import { useMessageHoverStore } from '../store/messageHoverStore';
 import { useChatFontStore, STOCK_FONTS } from '../store/chatFontStore';
 import { sendTypingStart, sendTypingStop, getSocket } from '../services/socket';
-import { chatsApi, filesApi, messagesApi } from '../services/api';
+import { chatsApi, filesApi, languageApi, messagesApi } from '../services/api';
 import MessageBubble from './MessageBubble';
+import { externalSiteUrl } from '../utils/externalSite';
+import ExternalSiteDialog from './ExternalSiteDialog';
 import HoldRecorder from './HoldRecorder';
 import BubbleSettingsControls from './BubbleSettingsControls';
 import FontPicker from './FontPicker';
@@ -43,7 +47,8 @@ import UserProfileModal from './UserProfileModal';
 import { Message, User } from '../types';
 import ChatThemeDialog from './ChatThemeDialog';
 import { useChatThemeStore } from '../store/chatThemeStore';
-import { useChatBgPrefsStore, STOCK_WALLPAPERS } from '../store/chatBgPrefsStore';
+import { useChatBgPrefsStore, useAllStockWallpapers, wallpaperCssClass, isLightWallpaper } from '../store/chatBgPrefsStore';
+import { baseWallpaperClass, isLightBaseWallpaper } from '../store/baseWallpapers';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
 import { useCustomEquipStore } from '../store/customEquipStore';
 import { specToStyle, specAnimationClass } from '../utils/customStyle';
@@ -51,6 +56,12 @@ import { resolveChatTheme } from '../utils/chatTheme';
 import { saveLiveBg, loadLiveBgUrl, clearLiveBg, getLiveBgBlob } from '../services/chatLiveBgStorage';
 import { isPhotoBgKey, loadPhotoBgUrl, getPhotoBgBlob } from '../services/chatBgPhotoStorage';
 import ChatWallpaper, { type WallpaperSpec } from './ChatWallpaper';
+import WallClockOverlay from './WallClockOverlay';
+import DeskBoard from './DeskBoard';
+import Whiteboard from './Whiteboard';
+import { isDeskName } from '../utils/deskBoard';
+import { useClockLayout } from '../store/wallClockLayout';
+import { playDefaultChime } from '../utils/notificationSound';
 
 // Крупные разные тайлы не дают SVG-паттернам превращаться в мелкую сетку.
 function patternBackgroundSize(pattern?: string, min = 860, max = 1400): string | undefined {
@@ -111,11 +122,8 @@ const EMOJI_LIST = [
   '🐶','🐱','🦊','🐼','🦁','🐸','🦋','🌸','🌺','🌈',
 ];
 
-// Генерируем звук уведомления через Web Audio API.
-// Используем один переиспользуемый AudioContext, чтобы не создавать новый
-// на каждое сообщение (это вызывало подтормаживания).
-let notificationCtx: AudioContext | null = null;
-
+// Звук уведомления: синтез живёт в utils/notificationSound. Раньше здесь была
+// его копия (и вторая в App) — две почти одинаковые реализации beep'а.
 function playNotificationSound(chatId?: string) {
   try {
     if (chatId) {
@@ -129,59 +137,13 @@ function playNotificationSound(chatId?: string) {
         a.play().catch(() => {});
         return;
       }
-      // fallback beep с громкостью
-      try {
-        if (!notificationCtx) {
-          const Ctx = window.AudioContext || (window as any).webkitAudioContext;
-          if (!Ctx) return;
-          notificationCtx = new Ctx();
-        }
-        if (notificationCtx.state === 'suspended') notificationCtx.resume().catch(() => {});
-        const ctx = notificationCtx;
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain); gain.connect(ctx.destination);
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(880, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.15);
-        gain.gain.setValueAtTime(0.3 * volume, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-        osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.3);
-      } catch {}
+      // fallback на стандартный звук, с громкостью чата
+      playDefaultChime(volume);
       return;
     }
   } catch {}
-  try {
-    if (!notificationCtx) {
-      const Ctx = window.AudioContext || (window as any).webkitAudioContext;
-      if (!Ctx) return;
-      notificationCtx = new Ctx();
-    }
-    if (notificationCtx.state === 'suspended') {
-      notificationCtx.resume().catch(() => {});
-    }
-    const ctx = notificationCtx;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(880, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.15);
-    gain.gain.setValueAtTime(0.3, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.3);
-  } catch {}
+  playDefaultChime();
 }
-
-// Освобождаем ресурсы AudioContext при выгрузке страницы
-window.addEventListener('pagehide', () => {
-  try {
-    notificationCtx?.close();
-    notificationCtx = null;
-  } catch {}
-});
 
 function getInitials(name: string): string {
   if (!name) return '?';
@@ -248,6 +210,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const toggleMute = useChatPrefsStore((s) => s.toggleMute);
   const isMuted = useChatPrefsStore((s) => s.isMuted);
   const pinnedMessages = useChatPrefsStore((s) => s.pinnedMessages);
+  const languageCorrectionEnabled = useUserSettingsStore((s) => s.languageCorrectionEnabled);
+  const languageCorrectionExplain = useUserSettingsStore((s) => s.languageCorrectionExplain && s.languageCorrectionEnabled);
   const user = useAuthStore((s) => s.user);
   const baseTheme = useThemeStore((s) => s.theme);
   const themeVersion = useThemeStore((s) => s.themeVersion);
@@ -262,6 +226,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const getChatWallpaper = useChatBgPrefsStore((s) => s.getChatWallpaper);
   const perChatOverrides = useChatBgPrefsStore((s) => s.perChatOverrides);
   const globalStockWallpaper = useChatBgPrefsStore((s) => s.globalStockWallpaper);
+  // Галерея обоев с фонами админа: чат должен рисовать и заводские, и загруженные.
+  const allStockWallpapers = useAllStockWallpapers();
   const userPhotoWallpaper = useChatBgPrefsStore((s) => s.userPhotoWallpaper);
   const setChatWallpaper = useChatBgPrefsStore((s) => s.setChatWallpaper);
   const clearChatWallpaper = useChatBgPrefsStore((s) => s.clearChatWallpaper);
@@ -319,6 +285,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [serverSearchResults, setServerSearchResults] = useState<Message[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
+  const experimentalExternalSites = useUserSettingsStore((s) => s.experimentalExternalSites);
+  const [externalUrl, setExternalUrl] = useState<string | null>(null);
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [showDisplaySettings, setShowDisplaySettings] = useState(false);
   const [notifSettingsOpen, setNotifSettingsOpen] = useState(false);
@@ -326,6 +294,25 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const [activeCall, setActiveCall] = useState<{ type: 'audio' | 'video' } | null>(null);
   const callActive = useCallStore((s) => s.activeChatId === id);
   const [toast, setToast] = useState<{ message: string; severity: 'success' | 'info' | 'warning' | 'error' } | null>(null);
+  const [languageCorrectionBusy, setLanguageCorrectionBusy] = useState(false);
+  const [languageCorrectionExplanation, setLanguageCorrectionExplanation] = useState('');
+  const languageCorrectionRequestRef = useRef(0);
+  const languageCorrectionAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    languageCorrectionRequestRef.current += 1;
+    languageCorrectionAbortRef.current?.abort();
+    languageCorrectionAbortRef.current = null;
+    setLanguageCorrectionBusy(false);
+    setLanguageCorrectionExplanation('');
+    return () => {
+      languageCorrectionRequestRef.current += 1;
+      languageCorrectionAbortRef.current?.abort();
+      languageCorrectionAbortRef.current = null;
+    };
+  }, [id, languageCorrectionEnabled, languageCorrectionExplain]);
+  const draftRevisionRef = useRef(0);
+  const activeChatIdRef = useRef(id);
+  activeChatIdRef.current = id;
   /** Индекс текущего закреплённого сообщения в панели (как в Telegram). */
   const [pinnedIndex, setPinnedIndex] = useState(0);
   const [pollOpen, setPollOpen] = useState(false);
@@ -423,6 +410,10 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   // keepFromBottomRef (расстояние от низа контента до низа окрана).
   const [renderLimit, setRenderLimit] = useState(RENDER_CHUNK);
   const keepFromBottomRef = useRef<number | null>(null);
+  // Метка времени последнего тика часов: ограничивает частоту пересчёта
+  // отодвижения при прокрутке.
+  const lastClockTickRef = useRef(0);
+  const bumpClockLayout = useClockLayout((s) => s.bump);
   useEffect(() => { setRenderLimit(RENDER_CHUNK); }, [id]);
   useLayoutEffect(() => {
     const container = messagesContainerRef.current;
@@ -432,12 +423,22 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     }
   }, [renderLimit]);
 
+  // Базовый фон ТЕМЫ. Фоны обоев живут в отдельном сторе, который переживает
+  // перезагрузку и синхронизацию сам по себе: там может лежать 'none' или id от
+  // другой темы. Поэтому родной фон темы — последний рубех, чтобы чат не был
+  // пустым вопреки теме.
+  const themeBaseId = useThemeStore((s) => themeBaseWallpaperId(s));
+
   const currentWallpaper = useMemo(() => {
     if (!id) return null;
     if (perChatOverrides[id]) return perChatOverrides[id];
     if (activeChat?.id === id && activeChat.wallpaper) return activeChat.wallpaper;
-    return getChatWallpaper(id);
-  }, [id, activeChat?.id, activeChat?.wallpaper, getChatWallpaper, perChatOverrides, globalStockWallpaper, userPhotoWallpaper]);
+    const own = getChatWallpaper(id);
+    if (own) return own;
+    // Пользователь ничего не выбирал — показываем базовый фон темы.
+    if (themeBaseId) return { type: 'stock' as const, value: themeBaseId };
+    return null;
+  }, [id, activeChat?.id, activeChat?.wallpaper, getChatWallpaper, perChatOverrides, globalStockWallpaper, userPhotoWallpaper, themeBaseId]);
   const liveWallpaperScope = currentWallpaper?.type === 'live' ? currentWallpaper.value : null;
   const liveWallpaperKey = `${id}:${liveWallpaperScope}:${liveBgVersion}:${liveBgStamp}`;
 
@@ -479,8 +480,10 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const wallpaperPhotoUrl = useMemo(() => {
     if (!currentWallpaper) return null;
     if (currentWallpaper.type === 'stock') {
-      const stock = STOCK_WALLPAPERS.find(w => w.id === currentWallpaper.value);
-      return stock?.url || null;
+      const stock = allStockWallpapers.find(w => w.id === currentWallpaper.value);
+      // Базовые фоны тем — не фото, а css: их рисует отдельный слой ниже.
+      if (!stock || stock.type !== 'photo') return null;
+      return stock.url || null;
     }
     if (currentWallpaper.type === 'photo') {
       if (isPhotoBgKey(currentWallpaper.value)) return photoBgUrl; // ключ IndexedDB
@@ -488,6 +491,19 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     }
     return null;
   }, [currentWallpaper, photoBgUrl]);
+
+  // Базовый фон темы: css-строка лежит в общем <style> под классом, поэтому
+  // в sx попадает только короткий className (иначе emotion хешировал бы всю
+  // строку фона на каждом рендере — из-за этого чат и подлагивал).
+  const baseWallpaper = useMemo(() => {
+    if (currentWallpaper?.type !== 'stock') return null;
+    // Ищем и среди заводских, и среди загруженных админом: фон из галереи должен
+    // рисоваться и в чате, иначе выбор фона админа выглядел бы как пустота.
+    const wp = allStockWallpapers.find((w) => w.id === currentWallpaper.value);
+    const cls = wallpaperCssClass(wp);
+    if (!cls) return null;
+    return { className: cls, light: isLightWallpaper(wp) };
+  }, [currentWallpaper, allStockWallpapers]);
 
   const hasLiveWallpaper = currentWallpaper?.type === 'live' && loadedLiveBgKey === liveWallpaperKey;
 
@@ -543,6 +559,10 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   useEffect(() => {
     setKeepSendButton(false);
     if (id) {
+      languageCorrectionRequestRef.current += 1;
+      draftRevisionRef.current += 1;
+      setLanguageCorrectionBusy(false);
+      setLanguageCorrectionExplanation('');
       // Always load messages for this chat id
       useChatStore.getState().loadMessages(id);
       const chat = chats.find((c) => c && c.id === id);
@@ -574,6 +594,23 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   }, [chats, id]);
 
   const channelReadOnly = activeChat?.type === 'channel' && !activeChat.members.some(m => m.userId === user?.id && (m.role === 'owner' || m.role === 'admin'));
+
+  // Личная блокировка в этом чате. В личке (direct/private) собеседник один,
+  // поэтому сравниваем с ним; в группе кнопка «Заблокировать» не показывается —
+  // блокировка там означала бы запрет писать всем остальным участникам.
+  const blocks = useUserBlocksStore();
+  useEffect(() => { if (!blocks.loaded) blocks.load(); }, []);
+  const chatPeerId = activeChat?.type === 'direct' || activeChat?.type === 'private'
+    ? activeChat.members?.find((m) => m.userId !== user?.id)?.userId
+    : undefined;
+  // Я заблокировал собеседника — вместо строки ввода показываем «Разблокировать».
+  const iBlockedPeer = !!chatPeerId && blocks.isBlocked(chatPeerId);
+  // Собеседник заблокировал меня — писать всё равно нельзя, но кнопку разблокировки
+  // показывать нельзя: снять чужую блокировку я не могу.
+  const peerBlockedMe = !!chatPeerId && blocks.isBlockedBy(chatPeerId);
+  const blockReadOnly = channelReadOnly || peerBlockedMe;
+  const [blockBusy, setBlockBusy] = useState(false);
+  const [appealOpen, setAppealOpen] = useState(false);
   // useMemo: новый массив на каждый рендер сбрасывал бы memo у groupedMessages
   // и пересчитывался бы при любом локальном состоянии (hover, поиск и т.п.).
   const chatMessages = useMemo(
@@ -739,6 +776,16 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       atBottomRef.current = distanceFromBottom < 40;
       setShowScrollButton(distanceFromBottom > 200);
 
+      // Сообщения, перекрывающие часы, должны отодвигаться и при прокрутке:
+      // без сигнала их сдвиг остался бы от того положения, при котором они
+      // появились в экране. Тик не на каждый кадр, а раз в ~120 мс: плавность
+      // обеспечивает transition, а замеры на каждом кадре тормозят ленту.
+      const now = Date.now();
+      if (now - lastClockTickRef.current > 120) {
+        lastClockTickRef.current = now;
+        bumpClockLayout();
+      }
+
       // Догрузка окна вверх: пользователь у верхней кромки — показываем ещё порцию
       // истории, сохраняя текущую позицию (контент добавляется выше окна).
       // Только для реально прокручиваемого контента, иначе окно раздулось бы до
@@ -803,8 +850,14 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   };
 
   const handleSend = async () => {
-    if (channelReadOnly || uploading) return;
+    if (blockReadOnly || uploading) return;
     if ((!text.trim() && pendingFiles.length === 0) || !id) return;
+    draftRevisionRef.current += 1;
+    languageCorrectionRequestRef.current += 1;
+    languageCorrectionAbortRef.current?.abort();
+    languageCorrectionAbortRef.current = null;
+    setLanguageCorrectionBusy(false);
+    setLanguageCorrectionExplanation('');
     if (activeChat?.type === 'channel' && pendingFiles.length) {
       if (pendingFiles.length > 20) {
         setToast({ message: 'В одном посте можно прикрепить до 20 файлов.', severity: 'warning' });
@@ -859,6 +912,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   };
 
   const handleTyping = (value: string) => {
+    draftRevisionRef.current += 1;
+    setLanguageCorrectionExplanation('');
     setText(value);
     if (id) setDraft(id, value); // Сохраняем черновик при каждом изменении
     if (!id) return;
@@ -875,6 +930,55 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       if (typingTimer.current) clearTimeout(typingTimer.current);
       typingTimer.current = setTimeout(() => { try { sendTypingStop(id); } catch {} }, 2000);
     } catch {}
+  };
+
+  const correctDraft = async () => {
+    if (!id || !languageCorrectionEnabled || blockReadOnly || uploading || languageCorrectionBusy || languageCorrectionAbortRef.current) return;
+    const sourceText = text;
+    if (!sourceText.trim()) return;
+
+    const chatId = id;
+    const revision = draftRevisionRef.current;
+    const requestId = ++languageCorrectionRequestRef.current;
+    const controller = new AbortController();
+    languageCorrectionAbortRef.current = controller;
+    setLanguageCorrectionBusy(true);
+    setLanguageCorrectionExplanation('');
+    try {
+      const response = await languageApi.correctDraft(chatId, sourceText, languageCorrectionExplain, controller.signal);
+      if (requestId !== languageCorrectionRequestRef.current || activeChatIdRef.current !== chatId) return;
+
+      const latestDraft = useDraftsStore.getState().getDraft(chatId);
+      const stillEnabled = useChatPrefsStore.getState().languageCorrection?.[chatId]?.enabled === true;
+      if (draftRevisionRef.current !== revision || latestDraft !== sourceText || !stillEnabled) return;
+
+      const correctedText = response.data?.correctedText;
+      if (typeof correctedText !== 'string' || !correctedText.trim() || correctedText.length > 10000) {
+        throw new Error('Сервис вернул пустой результат');
+      }
+      draftRevisionRef.current += 1;
+      setText(correctedText);
+      setDraft(chatId, correctedText);
+      setKeepSendButton(true);
+      setLanguageCorrectionExplanation(
+        languageCorrectionExplain && typeof response.data.explanation === 'string'
+          ? response.data.explanation
+          : '',
+      );
+      messageInputRef.current?.focus({ preventScroll: true });
+      setToast({ message: correctedText === sourceText ? 'Ошибок не найдено' : 'Черновик исправлен', severity: 'info' });
+    } catch (error: any) {
+      if (requestId !== languageCorrectionRequestRef.current || activeChatIdRef.current !== chatId) return;
+      setToast({
+        message: error?.response?.data?.message || error?.message || 'Не удалось исправить черновик',
+        severity: 'error',
+      });
+    } finally {
+      if (requestId === languageCorrectionRequestRef.current) {
+        languageCorrectionAbortRef.current = null;
+        setLanguageCorrectionBusy(false);
+      }
+    }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -913,7 +1017,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
 
   // Загрузить массив File[] и отправить
   const uploadAndSendFiles = async (files: File[]) => {
-    if (channelReadOnly || !files.length || !id) return;
+    if (blockReadOnly || !files.length || !id) return;
     setUploading(true); setUploadProgress(0);
     let sentCount = 0;
     try {
@@ -1018,6 +1122,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const visibleMessages = showSearch && searchQuery.trim()
     ? (serverSearchResults.length ? serverSearchResults.slice().reverse() : localSearchResults)
     : windowedMessages;
+  const detectedExternalUrl = externalSiteUrl(searchQuery);
 
   const groupedMessages = useMemo(() => {
     if (!visibleMessages.length) return [];
@@ -1156,6 +1261,11 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       setToast({ message: error?.response?.data?.message || error?.message || 'Не удалось открепить сообщение', severity: 'error' });
     }
   };
+
+  // Группа, название которой начинается с «|», — не переписка, а доска.
+  // Считаем здесь, а не внутри JSX: имя может меняться на лету.
+  const isDesk = isDeskName(activeChat?.name);
+  const isWhiteboard = /^\s*\//.test(activeChat?.name || '');
 
   if (!activeChat) {
     // If there's a chat id in URL — we're loading, not waiting for selection
@@ -1325,6 +1435,24 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           </>
         )}
 
+        {/* ── Базовый фон темы: фон приходит классом, поверх — затемнение ── */}
+        {!hasLiveWallpaper && !wallpaperPhotoUrl && baseWallpaper && (
+          <>
+            <Box
+              className={baseWallpaper.className}
+              sx={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none' }}
+            />
+            <Box sx={{
+              position: 'absolute', inset: 0, zIndex: 1,
+              // Над светлым фоном затемнять нельзя — иначе он уходит в серый.
+              bgcolor: baseWallpaper.light
+                ? `rgba(255,255,255,${1 - chatBgBrightness})`
+                : `rgba(0,0,0,${1 - chatBgBrightness})`,
+              pointerEvents: 'none',
+            }} />
+          </>
+        )}
+
         {/* ── Фото-фон чата (стоковые или per-chat) ── */}
         {!hasLiveWallpaper && wallpaperPhotoUrl && (
           <>
@@ -1345,6 +1473,17 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             }} />
           </>
         )}
+
+        {/* ── Обои с календарём и часами: включается во «Внешнем виде» темы.
+            Слой поверх всех обоев (фото/видео/базовый фон), под лентой
+            сообщений; шрифт берётся тот же, что у сообщений этого чата. ── */}
+        <WallClockOverlay
+          chatKind={isDesk ? 'board' : activeChat.type === 'channel' ? 'channels' : activeChat.type === 'group' ? 'groups' : 'dialogs'}
+          chatId={id}
+          fontFamily={id ? (chatFontValue || globalFontFamily) : globalFontFamily}
+          color={theme.text}
+          colorSec={theme.textSec}
+        />
 
         {/* Drag overlay */}
         {dragOver && (
@@ -1760,6 +1899,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
                 hint="Список своих шрифтов общий с «Шрифтом для этого чата» выше и с настройками приложения."
               />
 
+              <MuiDivider sx={{ borderColor: theme.border, my: 2 }} />
 
             </DialogContent>
             <DialogActions sx={{ px: 3, pb: 2 }}>
@@ -1786,6 +1926,12 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
               placeholder="Поиск по сообщениям..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.nativeEvent.isComposing && experimentalExternalSites && detectedExternalUrl) {
+                  e.preventDefault();
+                  setExternalUrl(detectedExternalUrl);
+                }
+              }}
               size="small" variant="standard"
               sx={{
                 '& .MuiInput-root': { color: theme.text, fontSize: 15 },
@@ -1794,6 +1940,11 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
                 '& input::placeholder': { color: theme.textSec },
               }}
             />
+            {detectedExternalUrl && experimentalExternalSites && (
+              <Button size="small" variant="outlined" onClick={() => setExternalUrl(detectedExternalUrl)}>
+                Открыть сайт
+              </Button>
+            )}
             {searchQuery && (
               <Typography sx={{ fontSize: 13, color: theme.textSec, whiteSpace: 'nowrap' }}>
                 {searchLoading
@@ -1807,6 +1958,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             </IconButton>
           </Box>
         )}
+        {externalUrl && experimentalExternalSites && <ExternalSiteDialog key={externalUrl} url={externalUrl} onClose={() => setExternalUrl(null)} />}
 
         {/* ── Закреплённые сообщения: счётчик, переключение стрелками, открепить ── */}
         {activeChat && currentPinned && (
@@ -1886,6 +2038,15 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
         )}
 
         {/* ── Messages ── */}
+        {isWhiteboard ? (
+          <Whiteboard key={activeChat.id} chatId={activeChat.id} />
+        ) : isDesk ? (
+          <DeskBoard
+            key={activeChat.id}
+            chatId={activeChat.id}
+            chatName={chatName}
+          />
+        ) : (
         <Box sx={{
           // overflowY:'scroll' + scrollbarGutter → скроллбар виден ВСЕГДА
           // (а не только при наведении/прокрутке), бегунок при открытии
@@ -1955,6 +2116,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
                   accent={theme.accent}
                   themeVersion={themeVersion}
                   bubbleOwnGradient={theme.bubbleOwnGradient}
+                  bubbleOtherGradient={theme.bubbleOtherGradient}
                   bgBubbleOwn={theme.bgBubbleOwn}
                   bgBubbleOther={theme.bgBubbleOther}
                   bubbleOwnShadow={theme.bubbleOwnShadow}
@@ -1987,6 +2149,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           )}
           <div ref={messagesEndRef} />
         </Box>
+        )}
 
         {/* ── Кнопка "Прокрутить вниз" ── */}
         {showScrollButton && (
@@ -2141,9 +2304,84 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           </Box>
         )}
 
+        {/* ── Блокировка: вместо строки ввода ──
+            Заблокировав собеседника, я больше не могу писать ему (и он — мне).
+            Поэтому на месте поля ввода стоит кнопка «Разблокировать». */}
+        {iBlockedPeer && chatPeerId && (
+          <Box sx={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            gap: 1, px: 2, py: 1.25,
+            bgcolor: theme.bgHeader,
+            borderTop: chatInputPos === 'top' ? 'none' : `1px solid ${theme.border}`,
+            borderBottom: chatInputPos === 'top' ? `1px solid ${theme.border}` : 'none',
+            flexShrink: 0,
+            order: { xs: 4, md: chatInputPos === 'top' ? 1 : 4 },
+          }}>
+            <Typography sx={{ fontSize: 13, color: theme.textSec, mr: 1 }}>
+              Вы заблокировали этого пользователя
+            </Typography>
+            <Button
+              variant="outlined"
+              disabled={blockBusy}
+              onClick={async () => {
+                setBlockBusy(true);
+                try { await blocks.unblock(chatPeerId); } finally { setBlockBusy(false); }
+              }}
+              sx={{ textTransform: 'none', color: theme.accent, borderColor: theme.accent + '66' }}
+            >
+              Разблокировать
+            </Button>
+          </Box>
+        )}
+
+        {/* ── Меня заблокировали: сообщения не уходят, но решение можно оспорить ── */}
+        {peerBlockedMe && (
+          <Box sx={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap',
+            gap: 1, px: 2, py: 1.25,
+            bgcolor: theme.bgHeader,
+            borderTop: chatInputPos === 'top' ? 'none' : `1px solid ${theme.border}`,
+            borderBottom: chatInputPos === 'top' ? `1px solid ${theme.border}` : 'none',
+            flexShrink: 0,
+            order: { xs: 4, md: chatInputPos === 'top' ? 1 : 4 },
+          }}>
+            <Typography sx={{ fontSize: 13, color: theme.textSec, mr: 1 }}>
+              Вас заблокировал этот пользователь
+            </Typography>
+            {/* Заблокированный может оспорить блокировку — апелляция уходит админу. */}
+            <Button
+              size="small"
+              onClick={() => setAppealOpen(true)}
+              sx={{ textTransform: 'none', color: theme.accent }}
+            >
+              Подать апелляцию
+            </Button>
+          </Box>
+        )}
+
+        {languageCorrectionExplanation && languageCorrectionEnabled && languageCorrectionExplain && (
+          <Box sx={{
+            px: { xs: 1.5, md: 2.5 }, py: 1,
+            bgcolor: theme.accent + '10',
+            borderTop: `1px solid ${theme.accent}35`,
+            borderBottom: `1px solid ${theme.border}`,
+            flexShrink: 0,
+            order: { xs: 4, md: chatInputPos === 'top' ? 1 : 4 },
+          }}>
+            <Typography sx={{ color: theme.accent, fontSize: 12, fontWeight: 700, mb: 0.25 }}>
+              Объяснение исправлений
+            </Typography>
+            <Typography sx={{ color: theme.textSec, fontSize: 12, lineHeight: 1.45, whiteSpace: 'pre-wrap', maxHeight: 160, overflowY: 'auto' }}>
+              {languageCorrectionExplanation}
+            </Typography>
+          </Box>
+        )}
+
         {/* ── Input ── */}
         <Box data-chat-composer sx={{
-          display: 'flex', alignItems: 'flex-end', gap: 0.85,
+          // На доске строка ввода чата не нужна: там есть своё поле для карточек,
+          // а две строки ввода друг над другом занимали бы полэкрана и путались.
+          display: (isDesk || iBlockedPeer || peerBlockedMe) ? 'none' : 'flex', alignItems: 'flex-end', gap: 0.85,
           px: { xs: 0.65, md: 1.6 }, py: { xs: 0.55, md: 1.25 },
           pb: { xs: 'calc(0.55rem + env(safe-area-inset-bottom))', md: 1.25 },
           bgcolor: theme.bgHeader,
@@ -2209,6 +2447,27 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             </IconButton>
           </Tooltip>
 
+          {languageCorrectionEnabled && (
+            <Tooltip title={languageCorrectionBusy ? 'Исправляем черновик…' : 'Исправить черновик'}>
+              <span style={{ display: 'inline-flex', flexShrink: 0 }}>
+                <IconButton
+                  aria-label="Исправить черновик"
+                  disabled={blockReadOnly || uploading || languageCorrectionBusy || !text.trim()}
+                  onClick={correctDraft}
+                  sx={{
+                    width: 42, height: 42,
+                    color: languageCorrectionBusy ? theme.border : theme.textSec,
+                    transform: 'none',
+                    flexShrink: 0,
+                    '&:hover': { color: theme.accent, bgcolor: theme.bgHover },
+                  }}
+                >
+                  {languageCorrectionBusy ? <CircularProgress size={20} sx={{ color: theme.accent }} /> : <AutoAwesome sx={{ fontSize: 22 }} />}
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
+
           {/* Эмодзи попап */}
           <Popover
             open={Boolean(emojiAnchor)}
@@ -2228,7 +2487,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
               {EMOJI_LIST.map((emoji) => (
                 <Box
                   key={emoji}
-                  onClick={() => { setText(prev => prev + emoji); setEmojiAnchor(null); }}
+                  onClick={() => { handleTyping(text + emoji); setEmojiAnchor(null); }}
                   sx={{
                     fontSize: 24, cursor: 'pointer', p: 0.5, borderRadius: 1.5,
                     transition: 'transform 0.1s',
@@ -2244,8 +2503,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           <TextField
               fullWidth multiline maxRows={6}
               key="message-composer-input"
-              disabled={channelReadOnly}
-              placeholder={channelReadOnly ? "Комментарии доступны под публикациями" : activeChat.type === "channel" ? "Публикация от имени канала..." : "Сообщение..."}
+              disabled={blockReadOnly}
+              placeholder={peerBlockedMe ? "Вас заблокировал этот пользователь" : channelReadOnly ? "Комментарии доступны под публикациями" : activeChat.type === "channel" ? "Публикация от имени канала..." : "Сообщение..."}
               value={text}
               inputRef={messageInputRef}
               onFocus={() => setKeepSendButton(true)}
@@ -2297,14 +2556,14 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
                 '&:active::after': { opacity: 1, transform: 'scale(1)' },
                 '&:hover': { bgcolor: theme.accent + 'CC' },
                 ...membranePressSx,
-              }} disabled={channelReadOnly || uploading || (!text.trim() && pendingFiles.length === 0)}>
+              }} disabled={blockReadOnly || uploading || (!text.trim() && pendingFiles.length === 0)}>
                 <SendIcon sx={{ fontSize: 22 }} />
               </IconButton>
             </Tooltip>
           ) : (
             <HoldRecorder
               key={id}
-              disabled={channelReadOnly || uploading}
+              disabled={blockReadOnly || uploading}
               onSend={sendRecordedFile}
               onError={(message) => setToast({ message, severity: 'warning' })}
             />
@@ -2464,6 +2723,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           </Box>
         </DialogContent>
       </Dialog>
+      {/* Апелляция заблокировавшему меня: уходит администратору. */}
+      <AppealDialog open={appealOpen} onClose={() => setAppealOpen(false)} />
     </Box>
   );
 }
@@ -2477,17 +2738,26 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
  * из общей темы — то есть смена общей темы перекрашивала бы текст в чате, у
  * которого своя тема. Scope задаёт палитру по resolved-теме чата.
  *
- * Если персональной темы нет, лишний ThemeProvider не создаётся: значения
- * палитры совпали бы с общими, а лишняя тема заставила бы поддерево
- * перерисовываться при смене общей темы.
+ * Если персональной темы нет, ThemeProvider всё равно рендерится, но с той же
+ * ссылкой на тему, что и снаружи, — так палитра не меняется и поддерево не
+ * перерисовывается лишний раз.
  */
 function ChatThemeScope({ chatTheme, children }: { chatTheme: Theme | null; children: React.ReactNode }) {
   const outerTheme = useMuiTheme();
+  // scopedTheme и без темы чата равен outerTheme, так что createTheme лишний раз
+  // не считается, а ссылка остаётся стабильной.
   const scopedTheme = useMemo(
     () => (chatTheme ? createTheme(outerTheme, { palette: muiPaletteFromTheme(chatTheme) }) : outerTheme),
     [outerTheme, chatTheme],
   );
-  if (!chatTheme) return <>{children}</>;
+  // ThemeProvider рендерится ВСЕГДА, даже без темы чата. Раньше здесь был ранний
+  // выход с Fragment, когда темы нет, и это ломало редактор темы чата: галочка
+  // «Применять для этого чата» меняет enabled, значит chatTheme становится
+  // null ↔ не-null, а значит элемент на этой позиции меняет тип с ThemeProvider
+  // на Fragment. React на смену типа пересоздаёт поддерево целиком, и все
+  // useState внутри ChatWindowInner сбрасывались — вместе с chatThemeOpen,
+  // из-за чего окно редактора закрывалось само. Ссылка на тему при этом не
+  // меняется: при null мы отдаём ровно outerTheme.
   return <ThemeProvider theme={scopedTheme}>{children}</ThemeProvider>;
 }
 

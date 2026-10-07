@@ -6,6 +6,7 @@ import { usePlaylistStore } from '../store/playlistStore';
 import { useThemeStore } from '../store/themeStore';
 import { Track } from '../types';
 import PlaylistsPanel from './PlaylistsPanel';
+import SharedMusicPanel from './SharedMusicPanel';
 
 function formatDuration(s: number): string {
   const m = Math.floor((s || 0) / 60);
@@ -234,9 +235,12 @@ export default function MusicLibrary() {
     }}>
       <Tab label="Все треки" />
       <Tab label={`Плейлисты${playlists.length ? ` (${playlists.length})` : ''}`} />
+      <Tab label="Общая библиотека" />
     </Tabs>
     <Box data-tab-panel key={tab} sx={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
-    {tab === 1 ? <Box sx={{ flex: 1, overflow: 'hidden', minWidth: 0 }}><PlaylistsPanel /></Box> : loading ? <Box display="flex" justifyContent="center" mt={4}><CircularProgress sx={{ color: theme.accent }} /></Box> : <List data-vera-list sx={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', px: 1 }}>
+    {tab === 1 ? <Box sx={{ flex: 1, overflow: 'hidden', minWidth: 0 }}><PlaylistsPanel /></Box>
+      : tab === 2 ? <Box sx={{ flex: 1, overflow: 'hidden', minWidth: 0 }}><SharedMusicPanel /></Box>
+      : loading ? <Box display="flex" justifyContent="center" mt={4}><CircularProgress sx={{ color: theme.accent }} /></Box> : <List data-vera-list sx={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', px: 1 }}>
       <Box sx={{ px: 1, pb: 1 }}>
         <Button startIcon={<Shuffle />} disabled={!tracks.length} onClick={() => playShuffled(tracks)}
           sx={{ color: theme.accent, textTransform: 'none' }}>

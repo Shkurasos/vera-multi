@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   Box, Typography, Avatar, IconButton, TextField, Button,
   Divider, CircularProgress, Snackbar, Alert, Tooltip,
-  Dialog, DialogTitle, DialogContent, DialogActions, Stack,
+  Dialog, DialogTitle, DialogContent, DialogActions, Stack, MenuItem,
 } from '@mui/material';
 import {
   ArrowBack, Edit, PhotoCamera, Check, Close,
@@ -28,6 +28,19 @@ import { specToStyle } from '../utils/customStyle';
 import { buildShopRingSx } from '../utils/rarityStyles';
 import { skinColors } from '../utils/skinColors';
 import { useUserSettingsStore } from '../store/userSettingsStore';
+import { usePetStore } from '../store/petStore';
+import { PET_CATALOG } from '../store/petCatalog';
+import PetArtwork from '../components/PetArtwork';
+
+/** Пресеты шрифтов для имени питомца (выбор в карточке «Питомцы»). */
+const PET_FONT_OPTIONS = [
+  { value: 'inherit', label: 'По умолчанию' },
+  { value: 'Georgia, serif', label: 'Georgia' },
+  { value: "'Courier New', monospace", label: 'Courier New' },
+  { value: "'Comic Sans MS', cursive", label: 'Comic Sans' },
+  { value: "'Segoe Script', cursive", label: 'Segoe Script' },
+  { value: "'Impact', sans-serif", label: 'Impact' },
+];
 
 export default function ProfilePage() {
   const navigate = useNavigate();
@@ -168,6 +181,21 @@ export default function ProfilePage() {
   const ringVal = ringItem?.value as any;
   const colorModes = useShopStore(s => s.colorModes);
   const customProfileSpec = useCustomEquipStore((s) => s.equipped.profile ? s.items[s.equipped.profile]?.spec : undefined);
+  const ownedPets = usePetStore((s) => s.ownedPets);
+  const equippedPet = usePetStore((s) => s.equippedPet);
+  const equipPet = usePetStore((s) => s.equip);
+  const updatePetSettings = usePetStore((s) => s.updateSettings);
+  const [petName, setPetName] = useState('');
+  useEffect(() => { setPetName(equippedPet?.settings.name || ''); }, [equippedPet?.id, equippedPet?.settings.name]);
+  // Ошибки сервера (например, «Питомец не найден в инвентаре») показываем снеком,
+  // иначе rejected promise тихо теряется в void-вызовах.
+  const runPetAction = (action: Promise<unknown>, failMessage: string) => {
+    action.catch((error: any) => setSnack({
+      open: true,
+      message: error?.response?.data?.message || failMessage,
+      severity: 'error',
+    }));
+  };
 
   async function openLinkQr() {
     setQrError(null);
@@ -744,6 +772,52 @@ export default function ProfilePage() {
               ))}
             </Box>
 
+            <Box sx={{ bgcolor: theme.bgHeader, borderRadius: 3, p: 2, border: `1px solid ${theme.border}` }}>
+              <Typography sx={{ fontSize: 12, color: theme.textSec, textTransform: 'uppercase', letterSpacing: 0.6, mb: 1.5, fontWeight: 700 }}>
+                Питомцы
+              </Typography>
+              {!ownedPets.length ? (
+                <Typography sx={{ color: theme.textSec, fontSize: 13 }}>Откройте кейсы, чтобы получить питомца.</Typography>
+              ) : (
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 1 }}>
+                  {ownedPets.map((id) => {
+                    const pet = PET_CATALOG.find((item) => item.id === id);
+                    if (!pet) return null;
+                    const active = equippedPet?.id === id;
+                    return <Box key={id} sx={{ border: `1px solid ${active ? theme.accent : theme.border}`, borderRadius: 2, p: 1, textAlign: 'center' }}>
+                      <PetArtwork petId={id} size={72} />
+                      <Typography sx={{ color: theme.text, fontSize: 12, mt: 0.5 }}>{pet.name}</Typography>
+                      <Button size="small" onClick={() => runPetAction(equipPet(active ? null : id), 'Не удалось изменить экипировку питомца')} sx={{ mt: 0.5, minHeight: 28, fontSize: 11 }}>
+                        {active ? 'Снять' : 'Надеть'}
+                      </Button>
+                    </Box>;
+                  })}
+                </Box>
+              )}
+              {equippedPet && (
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 1.5, flexWrap: 'wrap' }}>
+                  <TextField size="small" label="Имя питомца" value={petName} onChange={(event) => setPetName(event.target.value.slice(0, 32))} sx={{ ...inputSx, flex: '1 1 170px' }} />
+                  <TextField
+                    size="small" select label="Шрифт имени"
+                    value={equippedPet.settings.font || 'inherit'}
+                    onChange={(event) => runPetAction(updatePetSettings({ font: event.target.value }), 'Не удалось сохранить шрифт')}
+                    sx={{ ...inputSx, minWidth: 165 }}
+                  >
+                    {PET_FONT_OPTIONS.map((option) => (
+                      <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+                    ))}
+                  </TextField>
+                  <Button onClick={() => runPetAction(updatePetSettings({ name: petName }), 'Не удалось сохранить имя')} variant="contained">Сохранить</Button>
+                  <TextField size="small" label="Размер" type="number" value={equippedPet.settings.size || 72}
+                    onChange={(event) => runPetAction(updatePetSettings({ size: Math.max(36, Math.min(180, Number(event.target.value) || 72)) }), 'Не удалось сохранить размер')}
+                    inputProps={{ min: 36, max: 180 }} sx={{ ...inputSx, width: 105 }} />
+                </Box>
+              )}
+              <Typography sx={{ color: theme.textSec, fontSize: 11, mt: 1.5 }}>
+                Питомец живёт на экране рядом с вами: его можно перетаскивать, изменить размер, имя и шрифт. Пока он включён — не пропадает сам, убрать можно только кнопкой × на самом питомце.
+              </Typography>
+            </Box>
+
             {/* ── Карточка: Стена комментариев (без отдельного чёрного блока внизу) ── */}
             {user?.id && (
               <Box sx={{
@@ -759,6 +833,25 @@ export default function ProfilePage() {
           </Box>
         )}
       </Box>
+
+      {/* Питомец «выглядывает» с правого края экрана профиля (только крупные экраны). */}
+      {equippedPet && (
+        <Box
+          aria-hidden
+          sx={{
+            position: 'fixed',
+            right: -Math.round((equippedPet.settings.size || 72) * 0.35),
+            top: '62%',
+            transform: 'translateY(-50%)',
+            zIndex: 15,
+            pointerEvents: 'none',
+            display: { xs: 'none', md: 'block' },
+            animation: 'veraPetPeekIn .7s ease both, veraPetPeekSway 4s ease-in-out .7s infinite',
+          }}
+        >
+          <PetArtwork petId={equippedPet.id} size={equippedPet.settings.size || 72} />
+        </Box>
+      )}
 
       <Dialog open={qrOpen} onClose={() => setQrOpen(false)} fullWidth maxWidth="xs">
         <DialogTitle sx={{ bgcolor: theme.bgHeader, color: theme.text }}>

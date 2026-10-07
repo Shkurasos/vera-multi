@@ -6,6 +6,7 @@ import { useChatStore } from '../store/chatStore';
 import { useAuthStore } from '../store/authStore';
 import { hasGroupRight } from '../services/groupPermissions';
 import { useThemeStore } from '../store/themeStore';
+import { bubbleBackground } from '../utils/bubbleGradient';
 
 export default function ChannelComments({ post }: { post: Message }) {
   const theme = useThemeStore(s => s.theme);
@@ -122,7 +123,7 @@ export default function ChannelComments({ post }: { post: Message }) {
           const own = m.senderId === userId;
           const quoted = comments.find(c => c.id === m.commentReplyToId);
           return <Box key={m.id} sx={{ mb: 2, minWidth: 0 }}>
-            <Box sx={{ p: 1.5, borderRadius: 2, bgcolor: theme.bgBubbleOther, color: theme.bubbleOtherText || theme.text, border: `1px solid ${theme.border}`, borderLeft: own ? `3px solid ${theme.accent}` : undefined }}>
+            <Box sx={{ p: 1.5, borderRadius: 2, background: bubbleBackground(theme.bgBubbleOther, theme.bubbleOtherGradient), color: theme.bubbleOtherText || theme.text, border: `1px solid ${theme.border}`, borderLeft: own ? `3px solid ${theme.accent}` : undefined }}>
               <Box sx={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 1, mb: 0.75 }}>
                 <Typography sx={{ fontWeight: 600, fontSize: 14, overflowWrap: 'anywhere', flex: 1, minWidth: 0 }}>{author(m)}{own ? ' · Вы' : ''}</Typography>
                 <Typography sx={{ fontSize: 11, opacity: 0.7 }}>{new Date(m.createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}{m.isEdited ? ' · изменено' : ''}</Typography>

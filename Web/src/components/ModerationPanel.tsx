@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, Box, Button, MenuItem, TextField, Typography } from '@mui/material';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { reportsApi } from '../services/api';
+import { appealsApi, reportsApi } from '../services/api';
 
 const actions: Record<string, string> = { dismiss: 'Отклонить жалобу', warn: 'Предупреждение', temporary: 'Временный бан аккаунта', permanent: 'Бан аккаунта навсегда', ip: 'Бан по IP', device: 'Бан устройств' };
+const appealActions: Record<string, string> = { uphold: 'Отклонить апелляцию', overturn: 'Снять блокировку' };
 export default function ModerationPanel() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -19,6 +20,32 @@ export default function ModerationPanel() {
   const [minutes, setMinutes] = useState('1440');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Апелляции заблокированных и забаненных приходят сюда же: уведомление о
+  // них ведёт на /admin?appeal=..., как и у жалоб.
+  const [appeals, setAppeals] = useState<any[]>([]);
+  const [appeal, setAppeal] = useState('');
+  const [appealNote, setAppealNote] = useState('');
+  const [appealAction, setAppealAction] = useState('uphold');
+  const [appealError, setAppealError] = useState('');
+  const appealFromUrl = new URLSearchParams(location.search).get('appeal') || '';
+  const loadAppeals = () => appealsApi.adminList()
+    .then(r => setAppeals(r.data))
+    .catch(() => setAppealError('Не удалось загрузить апелляции'));
+  useEffect(() => { loadAppeals(); }, []);
+  useEffect(() => {
+    if (!appealFromUrl) return;
+    setAppeal(appealFromUrl);
+    setAppealNote(''); setAppealError('');
+  }, [appealFromUrl]);
+  const decideAppeal = async () => {
+    setBusy(true); setAppealError('');
+    try {
+      await appealsApi.decide(appeal, appealAction as 'uphold' | 'overturn', appealNote.trim());
+      setAppeal(''); setAppealNote('');
+      await loadAppeals();
+    } catch (e: any) { setAppealError(e.response?.data?.message || 'Не удалось сохранить решение'); }
+    finally { setBusy(false); }
+  };
   const load = () => reportsApi.list().then(r => setReports(r.data)).catch(e => setError(e.response?.data?.message || 'Не удалось загрузить жалобы'));
   useEffect(() => { load(); }, []);
   // Notifications use /admin?report=... . Keep the mounted panel in sync when
@@ -96,5 +123,38 @@ export default function ModerationPanel() {
         <Button color="error" variant="contained" disabled={busy || !reason.trim()} onClick={decide}>Применить решение</Button>
       </> : <Alert severity="info">{actions[report.decision?.action]}: {report.decision?.reason}</Alert>}
     </>}
+
+    {/* ── Апелляции ── */}
+    <Typography variant="h6" sx={{ mt: 3 }}>Апелляции</Typography>
+    {appealError && <Alert severity="error">{appealError}</Alert>}
+    <TextField select fullWidth label="Апелляция" value={appeals.some(a => a.id === appeal) ? appeal : ''} onChange={e => {
+      setAppeal(e.target.value);
+      navigate(e.target.value ? `/admin?appeal=${encodeURIComponent(e.target.value)}` : '/admin', { replace: true });
+    }} sx={{ my: 2 }}>
+      <MenuItem value="">Выберите апелляцию</MenuItem>
+      {appeals.map(a => <MenuItem key={a.id} value={a.id}>
+        @{a.user.username} — {a.reason} — {a.status === 'open' ? 'Новая' : 'Рассмотрена'} — {new Date(a.createdAt).toLocaleString()}
+      </MenuItem>)}
+    </TextField>
+    {(() => {
+      const current = appeals.find(a => a.id === appeal);
+      if (!current) return null;
+      return <>
+        <Typography>От @{current.user.username} ({current.reason})</Typography>
+        <Typography sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', my: 2 }}>{current.text}</Typography>
+        {current.status === 'open' ? <>
+          <TextField select fullWidth label="Решение" value={appealAction} onChange={e => setAppealAction(e.target.value)} sx={{ my: 2 }}>
+            {Object.entries(appealActions).map(([id, label]) => <MenuItem key={id} value={id}>{label}</MenuItem>)}
+          </TextField>
+          {appealAction === 'overturn' && (
+            <Alert severity="warning" sx={{ mb: 2 }}>С блокировкой аккаунта будет снята и апелляция станет рассмотренной.</Alert>
+          )}
+          <TextField fullWidth multiline minRows={2} label="Комментарий (необязательно)" value={appealNote} onChange={e => setAppealNote(e.target.value)} inputProps={{ maxLength: 1000 }} sx={{ mb: 2 }} />
+          <Button color="error" variant="contained" disabled={busy} onClick={decideAppeal}>Применить решение</Button>
+        </> : <Alert severity="info">
+          {appealActions[current.decision?.action] || 'Рассмотрено'}{current.decision?.note ? `: ${current.decision.note}` : ''}
+        </Alert>}
+      </>;
+    })()}
   </Box>;
 }

@@ -169,11 +169,22 @@ test('уголок открывает панель без повторных з�
     'прямоугольник снимается один раз на вход',
   );
   assert.ok(bubbleSource.includes('inActionsCorner('), 'проверка идёт по сохранённому прямоугольнику');
-  assert.ok(bubbleSource.includes('{actionsOpen && ('), 'панель монтируется по своему состоянию, а не по любому ховеру');
+  // Панель монтируется по actionsVisible = actionsOpen || открыт выбор реакции,
+  // а не по любому ховеру. Иначе клик по «реакции» размонтировал бы панель с
+  // кнопкой-якорем, и попап уехал бы в левый верхний угол экрана.
+  assert.ok(
+    bubbleSource.includes('const actionsVisible = actionsOpen || reactionAnchor !== null;'),
+    'панель учитывает и открытый выбор реакции',
+  );
+  assert.ok(bubbleSource.includes('{actionsVisible && ('), 'панель монтируется по своему состоянию, а не по любому ховеру');
+  assert.ok(
+    !/setReactionAnchor\(e\.currentTarget\)/.test(bubbleSource),
+    'якорем попапа не может быть узел, который сейчас размонтируется',
+  );
 });
 
 test('панель — прозрачная стеклянная плашка со скруглением, сообщение не двигается', () => {
-  const start = bubbleSource.indexOf('{actionsOpen && (');
+  const start = bubbleSource.indexOf('{actionsVisible && (');
   const panel = bubbleSource.slice(start, bubbleSource.indexOf('</Box>', start));
   assert.ok(panel.length > 0, 'кнопки на месте');
   // Раскладка ленты не меняется: панель висит поверх строки.

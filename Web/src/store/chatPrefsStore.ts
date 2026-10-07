@@ -15,12 +15,16 @@ interface ChatPrefsState {
   pinnedMessages: Record<string, Message | null>;
   /** Панель «инфо о чате» открыта для конкретного чата (переживает обновление страницы). */
   showInfo: Record<string, boolean>;
+  /** Экспериментальная коррекция черновика: отдельные настройки для каждого чата. */
+  languageCorrection: Record<string, { enabled: boolean; explain: boolean }>;
 
   togglePin: (chatId: string) => void;
   toggleArchive: (chatId: string) => void;
   toggleMute: (chatId: string) => void;
   setPinnedMessage: (chatId: string, message: Message | null) => void;
   setShowInfo: (chatId: string, open: boolean) => void;
+  setLanguageCorrectionEnabled: (chatId: string, enabled: boolean) => void;
+  setLanguageCorrectionExplain: (chatId: string, enabled: boolean) => void;
   setBubbleSettings: (chatId: string, settings: ChatPrefsState['bubbleSettings'][string]) => void;
 
   isPinned: (chatId: string) => boolean;
@@ -37,6 +41,7 @@ export const useChatPrefsStore = create<ChatPrefsState>()(
       pinnedMessages: {},
       showInfo: {},
       bubbleSettings: {},
+      languageCorrection: {},
       clearBubbleSettings: (chatId) => set(s => {
         const bubbleSettings = { ...s.bubbleSettings };
         delete bubbleSettings[chatId];
@@ -70,6 +75,18 @@ export const useChatPrefsStore = create<ChatPrefsState>()(
       })),
       setShowInfo: (chatId, open) => set((s) => ({
         showInfo: { ...s.showInfo, [chatId]: open },
+      })),
+      setLanguageCorrectionEnabled: (chatId, enabled) => set((s) => ({
+        languageCorrection: {
+          ...s.languageCorrection,
+          [chatId]: { enabled, explain: s.languageCorrection[chatId]?.explain || false },
+        },
+      })),
+      setLanguageCorrectionExplain: (chatId, explain) => set((s) => ({
+        languageCorrection: {
+          ...s.languageCorrection,
+          [chatId]: { enabled: s.languageCorrection[chatId]?.enabled || false, explain },
+        },
       })),
       setBubbleSettings: (chatId, settings) => set((s) => ({
         bubbleSettings: { ...s.bubbleSettings, [chatId]: { ...s.bubbleSettings[chatId], ...settings,

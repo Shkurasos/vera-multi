@@ -20,12 +20,12 @@ import { useAuthStore } from '../store/authStore';
 import { useThemeStore, getFinishStyles, type Theme } from '../store/themeStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
 import { useDraftsStore } from '../store/draftsStore';
-import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
-import { useCustomEquipStore } from '../store/customEquipStore';
 import { useSidebarViewStore } from '../store/sidebarViewStore';
-import { specToStyle } from '../utils/customStyle';
-import { buildShopRingSx } from '../utils/rarityStyles';
-import { skinColors } from '../utils/skinColors';
+import { useChatBgPrefsStore } from '../store/chatBgPrefsStore';
+import { usePhotoBgUrl } from '../hooks/usePhotoBgUrl';
+import { isDeskName } from '../utils/deskBoard';
+import { externalSiteUrl } from '../utils/externalSite';
+import ExternalSiteDialog from './ExternalSiteDialog';
 import { chatsApi, usersApi } from '../services/api';
 import { peer, isPeerAvailable } from '../services/peer';
 import { Chat, User } from '../types';
@@ -187,6 +187,8 @@ const SidebarChatRow = React.memo(function SidebarChatRow(props: SidebarChatRowP
 });
 
 export default function Sidebar({ open, onToggle, mobile }: Props) {
+  const experimentalExternalSites = useUserSettingsStore((s) => s.experimentalExternalSites);
+  const [externalUrl, setExternalUrl] = useState<string | null>(null);
   // Точечные селекторы: перерисовка только при изменениях, влияющих на список чатов.
   const chats = useChatStore((s) => s.chats);
   const activeChat = useChatStore((s) => s.activeChat);
@@ -204,40 +206,31 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   const isMuted = useCallback((chatId: string) => mutedIds.includes(chatId), [mutedIds]);
   const user = useAuthStore((s) => s.user);
   const theme = useThemeStore((s) => s.theme);
+  // Фон списка чатов: отдельная от чатовых настройка (см. CHAT_LIST_SCOPE).
+  const chatListBg = useChatBgPrefsStore((s) => s.chatListBg);
+  const chatListDim = useChatBgPrefsStore((s) => s.chatListDim);
+  const chatListBlur = useChatBgPrefsStore((s) => s.chatListBlur);
+  const listWallpaperUrl = usePhotoBgUrl(chatListBg?.type === 'photo' ? chatListBg.value : null);
+  // Заливку панели убираем только когда адрес реально подгрузился: иначе на
+  // первом кадре мелькнёт «пустой» сайдбар, пока IndexedDB ещё отдаёт блоб.
+  const hasListWallpaper = !!listWallpaperUrl;
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Обводка аватара из магазина VERA — применяем к своей аватарке (в футере/шапке).
-  // Для аватаров чужих чатов используем тот же стиль, чтобы обводка была
-  // визуальной подсказкой «аккаунт защищён темой».
-  const shopActiveRing = useShopStore((s) => s.activeRing);
-  const ringItem = SHOP_CATALOG.find(i => i.applyKey === 'avatarRing' && i.id === shopActiveRing);
-  const ringVal = ringItem?.value as any;
-  const colorModes = useShopStore(s => s.colorModes);
-  const customProfileSpec = useCustomEquipStore((s) => s.equipped.profile ? s.items[s.equipped.profile]?.spec : undefined);
-  // Стиль обводки зависит только от «активен ли чат», поэтому считаем обе
-  // вариации один раз на смену темы/скина, а не для каждой строки списка на
-  // каждый рендер (раньше это были skinColors + buildShopRingSx ×N чатов).
+  // Обводка аватарок в списке чатов — только базовая, от активного чата.
+  // Скины (кольцо из магазина и кастомный «профиль») здесь НЕ применяются:
+  // они принадлежат конкретному аккаунту, а в строке списка аватарка чужого
+  // собеседника или группы. Раньше сюда попадало МОЁ кольцо — и у всех чатов
+  // в списке оказывалась одна и та же обводка, хотя поставил её один человек.
+  // Скин виден там, где аватарка именно его: в сообщениях и в профиле.
+  // Стиль зависит только от «активен ли чат», поэтому обе вариации считаются
+  // один раз на смену темы, а не для каждой строки списка на каждый рендер.
   const ringSx = useMemo(() => {
-    const build = (active: boolean): Record<string, any> => {
-      const base: Record<string, any> = {
-        boxShadow: `0 0 0 2px ${active ? theme.accent + '55' : 'rgba(255,255,255,0.08)'}`,
-      };
-      if (ringVal) {
-        // Единый стиль обводки из магазина (с анимациями для gradient/glow/pulse/aurora).
-        Object.assign(base, skinColors(buildShopRingSx(ringVal, theme.accent, active, 1), ringItem, theme.accent, !!ringItem && colorModes[ringItem.id] === 'theme'));
-      }
-      // Кастомный «профиль» от авторов — только для собственной аватарки.
-      if (active && customProfileSpec) {
-        const st = specToStyle(customProfileSpec);
-        if (st.border) base.border = st.border;
-        if (st.background) base.background = st.background;
-        if (st.boxShadow) base.boxShadow = st.boxShadow;
-      }
-      return base;
-    };
+    const build = (active: boolean): Record<string, any> => ({
+      boxShadow: `0 0 0 2px ${active ? theme.accent + '55' : 'rgba(255,255,255,0.08)'}`,
+    });
     return [build(false), build(true)];
-  }, [theme.accent, ringVal, ringItem, colorModes, customProfileSpec]);
+  }, [theme.accent]);
 
   // По умолчанию «Все»: раньше вкладка «Диалоги» показывала всё неархивное,
   // и после переименования первой вкладки вид списка не должен измениться.
@@ -589,7 +582,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
             boxShadow: layout.sidebarSide === 'left' ? '18px 0 60px rgba(0,0,0,0.38)' : '-18px 0 60px rgba(0,0,0,0.38)',
           }
       ),
-      background: theme.sidebarGradient || theme.bgSidebar,
+      background: hasListWallpaper ? 'transparent' : (theme.sidebarGradient || theme.bgSidebar),
       backdropFilter: theme.sidebarBlur || 'blur(18px)',
       display: 'flex',
       flexDirection: 'column',
@@ -604,13 +597,33 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
         background: theme.disableBackgroundGlow ? 'none' : `radial-gradient(circle at 20% 0%, ${theme.backgroundGlowColor || '#8FE3CF'}22 0, transparent 34%), radial-gradient(circle at 80% 100%, ${theme.backgroundGlowColor || '#8FE3CF'}14 0, transparent 30%)`,
       },
     }}>
+      {/* Фон списка чатов — слой ПОД строками. Сами строки полупрозрачные
+          (rgba(255,255,255,.026)), поэтому фото видно сквозь них. */}
+      {listWallpaperUrl && (
+        <Box sx={{ position: 'absolute', inset: 0, zIndex: 0, overflow: 'hidden', pointerEvents: 'none' }}>
+          <Box sx={{
+            position: 'absolute', inset: `-${chatListBlur}px`,
+            backgroundImage: `url(${listWallpaperUrl})`,
+            backgroundSize: 'cover', backgroundPosition: 'center',
+            filter: chatListBlur ? `blur(${chatListBlur}px)` : undefined,
+          }} />
+          {chatListDim > 0 && (
+            <Box sx={{ position: 'absolute', inset: 0, bgcolor: `rgba(0,0,0,${chatListDim})` }} />
+          )}
+        </Box>
+      )}
       <Box sx={{ p: { xs: 1, md: 1.25 }, display: 'flex', alignItems: 'center', gap: 1, position: 'relative', zIndex: 1, paddingTop: mobile ? 'calc(0.5rem + env(safe-area-inset-top))' : undefined }}>
-        {!avatarOnly && open && <TextField size="small" fullWidth value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск" InputProps={{ startAdornment: <InputAdornment position="start"><Search fontSize="small" /></InputAdornment> }} sx={{ '& .MuiInputBase-root': { bgcolor: theme.bgInput, color: theme.text, borderRadius: 999, height: 38, boxShadow: '0 8px 24px rgba(0,0,0,0.20)' } }} />}
+        {!avatarOnly && open && <TextField size="small" fullWidth value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => {
+          if (e.key !== 'Enter' || e.nativeEvent.isComposing || !experimentalExternalSites) return;
+          const url = externalSiteUrl(search);
+          if (url) { e.preventDefault(); setExternalUrl(url); }
+        }} placeholder="Поиск" InputProps={{ startAdornment: <InputAdornment position="start"><Search fontSize="small" /></InputAdornment> }} sx={{ '& .MuiInputBase-root': { bgcolor: theme.bgInput, color: theme.text, borderRadius: 999, height: 38, boxShadow: '0 8px 24px rgba(0,0,0,0.20)' } }} />}
         {!avatarOnly && open && <Tooltip title="Добавить чат / контакт"><IconButton onClick={() => setAddContactOpen(true)} sx={{ color: theme.textSec }}><PersonAdd /></IconButton></Tooltip>}
         {!avatarOnly && open && <Tooltip title="Создать группу"><IconButton onClick={() => setCreateGroupOpen(true)} sx={{ color: theme.textSec }}><Group /></IconButton></Tooltip>}
       </Box>
 
       {/* В режиме архива вкладки фильтра уступают заголовку с возвратом. */}
+      {externalUrl && experimentalExternalSites && <ExternalSiteDialog key={externalUrl} url={externalUrl} onClose={() => setExternalUrl(null)} />}
       {!avatarOnly && open && archiveView && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, px: 1, pb: 1.2, position: 'relative', zIndex: 1 }}>
           <IconButton size="small" onClick={() => setArchiveView(false)} sx={{ color: theme.textSec }} aria-label="Назад к чатам">
@@ -857,7 +870,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       <Dialog open={createGroupOpen} onClose={() => setCreateGroupOpen(false)} fullWidth maxWidth="xs">
         <DialogTitle>Новая группа</DialogTitle>
         <DialogContent>
-          <TextField fullWidth autoFocus margin="dense" label="Название" helperText="Начните название с !, чтобы создать публичный канал" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} />
+          <TextField fullWidth autoFocus margin="dense" label="Название" helperText={newGroupName.trim() ? (isDeskName(newGroupName) ? 'Это будет доска вместо обычного чата' : /^\s*\//.test(newGroupName) ? 'Это будет совместный холст для рисования' : 'Начните название с !, чтобы создать публичный канал') : 'Начните название с | — получится доска, с / — холст. С ! — публичный канал'} value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} />
           <Typography sx={{ mt: 2, mb: 1, fontSize: 13, color: theme.textSec }}>
             Участники ({contactsForGroup.length ? 'выберите контакты' : 'контактов пока нет — создайте группу и пришлите ссылку'})
           </Typography>

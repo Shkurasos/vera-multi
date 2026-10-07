@@ -1,6 +1,6 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
-import { Box, useMediaQuery } from '@mui/material';
+import { Box, Button, IconButton, Typography, useMediaQuery } from '@mui/material';
 import { useChatStore } from '../store/chatStore';
 import { useThemeStore } from '../store/themeStore';
 import { useMusicStore } from '../store/musicStore';
@@ -12,23 +12,36 @@ import BotFatherPage from './BotFatherPage';
 import AdminToolsPage from './AdminToolsPage';
 import ChatWallpaper from '../components/ChatWallpaper';
 import { useActiveWallpaperSpec, isLightColor } from '../hooks/useActiveWallpaper';
+import { usePetStore } from '../store/petStore';
+import PetArtwork from '../components/PetArtwork';
 
-// Реальные высоты плеера — синхронизированы с MusicPlayer.tsx
+// �������� ������ ������ � ���������������� � MusicPlayer.tsx
 const PLAYER_EXPANDED = 60;
 const PLAYER_COLLAPSED = 32;
 const PLAYER_SIDE_MIN = 280;
 const PLAYER_SIDE_COLLAPSED = 44;
 
+// Питомец живёт на экране и может быть до 1/5 экрана. Ограничение
+// viewport-ориентированное, поэтому работает одинаково на любых мониторах
+// (включая мультимониторные рабочие области; на мобильных учитываем
+// visualViewport, на десктопе — window-метрики, в т.ч. весь размер окна).
+function getMaxPetSize(): number {
+  if (typeof window === 'undefined') return 120;
+  const vw = window.visualViewport?.width ?? window.innerWidth;
+  const vh = window.visualViewport?.height ?? window.innerHeight;
+  return Math.max(48, Math.min(vw, vh) / 5);
+}
+
 export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTMLDivElement | null) => void }) {
-  // Точечные селекторы: смена трека/панели плеера не должна перерисовывать
-  // всё дерево (Sidebar + окно чата) при каждом обновлении musicStore.
+  // �������� ���������: ����� �����/������ ������ �� ������ ��������������
+  // �� ������ (Sidebar + ���� ����) ��� ������ ���������� musicStore.
   const loadChats = useChatStore((s) => s.loadChats);
   const theme = useThemeStore((s) => s.theme);
   const currentTrack = useMusicStore((s) => s.currentTrack);
   const playerCollapsed = useMusicStore((s) => s.playerCollapsed);
-  // Только нужные поля layout: подписка на весь объект перерисовывала всё
-  // дерево (сайдбар + окно чата) при ЛЮБОЙ правке настроек — включая
-  // перетаскивание ширины сайдбара, где это 60+ ререндеров в секунду.
+  // ������ ������ ���� layout: �������� �� ���� ������ �������������� ��
+  // ������ (������� + ���� ����) ��� ����� ������ �������� � �������
+  // �������������� ������ ��������, ��� ��� 60+ ���������� � �������.
   const density = useUserSettingsStore((s) => s.layout.density);
   const radius = useUserSettingsStore((s) => s.layout.radius);
   const bubbleRadius = useUserSettingsStore((s) => s.layout.bubbleRadius);
@@ -39,10 +52,108 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
   const chatOuterMargin = useUserSettingsStore((s) => s.layout.chatOuterMargin);
   const location = useLocation();
   const isMobile = useMediaQuery('(max-width: 700px)');
+  const equippedPet = usePetStore((s) => s.equippedPet);
+  const updatePetSettings = usePetStore((s) => s.updateSettings);
+  // Максимальный размер питомца зависит от размера монитора (1/5 экрана,
+  // viewport-ориентированно, с учётом мультимониторных рабочих областей).
+  const [maxPetSize, setMaxPetSize] = useState<number>(getMaxPetSize);
+  // Размер питомца ограничен 1/5 экрана (viewport-ориентированно, мультимониторно).
+  const petSize = equippedPet ? Math.min(equippedPet.settings.size, maxPetSize) : 0;
+  const [petPosition, setPetPosition] = useState<{ x: number; y: number } | null>(null);
+  // Питомец живёт на экране: сам не пропадает, его можно только убрать (×)
+  // и вернуть чипом внизу. Скрытие локальное — настройки и экипировка не меняются.
+  const [petHidden, setPetHidden] = useState(false);
 
   useEffect(() => { loadChats(); }, []);
+  useEffect(() => {
+    setPetPosition(equippedPet ? { x: equippedPet.settings.x, y: equippedPet.settings.y } : null);
+  }, [equippedPet?.id, equippedPet?.settings.x, equippedPet?.settings.y]);
+  // Смена/снятие питомца сбрасывает скрытие — новый питомец появляется сразу.
+  useEffect(() => { setPetHidden(false); }, [equippedPet?.id]);
 
-  // Применяем плотность и радиус как CSS-переменные для всего приложения.
+  // Размер питомца пересчитывается при изменении окна (переход между
+  // мониторами, изменение разрешения, появление/скрытие панели задач и т.п.).
+  useEffect(() => {
+    const onResize = () => setMaxPetSize(getMaxPetSize());
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  const petOverlay = equippedPet ? (
+    petHidden ? (
+      <Button
+        size="small"
+        onClick={() => setPetHidden(false)}
+        sx={{
+          position: 'fixed', right: 12, bottom: 12, zIndex: 31,
+          color: theme.text, bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
+          borderRadius: 999, px: 1.5, textTransform: 'none', fontSize: 12, lineHeight: 1.6,
+          boxShadow: '0 6px 18px rgba(0,0,0,.28)',
+          '&:hover': { bgcolor: theme.bgHover },
+        }}
+      >
+        Вернуть питомца
+      </Button>
+    ) : (
+    <Box
+      onPointerDown={(event) => {
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const initial = petPosition || equippedPet.settings;
+        let nextPosition = initial;
+        const move = (moveEvent: PointerEvent) => {
+          const dx = ((moveEvent.clientX - startX) / Math.max(window.innerWidth, 1)) * 100;
+          const dy = ((moveEvent.clientY - startY) / Math.max(window.innerHeight, 1)) * 100;
+          // Чтобы питомец всегда оставался виден на экране любого монитора,
+          // при перетаскивании не выходим за границы viewport.
+          const half = (petSize / 2) / Math.max(window.innerWidth, 1) * 100;
+          nextPosition = {
+            x: Math.max(half, Math.min(100 - half, initial.x + dx)),
+            y: Math.max(half, Math.min(100 - half, initial.y + dy)),
+          };
+          setPetPosition(nextPosition);
+        };
+        const stop = () => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', stop);
+          if (nextPosition.x !== initial.x || nextPosition.y !== initial.y) void updatePetSettings(nextPosition);
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', stop, { once: true });
+      }}
+      sx={{
+        position: 'fixed',
+        left: `${petPosition?.x ?? equippedPet.settings.x}%`,
+        top: `${petPosition?.y ?? equippedPet.settings.y}%`,
+        transform: 'translate(-50%, -50%)',
+        zIndex: 30,
+        cursor: 'grab',
+        touchAction: 'none',
+        userSelect: 'none',
+      }}
+      >
+      <Box sx={{ position: 'relative', width: petSize, height: petSize }}>
+        <PetArtwork petId={equippedPet.id} size={petSize} />
+        <IconButton
+          size="small"
+          aria-label="Скрыть питомца"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => setPetHidden(true)}
+          sx={{ position: 'absolute', top: 0, right: 0, color: theme.text, bgcolor: theme.bgHeader, width: 20, height: 20, fontSize: 14 }}
+        >
+          ×
+        </IconButton>
+      </Box>
+      {equippedPet.settings.name && (
+        <Typography sx={{ color: theme.text, textAlign: 'center', fontSize: 11, fontFamily: equippedPet.settings.font }}>
+          {equippedPet.settings.name}
+        </Typography>
+      )}
+    </Box>
+    )
+  ) : null;
+
+  // ��������� ��������� � ������ ��� CSS-���������� ��� ����� ����������.
   useEffect(() => {
     const densityGap = density === 'compact' ? 0.5 : density === 'roomy' ? 1.6 : 1;
     const root = document.documentElement;
@@ -55,8 +166,8 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
   const onChatList = location.pathname === '/';
   const [viewport, setViewport] = useState<{ height: number; top: number } | null>(null);
 
-  // Клавиатура меняет visualViewport, даже когда высота страницы остаётся прежней.
-  // Размер чата зависит от видимой области, а не от текста или фокуса поля.
+  // ���������� ������ visualViewport, ���� ����� ������ �������� ������� �������.
+  // ������ ���� ������� �� ������� �������, � �� �� ������ ��� ������ ����.
   useEffect(() => {
     const visibleViewport = window.visualViewport;
     if (!isMobile || onChatList || !visibleViewport) {
@@ -75,11 +186,11 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
     };
   }, [isMobile, onChatList]);
 
-  // Полноэкранные обои (категория «wallpaper» магазина / кастомные авторов).
+  // ������������� ���� (��������� �wallpaper� �������� / ��������� �������).
   const wallpaperSpec = useActiveWallpaperSpec();
 
-  // Позиция плеера: снизу/сверху занимают вертикальное место, боковые режимы
-  // резервируют место внутри основной области ниже.
+  // ������� ������: �����/������ �������� ������������ �����, ������� ������
+  // ����������� ����� ������ �������� ������� ����.
   let bottomPad = '0px';
   let topPad = '0px';
   const sidePlayer = !isMobile && playerPos === 'left';
@@ -132,23 +243,24 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
     },
   };
 
-  // Когда обои активны — панели (чат, сайдбар) становятся стеклом: обои просвечивают размытыми.
+  // ����� ���� ������� � ������ (���, �������) ���������� �������: ���� ������������ ���������.
   const glassPanel = wallpaperSpec ? {
     bgcolor: 'rgba(0,0,0,0.22)',
     backdropFilter: 'blur(26px) saturate(150%)',
     WebkitBackdropFilter: 'blur(26px) saturate(150%)',
   } : {};
 
-  // ── Мобильный вид: полноэкранный список чатов вместо сайдбара ──
+  // -- ��������� ���: ������������� ������ ����� ������ �������� --
   if (isMobile) {
     if (onChatList) {
       return (
         <Box sx={{ ...bg, height: '100dvh', minHeight: 0 }}>
-          <Sidebar open mobile onToggle={() => {}} />
+          <Sidebar key="vera-sidebar-mobile" open mobile onToggle={() => {}} />
+          {petOverlay}
         </Box>
       );
     }
-    // Открытый чат — фуллскрин, без нижней навигации (как в Telegram).
+    // �������� ��� � ���������, ��� ������ ��������� (��� � Telegram).
     return (
       <Box sx={{ ...bg, ...(viewport ? {
         position: 'fixed', left: 0, right: 0, top: viewport.top,
@@ -163,14 +275,20 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
             </Routes>
           </Box>
         </Box>
+        {petOverlay}
       </Box>
     );
   }
 
-  // ── Десктопный вид ──
-  const sidebar = <Sidebar open onToggle={() => {}} />;
+  // -- ���������� ��� --
+  // ���������� key: ������ ����� ���� ������������ ������� (�����/������/
+  // ������/�����), � ��� key React ����������� �� �� �� ������� � �� �����
+  // ������� ������� �������������� �� �������, � ������ � ��� �������� ��
+  // ��� ��������� ���������: �������� �������� ���, ���������� �����������
+  // ������, �������, ������� ���������. � key React ��������� ��� �� ���������.
+  const sidebar = <Sidebar key="vera-sidebar" open onToggle={() => {}} />;
   const mainArea = (
-    <Box sx={{
+    <Box key="vera-main" sx={{
       flex: 1,
       display: 'flex',
       flexDirection: 'column',
@@ -200,7 +318,7 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
 
   return (
     <Box sx={bg}>
-      {/* Полноэкранный слой обоев (категория wallpaper + кастомные от авторов). */}
+      {/* ������������� ���� ����� (��������� wallpaper + ��������� �� �������). */}
       {wallpaperSpec && (
         <Box
           sx={{
@@ -216,11 +334,9 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
         </Box>
       )}
       <Box sx={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: (sidebarSide === 'top' || sidebarSide === 'bottom') ? 'column' : 'row', flex: 1, minWidth: 0, minHeight: 0, width: '100%', height: '100%' }}>
-        {sidebarSide === 'left' && (<>{sidebar}{mainArea}</>)}
-        {sidebarSide === 'right' && (<>{mainArea}{sidebar}</>)}
-        {sidebarSide === 'top' && (<>{sidebar}{mainArea}</>)}
-        {sidebarSide === 'bottom' && (<>{mainArea}{sidebar}</>)}
+        {(sidebarSide === 'right' || sidebarSide === 'bottom') ? [mainArea, sidebar] : [sidebar, mainArea]}
       </Box>
+      {petOverlay}
     </Box>
   );
 }

@@ -57,6 +57,10 @@
       {
         "key": "r-cult",
         "weight": 1
+      },
+      {
+        "key": "pet-cat",
+        "weight": 1
       }
     ]
   },
@@ -118,6 +122,10 @@
       {
         "key": "r-anomaly",
         "weight": 2
+      },
+      {
+        "key": "pet-fox",
+        "weight": 1
       }
     ]
   },
@@ -179,6 +187,10 @@
       {
         "key": "r-mechanic",
         "weight": 4
+      },
+      {
+        "key": "pet-bunny",
+        "weight": 1
       }
     ]
   },
@@ -239,6 +251,10 @@
       },
       {
         "key": "r-infinity",
+        "weight": 1
+      },
+      {
+        "key": "pet-phoenix",
         "weight": 1
       }
     ]
@@ -301,6 +317,10 @@
       {
         "key": "games-crown",
         "weight": 4099959
+      },
+      {
+        "key": "pet-pixel",
+        "weight": 1
       }
     ]
   },
@@ -321,7 +341,7 @@
       "corp-satellite",
       "corp-citadel"
     ],
-    "price": null,
+    "price": 200,
     "rewards": [
       {
         "key": "corp-pass",
@@ -668,6 +688,22 @@
         "key": "ashes-afterglow",
         "weight": 41
       }
+    ]
+  },
+  {
+    "id": "case-pets",
+    "name": "Питомцы",
+    "description": "Кейс за 1000 ВП. Внутри — один милый питомец пяти редкостей: Ночной кот, Ленивая лиса, Неоновый заяц, Пиксельный кот и Феникс. Питомец живёт на экране рядом с вами: его можно перетаскивать по всему экрану, изменить размер, имя и шрифт имени. Пока он включён — не пропадает сам, убрать его можно только кнопкой.",
+    "color": "#c3a7ff",
+    "mark": "M50 18C31 18 18 31 18 50C18 69 31 82 50 82C69 82 82 69 82 50C82 31 69 18 50 18ZM35 43H43M57 43H65M38 62Q50 70 62 62",
+    "packs": [],
+    "price": 1000,
+    "rewards": [
+      { "key": "pet-cat", "weight": 100 },
+      { "key": "pet-fox", "weight": 70 },
+      { "key": "pet-bunny", "weight": 35 },
+      { "key": "pet-pixel", "weight": 10 },
+      { "key": "pet-phoenix", "weight": 2 }
     ]
   }
 ]

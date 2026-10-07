@@ -11,5 +11,8 @@
     "kill": "powershell -NoProfile -Command \"Get-Process -Name node -ErrorAction SilentlyContinue | Stop-Process -Force; Get-CimInstance Win32_Process -Filter \\\"CommandLine LIKE '%vite%'\\\" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }\"",
     "restart": "npm run kill && npm run start",
     "start": "powershell -NoProfile -Command \"Start-Process powershell -ArgumentList '-NoExit','-Command','cd Server; npm start'; Start-Process powershell -ArgumentList '-NoExit','-Command','cd Web; npm run dev'\""
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
   }
 }

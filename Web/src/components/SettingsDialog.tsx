@@ -140,6 +140,19 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
               </AccordionDetails>
             </Accordion>
 
+            <Accordion sx={sectionSx} disableGutters>
+              <AccordionSummary expandIcon={<ExpandMore sx={{ color: theme.textSec }} />}>
+                <LinkIcon sx={{ mr: 1, color: theme.accent }} />
+                <Typography sx={{ fontWeight: 600 }}>Экспериментальные функции</Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <RowToggle label="Встраивать сторонние чаты (ex)" checked={s.experimentalExternalSites} onChange={(v) => s.set('experimentalExternalSites', v)} />
+                <RowToggle label="Корректировка текста (ex)" checked={s.languageCorrectionEnabled} onChange={(v) => s.set('languageCorrectionEnabled', v)} />
+                <RowToggle label="Корректировка с объяснением (ex)" checked={s.languageCorrectionExplain} disabled={!s.languageCorrectionEnabled} onChange={(v) => s.set('languageCorrectionExplain', v)} />
+                <Alert severity="warning" sx={{ mt: 1, fontSize: 12 }}>Сторонние сайты могут быть небезопасны. Функция по умолчанию выключена.</Alert>
+              </AccordionDetails>
+            </Accordion>
+
 
             <Accordion sx={sectionSx} disableGutters>
               <AccordionSummary expandIcon={<ExpandMore sx={{ color: theme.textSec }} />}>
@@ -274,14 +287,14 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
   );
 }
 
-function RowToggle({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) {
+function RowToggle({ label, hint, checked, disabled = false, onChange }: { label: string; hint?: string; checked: boolean; disabled?: boolean; onChange: (v: boolean) => void }) {
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 0.5 }}>
       <Box minWidth={0}>
         <Typography sx={{ fontSize: 14 }}>{label}</Typography>
         {hint && <Typography sx={{ fontSize: 12, color: 'text.secondary' }}>{hint}</Typography>}
       </Box>
-      <Switch checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <Switch checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
     </Box>
   );
 }

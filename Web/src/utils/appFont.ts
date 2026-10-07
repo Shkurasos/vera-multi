@@ -7,9 +7,10 @@ export const DEFAULT_APP_FONT = '"Manrope", "Inter", "SF Pro Display", "Segoe UI
 export const APP_FONT_OPTIONS: { value: string; label: string }[] = [
   { value: 'inherit', label: 'По умолчанию' },
   { value: "'Inter', sans-serif", label: 'Inter' },
-  { value: "'Roboto', sans-serif", label: 'Roboto' },
-  { value: "'Montserrat', sans-serif", label: 'Montserrat' },
+  { value: "'Manrope', sans-serif", label: 'Manrope' },
+  { value: "'Space Grotesk', sans-serif", label: 'Space Grotesk' },
   { value: "'Source Code Pro', monospace", label: 'Source Code Pro' },
+  { value: "'JetBrains Mono', monospace", label: 'JetBrains Mono' },
   { value: 'Georgia, serif', label: 'Georgia' },
   { value: 'Arial, sans-serif', label: 'Arial' },
   { value: "'Comic Sans MS', cursive", label: 'Comic Sans' },

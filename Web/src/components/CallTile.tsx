@@ -24,8 +24,14 @@ export default function CallTile({
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
-    if (videoRef.current && stream) videoRef.current.srcObject = stream;
-  }, [stream]);
+    // <video> смонтирован только когда (camOn && stream) — в момент, когда
+    // stream ПРИШЁЛ, ref.current ещё null (элемента нет), и эффект, зависящий
+    // только от [stream], больше не перезапустится: картинка так и остаётся
+    // пустой. Поэтому перезапускаем эффект ещё и по camOn, и дополнительно
+    // подстраховываемся через колбэк-реф.
+    const el = videoRef.current;
+    if (el && stream && el.srcObject !== stream) el.srcObject = stream;
+  }, [stream, camOn, isLocal]);
 
   const border = speaking ? '3px solid #22c55e' : '3px solid transparent';
   const bg = 'linear-gradient(135deg, #2b2d31 0%, #1e1f22 100%)';
@@ -53,7 +59,16 @@ export default function CallTile({
     }}>
       {camOn && stream ? (
         <video
-          ref={videoRef} autoPlay playsInline muted={isLocal}
+          ref={(el) => {
+            // Колбэк вызывается и при монтировании, когда поток уже мог
+            // прийти раньше элемента — без этого srcObject терялся бы.
+            (videoRef as any).current = el;
+            if (el && stream) el.srcObject = stream;
+          }}
+          // muted ВСЕГДА: звук даёт CallAudioSink. Раньше тут стояло условие по
+          // признаку «свой тайл», и удалённые тайлы играли тот же поток, что и
+          // CallAudioSink, — получалось два звука с задержкой (эхо).
+          autoPlay playsInline muted
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
         />
       ) : (

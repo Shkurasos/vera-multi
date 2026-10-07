@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { Box, Typography, Button, IconButton, Tooltip, TextField, Chip } from '@mui/material';
 import { ContentCopy, Check, Edit, Delete, Add, Palette, Close } from '@mui/icons-material';
-import { useThemeStore, THEMES, Theme, themeToLink, themeFromLink, CUSTOM_THEME_ID_START } from '../store/themeStore';
+import { useThemeStore, useBuiltinThemes, Theme, themeToLink, themeFromLink, CUSTOM_THEME_ID_START } from '../store/themeStore';
 import { ThemeEditor } from './ThemeEditor';
+import { bubbleBackground } from '../utils/bubbleGradient';
 
 interface Props {
   onClose: () => void;
@@ -39,8 +40,8 @@ function ThemeCard({ t, active, onApply, onEdit, onDelete, onCopyLink }: {
         <Box sx={{ flex: 1, background: t.bg }} />
         <Box sx={{ flex: 1, background: t.bgSidebar || t.bg }} />
         <Box sx={{ flex: 1, background: t.bgChat || t.bg }} />
-        <Box sx={{ flex: 1, background: t.bgBubbleOwn }} />
-        <Box sx={{ flex: 1, background: t.bgBubbleOther }} />
+        <Box sx={{ flex: 1, background: bubbleBackground(t.bgBubbleOwn, t.bubbleOwnGradient) }} />
+        <Box sx={{ flex: 1, background: bubbleBackground(t.bgBubbleOther, t.bubbleOtherGradient) }} />
       </Box>
       {/* Акцентная полоска */}
       <Box sx={{ height: 5, background: t.accent }} />
@@ -94,12 +95,15 @@ function ThemeCard({ t, active, onApply, onEdit, onDelete, onCopyLink }: {
 
 export function ThemeMarketplace({ onClose }: Props) {
   const { themeId, theme, setTheme, customThemes, saveCustomTheme, deleteCustomTheme } = useThemeStore();
+  // Встроенные темы берём с учётом правок админа: удалённые исчезают у всех,
+  // изменённые показываются новыми цветами, добавленные стоковые появляются тут.
+  const builtinThemes = useBuiltinThemes();
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingTheme, setEditingTheme] = useState<Theme | null>(null);
   const [importLink, setImportLink] = useState('');
   const [copied, setCopied] = useState<string | null>(null);
 
-  const allThemes = [...THEMES, ...customThemes];
+  const allThemes = [...builtinThemes, ...customThemes];
 
   const handleApply = (t: Theme) => {
     setTheme(t.id);

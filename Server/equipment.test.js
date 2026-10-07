@@ -12,6 +12,7 @@ test('equipment is public, persisted and broadcast; clearing and invalid IDs are
   const context = vm.createContext({
     db: { users: [user], chatMembers: [{ userId: 'owner', chatId: 'shared' }] },
     app: { get(route, middleware, handler) { routes['GET ' + route] = handler; },
+      put(route, middleware, handler) { routes['PUT ' + route] = handler; },
       patch(route, middleware, handler) { routes['PATCH ' + route] = handler; } },
     authMiddleware() {}, saveDb() {}, withDevFlag: (_req, value) => value,
     io: { to(rooms) { return { emit(event, payload) { events.push({ rooms, event, payload }); } }; } },

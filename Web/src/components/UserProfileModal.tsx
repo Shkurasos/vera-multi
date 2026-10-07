@@ -15,6 +15,8 @@ import ReportUserDialog from './ReportUserDialog';
 import { SHOP_CATALOG, useShopStore } from '../store/shopStore';
 import { buildShopRingSx } from '../utils/rarityStyles';
 import { skinColors } from '../utils/skinColors';
+import { usePetStore } from '../store/petStore';
+import PetArtwork from './PetArtwork';
 
 function initials(n: string) { return (n || '?').split(' ').filter(Boolean).map(w => w[0]).join('').toUpperCase().slice(0, 2); }
 
@@ -54,15 +56,20 @@ export default function UserProfileModal({ user, open, onClose }: Props) {
   // Закреплённая музыка чужого профиля: свежие id берём с сервера, чтобы
   // мини-плеер был виден другим (снапшот из сообщения может быть устаревшим).
   const [remotePinned, setRemotePinned] = React.useState<{ userId: string; playlistId: string | null; trackId: string | null } | null>(null);
+  // Экипированный питомец чужого профиля — публичное поле из GET /api/users/:id.
+  const [remotePet, setRemotePet] = React.useState<{ id: string; settings?: { size?: number } } | null>(null);
+  const myPet = usePetStore((s) => s.equippedPet);
   React.useEffect(() => {
     setRemoteRing(null);
     setRemotePinned(null);
+    setRemotePet(null);
     if (!open || !user || isMe) return;
     let cancelled = false;
     const userId = user.id;
     usersApi.getById(userId).then(({ data }) => {
       if (cancelled) return;
       setRemoteRing({ userId, id: data.activeRing || '' });
+      setRemotePet(data.equippedPet || null);
       setRemotePinned({
         userId,
         playlistId: data.pinnedPlaylistId ?? null,
@@ -115,7 +122,7 @@ export default function UserProfileModal({ user, open, onClose }: Props) {
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm" PaperProps={{
-      sx: { bgcolor: theme.bgChat, color: theme.text, borderRadius: 3, overflow: 'hidden' },
+      sx: { bgcolor: theme.bgChat, color: theme.text, borderRadius: 3, overflow: 'hidden', position: 'relative' },
     }}>
       <Box sx={{ position: 'relative', height: 140, background: banner, overflow: 'hidden' }}>
         {isBannerVideo && (
@@ -127,6 +134,27 @@ export default function UserProfileModal({ user, open, onClose }: Props) {
           bgcolor: 'rgba(0,0,0,0.35)', '&:hover': { bgcolor: 'rgba(0,0,0,0.55)' },
         }}><Close /></IconButton>
       </Box>
+      {/* Питомец профиля «выглядывает» из-под шапки справа (декор, без кликов). */}
+      {(() => {
+        const peek = isMe ? myPet : (remotePet?.id ? remotePet : null);
+        if (!peek) return null;
+        const peekSize = peek.settings?.size || 72;
+        return (
+          <Box
+            aria-hidden
+            sx={{
+              position: 'absolute',
+              right: -Math.round(peekSize * 0.35),
+              top: '46%',
+              zIndex: 1,
+              pointerEvents: 'none',
+              animation: 'veraPetPeekIn .7s ease both, veraPetPeekSway 4s ease-in-out .7s infinite',
+            }}
+          >
+            <PetArtwork petId={peek.id} size={peekSize} />
+          </Box>
+        );
+      })()}
       <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mt: -7, px: 3 }}>
         <Avatar src={user.avatarUrl || undefined} sx={{
           width: 112, height: 112, fontSize: 40, bgcolor: accent + '80',

@@ -1,14 +1,15 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-import { usersApi } from '../services/api';
+import { createJSONStorage, persist } from 'zustand/middleware';
+import { usersApi, themesApi } from '../services/api';
 import { enableStoreSync } from '../services/storeSyncSimple';
+import { themePreset } from './themePresets';
 // Настройки, которые живут В ТЕМЕ (обои, звук, иконки, анимации, внешний вид,
 // макет). Ни один из этих сторов не импортирует themeStore — цикла нет.
-import { useChatBgPrefsStore, type UserWallpaperItem } from './chatBgPrefsStore';
+import { useChatBgPrefsStore, type UserWallpaperItem, type WallpaperOverride } from './chatBgPrefsStore';
 import { useChatSoundStore, type ChatSoundSetting } from './chatSoundStore';
 import { useUiPrefsStore, type IconPack, type UiStyle, type ChatShape } from './uiPrefsStore';
 import { useAnimStore, type AnimKey } from './animStore';
-import { useUserSettingsStore, type LayoutSettings } from './userSettingsStore';
+import { useUserSettingsStore, type LayoutSettings, type WallClockPos, type WallClockDatePos, type WallClockSecondsPos } from './userSettingsStore';
 
 export type ThemeFinish = 'solid' | 'glass' | 'matte' | 'metal';
 
@@ -34,6 +35,13 @@ export interface ThemeSettings {
     brightness?: number;
     /** Галерея своих фото/видео темы (scope 'global'). */
     userWallpapers?: UserWallpaperItem[];
+    /**
+     * Обои экрана выбора чатов: отдельно от чатовых. `chatList` — что выбрано
+     * ({type,value} или null), dim/blur — затемнение и размытие под списком.
+     * Пишем только когда поле реально есть: у старых снимков его нет, и «как
+     * есть» переключение темы обнуляло бы обои, заданные пользователем.
+     */
+    chatList?: { value: WallpaperOverride | null; dim?: number; blur?: number };
   };
   /** Звук уведомлений по умолчанию. */
   sound?: { globalSound: ChatSoundSetting | null; globalVolume: number };
@@ -41,8 +49,14 @@ export interface ThemeSettings {
   ui?: { iconPack: IconPack; uiStyle: UiStyle; chatShape: ChatShape; chatBorder: boolean; chatFill: boolean };
   /** Включённые группы анимаций. */
   animations?: Partial<Record<AnimKey, boolean>>;
-  /** Внешний вид: яркость приложения, масштаб текста, шрифт. */
-  appearance?: { brightness: number; textScale: number; globalFontFamily: string };
+  /**
+   * Внешний вид: яркость приложения, масштаб текста, шрифт, а также обои с
+   * календарём и часами (набор включений/положений/размеров).
+   */
+  appearance?: {
+    brightness: number; textScale: number; globalFontFamily: string;
+    wallClock?: { enabled: boolean; avoid?: boolean; pos: WallClockPos; datePos?: WallClockDatePos; seconds?: boolean; secondsPos?: WallClockSecondsPos; secondsScale?: number; timeScale?: number; dateScale?: number };
+  };
   /** Макет: раскладка окна (стороны, плотность, радиусы и т.д.). */
   layout?: Partial<LayoutSettings>;
 }
@@ -86,6 +100,9 @@ export interface Theme {
   chatBgImageOpacity?: number;
   // Градиент для своих пузырей (если задан — перекрывает bgBubbleOwn)
   bubbleOwnGradient?: string;
+  // Градиент для чужих пузырей (если задан — перекрывает bgBubbleOther).
+  // У чужих пузырей своего градиента раньше не было вовсе: только сплошной цвет.
+  bubbleOtherGradient?: string;
   // box-shadow / glow для своих пузырей
   bubbleOwnShadow?: string;
   // box-shadow для чужих пузырей
@@ -239,6 +256,104 @@ export function getFinishStyles(theme: Theme) {
 }
 
 
+/**
+ * Каталог встроенных тем, которым управляет админ. Это НЕ пользовательское
+ * хранилище: каталог общий для всех, кто заходит на сервер, поэтому правки
+ * заводских тем, удаления и новые стоковые темы приезжают с сервера
+ * (GET /api/themes) и прилетают событием `themes:updated`.
+ */
+export interface BuiltinThemeCatalog {
+  /** Правки заводских тем по id — накладываются поверх завода. */
+  overrides: Record<string, Theme>;
+  /** id удалённых тем: они исчезают у всех. */
+  removed: number[];
+  /** Новые стоковые темы, добавленные админом. */
+  added: Theme[];
+  updatedAt: string | null;
+}
+
+export const EMPTY_BUILTIN_CATALOG: BuiltinThemeCatalog = {
+  overrides: {}, removed: [], added: [], updatedAt: null,
+};
+
+/**
+ * Итоговый каталог встроенных тем: заводские (с правками админа) + добавленные
+ * им стоковые − удалённые. Заводской порядок сохраняем, добавленные идут в конце.
+ */
+export function buildBuiltinCatalog(catalog?: Partial<BuiltinThemeCatalog> | null): Theme[] {
+  const overrides = catalog?.overrides && typeof catalog.overrides === 'object' ? catalog.overrides : {};
+  const removed = new Set(
+    (Array.isArray(catalog?.removed) ? catalog!.removed : []).map(Number).filter(Number.isFinite),
+  );
+  const added = Array.isArray(catalog?.added) ? catalog.added.filter(Boolean) : [];
+  const factory = THEMES
+    .filter((t) => !removed.has(t.id))
+    .map((t) => {
+      const patch = overrides[String(t.id)];
+      // Патч админа накладываем поверх заводской темы: незаполненные поля
+      // (настройки, отделка, эффекты) остаются заводскими.
+      return patch ? { ...t, ...patch, id: t.id } : t;
+    });
+  const extra = added.filter((t) => t && !removed.has(t.id) && !THEMES.some((b) => b.id === t.id));
+  return [...factory, ...extra];
+}
+
+/** Встроенные темы с учётом правок админа — для списков и пикеров тем. */
+export function useBuiltinThemes(): Theme[] {
+  return useThemeStore((s) => s.builtinThemes);
+}
+
+/** Нормализует каталог, пришедший с сервера или из localStorage. */
+export function normalizeBuiltinCatalog(raw?: Partial<BuiltinThemeCatalog> | null): BuiltinThemeCatalog {
+  const overridesRaw = raw?.overrides && typeof raw.overrides === 'object' && !Array.isArray(raw.overrides)
+    ? raw.overrides
+    : {};
+  const overrides: Record<string, Theme> = {};
+  for (const [key, value] of Object.entries(overridesRaw)) {
+    if (/^\d{1,9}$/.test(key) && value && typeof value === 'object') overrides[key] = value as Theme;
+  }
+  return {
+    overrides,
+    removed: (Array.isArray(raw?.removed) ? raw!.removed : []).map(Number).filter(Number.isFinite),
+    added: (Array.isArray(raw?.added) ? raw!.added : []).filter((t): t is Theme => !!t && typeof t === 'object'),
+    updatedAt: typeof raw?.updatedAt === 'string' ? raw.updatedAt : null,
+  };
+}
+
+/** Каталоги равны, если совпадают все три секции (updatedAt не важна). */
+export function builtinCatalogsEqual(
+  a?: Partial<BuiltinThemeCatalog> | null,
+  b?: Partial<BuiltinThemeCatalog> | null,
+): boolean {
+  const na = normalizeBuiltinCatalog(a);
+  const nb = normalizeBuiltinCatalog(b);
+  return (
+    JSON.stringify(na.overrides) === JSON.stringify(nb.overrides)
+    && JSON.stringify([...na.removed].sort((x, y) => x - y)) === JSON.stringify([...nb.removed].sort((x, y) => x - y))
+    && JSON.stringify(na.added) === JSON.stringify(nb.added)
+  );
+}
+
+/**
+ * Есть ли неопубликованные правки каталога.
+ *
+ * Сравнивать «пустой каталог» недостаточно: опубликованные правки тоже лежат в
+ * overrides/removed/added, и после публикации кнопка «Применить для всех»
+ * должна погаснуть. Ориентируемся на последний каталог, подтверждённый сервером.
+ */
+export function builtinCatalogDirty(
+  local?: Partial<BuiltinThemeCatalog> | null,
+  published?: Partial<BuiltinThemeCatalog> | null,
+): boolean {
+  // Серверного эталона ещё нет (первая загрузка не прошла) — считаем каталог
+  // «грязным» только если в нём есть хоть что-то, что стоит опубликовать.
+  if (!published) {
+    const n = normalizeBuiltinCatalog(local);
+    return Object.keys(n.overrides).length > 0 || n.removed.length > 0 || n.added.length > 0;
+  }
+  return !builtinCatalogsEqual(local, published);
+}
+
 export const THEMES: Theme[] = [
   // ── 0 ── Ателье Минимализм — AMOLED Glass / 2026 ─────────────────────────────
   {
@@ -256,6 +371,7 @@ export const THEMES: Theme[] = [
     sidebarBlur: 'blur(26px) saturate(1.45)',
     headerGradient: 'linear-gradient(90deg, rgba(0,0,0,0.76) 0%, rgba(0,245,212,0.10) 50%, rgba(0,0,0,0.76) 100%)',
     bubbleOwnText: '#00100E',
+    settings: themePreset(0),
   },
 
   // ── 1 ── Глубокая ночь — чистая, без паттерна ─────────────────────────────────
@@ -274,6 +390,7 @@ export const THEMES: Theme[] = [
     sidebarBlur: 'blur(24px) saturate(1.22)',
     headerGradient: 'linear-gradient(90deg, rgba(7,10,18,0.80) 0%, rgba(25,34,56,0.66) 52%, rgba(7,10,18,0.80) 100%)',
     bubbleOwnText: '#160B02',
+    settings: themePreset(1),
   },
 
   // ── 0 ── Vera Dark — чистая, без паттерна ─────────────────────────────────
@@ -291,6 +408,7 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #22203A 0%, #1A1930 50%, #16152A 100%)',
     headerGradient: 'linear-gradient(90deg, #1D1C32 0%, #17162A 100%)',
     bubbleOwnText: '#10201F',
+    settings: themePreset(100),
   },
 
   // ── 101 ── Ночной изумруд ─────────────────────────────────────────────────
@@ -308,6 +426,7 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #102820 0%, #0d1f1a 60%, #091510 100%)',
     headerGradient: 'linear-gradient(90deg, #0f1c15 0%, #091510 100%)',
     bubbleOwnText: '#ffffff',
+    settings: themePreset(101),
   },
 
   // ── 3 ── Свет и воздух — молочное стекло / дневной воздух ─────────────────
@@ -326,6 +445,7 @@ export const THEMES: Theme[] = [
     sidebarBlur: 'blur(26px) saturate(1.18)',
     headerGradient: 'linear-gradient(90deg, rgba(255,255,255,0.74) 0%, rgba(244,238,255,0.58) 52%, rgba(255,249,240,0.72) 100%)',
     bubbleOwnText: '#FFFFFF',
+    settings: themePreset(3),
   },
 
   // ── 4 ── Индиго и золото ─────────────────────────────────────────────────────
@@ -343,6 +463,7 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #141438 0%, #0f0f2d 60%, #08081e 100%)',
     headerGradient: 'linear-gradient(90deg, #131330 0%, #08081e 100%)',
     bubbleOwnText: '#fff8e0',
+    settings: themePreset(4),
   },
 
   // ── 5 ── Тёмная вишня ────────────────────────────────────────────────────
@@ -360,6 +481,7 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #200f0f 0%, #1a0d0d 60%, #100808 100%)',
     headerGradient: 'linear-gradient(90deg, #1c0c0c 0%, #100808 100%)',
     bubbleOwnText: '#fff0ee',
+    settings: themePreset(5),
   },
 
   // ── 6 ── Лавандовый сон ──────────────────────────────────────────────────
@@ -377,6 +499,7 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #201830 0%, #1a1528 60%, #110d1a 100%)',
     headerGradient: 'linear-gradient(90deg, #1c1625 0%, #110d1a 100%)',
     bubbleOwnText: '#ffffff',
+    settings: themePreset(6),
   },
 
   // ── 7 ── Океанская глубь ─────────────────────────────────────────────────
@@ -396,6 +519,7 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#ffffff',
     finish: 'glass',
     finishAmount: 0.5,
+    settings: themePreset(7),
   },
 
   // ── 8 ── Песчаный берег ──────────────────────────────────────────────────
@@ -413,6 +537,7 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #faf0e6 0%, #f5ebe0 60%, #ecdecf 100%)',
     headerGradient: 'linear-gradient(90deg, #ecdecf 0%, #ddd0c0 100%)',
     bubbleOwnText: '#ffffff',
+    settings: themePreset(8),
   },
 
   // ── 9 ── Дымчато-розовая ───────────────────────────────────────────────────
@@ -430,6 +555,7 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #221820 0%, #1a1418 60%, #110c0f 100%)',
     headerGradient: 'linear-gradient(90deg, #1c1618 0%, #110c0f 100%)',
     bubbleOwnText: '#ffffff',
+    settings: themePreset(9),
   },
 
   // ── 10 ── Тёмный нефрит ──────────────────────────────────────────────────
@@ -447,6 +573,7 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #102818 0%, #0d1f14 60%, #08140c 100%)',
     headerGradient: 'linear-gradient(90deg, #0f2016 0%, #08140c 100%)',
     bubbleOwnText: '#ffffff',
+    settings: themePreset(10),
   },
 
   // ── 12 ── Арктическая зима ───────────────────────────────────────────────
@@ -466,6 +593,7 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#ffffff',
     finish: 'glass',
     finishAmount: 0.7,
+    settings: themePreset(12),
   },
 
   // ── 13 ── Космический бархат ─────────────────────────────────────────────
@@ -485,6 +613,7 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#ffffff',
     finish: 'metal',
     finishAmount: 0.4,
+    settings: themePreset(13),
   },
 
   // ── 15 ── Коралловый риф ────────────────────────────────────────────────────
@@ -502,6 +631,7 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #261010 0%, #1f0f0f 60%, #140909 100%)',
     headerGradient: 'linear-gradient(90deg, #200e0e 0%, #140909 100%)',
     bubbleOwnText: '#fff0ee',
+    settings: themePreset(15),
   },
 
   // ── 16 ── Серебряный туман ───────────────────────────────────────────────
@@ -519,6 +649,7 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #202428 0%, #1a1c1e 60%, #121415 100%)',
     headerGradient: 'linear-gradient(90deg, #1c2024 0%, #121415 100%)',
     bubbleOwnText: '#ffffff',
+    settings: themePreset(16),
   },
 
   // ── 18 ── Тёмная фуксия ──────────────────────────────────────────────────
@@ -536,6 +667,7 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #201020 0%, #1a0d1a 60%, #100810 100%)',
     headerGradient: 'linear-gradient(90deg, #1c0e1c 0%, #100810 100%)',
     bubbleOwnText: '#ffffff',
+    settings: themePreset(18),
   },
 
   // ── 19 ── Аквамариновый грот ─────────────────────────────────────────────
@@ -553,6 +685,7 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #102020 0%, #0d1a1a 60%, #081010 100%)',
     headerGradient: 'linear-gradient(90deg, #0e1c1c 0%, #081010 100%)',
     bubbleOwnText: '#e0fffc',
+    settings: themePreset(19),
   },
 
   // ── 21 ── Лунная ночь ────────────────────────────────────────────────────
@@ -572,6 +705,7 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#eef2ff',
     finish: 'glass',
     finishAmount: 0.5,
+    settings: themePreset(21),
   },
 
   // ── 22 ── Алый мел ──────────────────────────────────────────────────
@@ -589,6 +723,7 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #121012 0%, #08080A 58%, #000000 100%)',
     headerGradient: 'linear-gradient(90deg, #050506 0%, #141012 55%, #050506 100%)',
     bubbleOwnText: '#FFFFFF',
+    settings: themePreset(22),
   },
 
   // ── 23 ── Бездна и мороз ────────────────────────────────────────────────────
@@ -608,6 +743,7 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#F4FAFF',
     finish: 'glass',
     finishAmount: 0.8,
+    settings: themePreset(23),
   },
 
   // ── 24 ── Золотой сейф ─────────────────────────────────────────────────────
@@ -627,6 +763,7 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#111111',
     finish: 'metal',
     finishAmount: 0.5,
+    settings: themePreset(24),
   },
 
   // ── 25 ── Чёрная роза ──────────────────────────────────────────────────────
@@ -644,6 +781,7 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #200A0C 0%, #120607 62%, #070202 100%)',
     headerGradient: 'linear-gradient(90deg, #080203 0%, #241012 52%, #080203 100%)',
     bubbleOwnText: '#160708',
+    settings: themePreset(25),
   },
 
   // ── 26 ── Полночный уголёк ─────────────────────────────────────────────────
@@ -661,6 +799,7 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #0D1722 0%, #061018 62%, #03090E 100%)',
     headerGradient: 'linear-gradient(90deg, #03090E 0%, #142230 52%, #03090E 100%)',
     bubbleOwnText: '#111111',
+    settings: themePreset(26),
   },
 
   // ── 27 ── Полночный коралл ─────────────────────────────────────────────────
@@ -678,6 +817,7 @@ export const THEMES: Theme[] = [
     sidebarGradient: 'linear-gradient(180deg, #142033 0%, #0E1727 62%, #080E18 100%)',
     headerGradient: 'linear-gradient(90deg, #080E18 0%, #172337 52%, #080E18 100%)',
     bubbleOwnText: '#101827',
+    settings: themePreset(27),
   },
 
   // ── 28 ── Живая адаптация — время / освещение / батарея ────────────────────
@@ -696,6 +836,7 @@ export const THEMES: Theme[] = [
     sidebarBlur: 'blur(26px) saturate(1.32)',
     headerGradient: 'linear-gradient(90deg, rgba(255,240,194,0.10) 0%, rgba(0,194,255,0.11) 50%, rgba(138,92,255,0.10) 100%)',
     bubbleOwnText: '#03110A',
+    settings: themePreset(28),
   },
 
   // ── 29 ── Монохром — чёрно-белый минимализм ─────────────────────────────────
@@ -720,6 +861,7 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#FFFFFF',
     finish: 'matte',
     finishAmount: 0.6,
+    settings: themePreset(29),
   },
 
   // ── 30 ── Тёмный монохром — бело-чёрный минимализм (матовый графит) ──────────
@@ -742,6 +884,7 @@ export const THEMES: Theme[] = [
     bubbleOwnText: '#000000',
     finish: 'matte',
     finishAmount: 0.6,
+    settings: themePreset(30),
   },
 
   // ── 31 ── Telegram — светлый интерфейс с голубым акцентом ────────────────
@@ -762,6 +905,7 @@ export const THEMES: Theme[] = [
     disableBackgroundGlow: true,
     finish: 'matte',
     finishAmount: 0.3,
+    settings: themePreset(31),
   },
 
   // ── 36 ── Тёмный Telegram — тёмная палитра Telegram с голубым акцентом ─────
@@ -783,6 +927,7 @@ export const THEMES: Theme[] = [
     disableBackgroundGlow: true,
     finish: 'matte',
     finishAmount: 0.34,
+    settings: themePreset(36),
   },
 
   // ── 32 ── VK — фирменный синий и светлые панели ──────────────────────────
@@ -803,6 +948,7 @@ export const THEMES: Theme[] = [
     disableBackgroundGlow: true,
     finish: 'matte',
     finishAmount: 0.28,
+    settings: themePreset(32),
   },
 
   // ── 33 ── X — контрастная чёрная тема с акцентом X Blue ──────────────────
@@ -823,6 +969,7 @@ export const THEMES: Theme[] = [
     disableBackgroundGlow: true,
     finish: 'matte',
     finishAmount: 0.42,
+    settings: themePreset(33),
   },
 
   // ── 34 ── Facebook — светлая тема с синими сообщениями ───────────────────
@@ -843,6 +990,7 @@ export const THEMES: Theme[] = [
     disableBackgroundGlow: true,
     finish: 'matte',
     finishAmount: 0.3,
+    settings: themePreset(34),
   },
 
   // ── 35 ── Discord — тёмный интерфейс и blurple-акцент ────────────────────
@@ -863,6 +1011,7 @@ export const THEMES: Theme[] = [
     disableBackgroundGlow: true,
     finish: 'matte',
     finishAmount: 0.38,
+    settings: themePreset(35),
   },
 ];
 
@@ -920,6 +1069,21 @@ interface ThemeState {
   applyCustomTheme: (t: Theme) => void;
   setChatPhoto: (photo?: string) => void;
   setChatBgImage: (photo?: string, opacity?: number) => void;
+  // ── Каталог встроенных тем (общий для всех, правки — админские) ──
+  /** Каталог с правками админа; приезжает с сервера и переживает перезагрузку. */
+  builtinCatalog: BuiltinThemeCatalog;
+  /** Последний каталог, подтверждённый сервером — с ним сверяется «грязность». */
+  publishedBuiltinCatalog: BuiltinThemeCatalog | null;
+  /** Итоговый список тем для пикеров: завод + правки − удалённые + новые. */
+  builtinThemes: Theme[];
+  builtinThemesLoading: boolean;
+  applyBuiltinCatalog: (catalog?: Partial<BuiltinThemeCatalog> | null, published?: boolean) => void;
+  markBuiltinCatalogPublished: (catalog?: Partial<BuiltinThemeCatalog> | null) => void;
+  loadBuiltinThemes: () => Promise<void>;
+  saveBuiltinTheme: (t: Theme) => void;
+  removeBuiltinTheme: (id: number) => void;
+  resetBuiltinTheme: (id: number) => void;
+  publishBuiltinThemes: () => Promise<{ ok: boolean; message?: string }>;
 }
 
 // Удаляем старый переполненный ключ (с огромными base64), чтобы он не
@@ -931,6 +1095,54 @@ try {
   }
 } catch {}
 
+/**
+ * localStorage, который не роняет приложение при переполнении квоты.
+ *
+ * Квота (~5 МБ) общая для всего origin, и делится она со всеми остальными
+ * ключами: фото-обои, черновики, кеш. Если он переполнен, обычный setItem
+ * бросает исключение прямо внутри persist — и накрывает собой всё, что было
+ * до этого: сохранение темы, сообщение об ошибке и закрытие окна редактора.
+ *
+ * Здесь вместо падения мы честно отказываемся от тяжёлых полей (сначала
+ * фото) и пробуем ещё раз. Если не помогло — данные остаются в памяти до
+ * перезагрузки, но приложение продолжает работать.
+ */
+function quotaSafeStorage(): Storage {
+  // localStorage берём лениво, внутри функций: при импорте модуля в Node (тесты)
+  // его нет, и eager-чтение роняло бы загрузку стора целиком.
+  const ls = (): Storage => (typeof localStorage !== 'undefined' ? localStorage : (undefined as any));
+  /** Выкидываем самые тяжёлые строковые поля из готового JSON. */
+  const shrink = (raw: string): string[] => {
+    const attempts: string[] = [raw];
+    try {
+      const data = JSON.parse(raw);
+      // Сначала режем фото-обои и картинки тем — они и есть основной вес.
+      if (data?.state) {
+        for (const key of ['chatBgImage', 'chatPhoto']) {
+          if (typeof data.state[key] === 'string') { data.state[key] = undefined; attempts.push(JSON.stringify(data)); }
+        }
+      }
+    } catch { /* не разобрали — пишем как есть */ }
+    return attempts;
+  };
+  return {
+    get length() { return ls().length; },
+    clear: () => ls().clear(),
+    key: (i: number) => ls().key(i),
+    getItem: (k: string) => ls().getItem(k),
+    removeItem: (k: string) => ls().removeItem(k),
+    setItem: (k: string, v: string) => {
+      const attempts = shrink(v);
+      for (let i = 0; i < attempts.length; i++) {
+        try { ls().setItem(k, attempts[i]); return; } catch { /* пробуем полегче */ }
+      }
+      // Квота занята чужими ключами — наш вклад не записался. Молча оставляем
+      // данные в памяти: сохранённая тема переживёт сессию, но не перезагрузку.
+      console.warn(`[themeStore] не удалось записать «${k}»: localStorage переполнен`);
+    },
+  };
+}
+
 export const useThemeStore = create<ThemeState>()(
   persist(
     (set, get) => ({
@@ -939,6 +1151,10 @@ export const useThemeStore = create<ThemeState>()(
       themeVersion: 0,
       customThemes: [],
       settingsByTheme: {},
+      builtinCatalog: EMPTY_BUILTIN_CATALOG,
+      publishedBuiltinCatalog: null,
+      builtinThemes: THEMES,
+      builtinThemesLoading: false,
       setThemeSettings: (id, settings) => set({
         settingsByTheme: { ...get().settingsByTheme, [String(id)]: settings },
       }),
@@ -995,6 +1211,116 @@ export const useThemeStore = create<ThemeState>()(
         set({ theme: t, themeId: t.id, themeVersion: get().themeVersion + 1 });
         applyThemeSettings(settings);
       },
+      // ── Каталог встроенных тем ────────────────────────────────────────────
+      applyBuiltinCatalog: (catalog, published = false) => {
+        const next = normalizeBuiltinCatalog(catalog);
+        const list = buildBuiltinCatalog(next);
+        const patch: Partial<ThemeState> = { builtinCatalog: next, builtinThemes: list };
+        if (published) patch.publishedBuiltinCatalog = next;
+        // Если выбрана пользовательская тема — её правки не трогаем.
+        const currentId = get().themeId;
+        if (!get().customThemes.some(t => t.id === currentId)) {
+          const picked = list.find(t => t.id === currentId) || list[0] || THEMES[0];
+          // Фото-фон чата — личная настройка, её тема не должна затирать.
+          const ownBg = get().chatBgImage;
+          patch.themeId = picked.id;
+          patch.theme = ownBg ? { ...picked, chatBgImage: ownBg } : picked;
+          patch.themeVersion = get().themeVersion + 1;
+        }
+        set(patch);
+      },
+      markBuiltinCatalogPublished: (catalog) => {
+        set({ publishedBuiltinCatalog: normalizeBuiltinCatalog(catalog) });
+      },
+      loadBuiltinThemes: async () => {
+        // Без токена сервер отдаст 401 — остаёмся на заводском каталоге.
+        // localStorage может отсутствовать (SSR/тестовый vm-контекст).
+        try {
+          if (typeof localStorage === 'undefined' || !localStorage.getItem('vera_token')) return;
+        } catch {
+          return;
+        }
+        set({ builtinThemesLoading: true });
+        try {
+          const res = await themesApi.get();
+          const s = get();
+          // Черновик админа приоритетнее свежего ответа: пока правки не
+          // опубликованы, молчаливый ответ сервера не должен их терять.
+          if (builtinCatalogDirty(s.builtinCatalog, s.publishedBuiltinCatalog)) {
+            s.markBuiltinCatalogPublished(res.data?.themes);
+          } else {
+            s.applyBuiltinCatalog(res.data?.themes, true);
+          }
+        } catch {
+          // Офлайн или сервер старой версии — заводской каталог остаётся.
+        } finally {
+          set({ builtinThemesLoading: false });
+        }
+      },
+      saveBuiltinTheme: (t) => {
+        const catalog = get().builtinCatalog;
+        if (THEMES.some(b => b.id === t.id)) {
+          // Заводская тема — это правка поверх неё.
+          set({
+            builtinCatalog: {
+              ...catalog,
+              overrides: { ...catalog.overrides, [String(t.id)]: t },
+              removed: catalog.removed.filter(id => id !== t.id),
+            },
+          });
+        } else {
+          const exists = catalog.added.some(x => x.id === t.id);
+          set({
+            builtinCatalog: {
+              ...catalog,
+              added: exists ? catalog.added.map(x => (x.id === t.id ? t : x)) : [...catalog.added, t],
+              removed: catalog.removed.filter(id => id !== t.id),
+            },
+          });
+        }
+        get().applyBuiltinCatalog(get().builtinCatalog);
+      },
+      removeBuiltinTheme: (id) => {
+        const catalog = get().builtinCatalog;
+        const overrides = { ...catalog.overrides };
+        delete overrides[String(id)];
+        set({
+          builtinCatalog: {
+            ...catalog,
+            overrides,
+            added: catalog.added.filter(t => t.id !== id),
+            removed: catalog.removed.includes(id) ? catalog.removed : [...catalog.removed, id],
+          },
+        });
+        get().applyBuiltinCatalog(get().builtinCatalog);
+      },
+      resetBuiltinTheme: (id) => {
+        // Вернуть заводской вид: снимаем правку, но тему из каталога не убираем.
+        const catalog = get().builtinCatalog;
+        const overrides = { ...catalog.overrides };
+        delete overrides[String(id)];
+        set({
+          builtinCatalog: { ...catalog, overrides, removed: catalog.removed.filter(x => x !== id) },
+        });
+        get().applyBuiltinCatalog(get().builtinCatalog);
+      },
+      publishBuiltinThemes: async () => {
+        const catalog = get().builtinCatalog;
+        try {
+          const res = await themesApi.save({
+            overrides: catalog.overrides,
+            removed: catalog.removed,
+            added: catalog.added,
+          });
+          get().applyBuiltinCatalog(res.data?.themes || catalog, true);
+          return { ok: true };
+        } catch (e: any) {
+          return {
+            ok: false,
+            message: e?.response?.data?.message || e?.message || 'Не удалось сохранить темы на сервере',
+          };
+        }
+      },
       setChatPhoto: (photo) => set({ chatPhoto: photo }),
       setChatBgImage: (photo, opacity = 0.35) => {
         set({
@@ -1013,12 +1339,29 @@ export const useThemeStore = create<ThemeState>()(
       // Это гарантирует, что тема сохраняется после обновления страницы.
       name: 'vera-theme-v2',
       version: 1,
+      // Квота localStorage общая для всего origin: обычный setItem при
+      // переполнении бросает исключение прямо здесь и прерывает сохранение.
+      storage: createJSONStorage(() => quotaSafeStorage()),
       // Сохраняем только компактные поля. Полный объект theme может содержать
       // огромные data-URL (фото-фон чата base64), из-за чего localStorage
       // переполнялся и тема сбрасывалась при обновлении страницы.
       partialize: (s) => {
         // Разрешаем большие data URL для фото чата и обоев: до ~5МБ.
         const LIMIT = 5 * 1024 * 1024;
+        // Фото-обои темы НЕ хранятся в теме: это ключи вида `chatlist:<id>`,
+        // сам блоб лежит в IndexedDB. Раньше сюда попадал ещё и `wallpaper.photo` —
+        // целый dataURL, и при сохранении каждой темы он копился в снимке
+        // вместе с settingsByTheme, пока localStorage не переполнялся. Фото
+        // принадлежит пользователю и общим для всех его тем, а не каждой теме.
+        const cleanSettings = (settings?: ThemeSettings): ThemeSettings | undefined => {
+          if (!settings) return settings;
+          const wall = settings.wallpaper;
+          if (!wall) return settings;
+          const next: typeof wall = { ...wall };
+          if (wall.photo) next.photo = undefined;
+          if (wall.userWallpapers) next.userWallpapers = undefined;
+          return { ...settings, wallpaper: next };
+        };
         const clean = (t?: Theme): Theme | undefined => {
           if (!t) return t;
           const out: Theme = { ...t };
@@ -1030,12 +1373,24 @@ export const useThemeStore = create<ThemeState>()(
           if (out.settings?.wallpaper?.photo && out.settings.wallpaper.photo.startsWith('data:')
               && out.settings.wallpaper.photo.length > LIMIT) {
             out.settings = { ...out.settings, wallpaper: { ...out.settings.wallpaper, photo: undefined } };
+          } else if (out.settings) {
+            out.settings = cleanSettings(out.settings);
           }
           return out;
         };
         return {
           themeId: s.themeId,
           customThemes: s.customThemes.map(clean).filter(Boolean) as Theme[],
+          // Каталог админа едет вместе с темой: иначе после перезагрузки
+          // «Применить для всех» снова горел бы на пустом каталоге.
+          builtinCatalog: {
+            overrides: Object.fromEntries(
+              Object.entries(s.builtinCatalog?.overrides || {}).map(([k, v]) => [k, clean(v)!]),
+            ),
+            added: (s.builtinCatalog?.added || []).map(v => clean(v)).filter(Boolean) as Theme[],
+            removed: s.builtinCatalog?.removed || [],
+            updatedAt: s.builtinCatalog?.updatedAt || null,
+          },
           // Настройки каждой темы — тоже с тем же ограничением на фото.
           settingsByTheme: Object.fromEntries(
             Object.entries(s.settingsByTheme || {}).map(([key, value]) => {
@@ -1043,7 +1398,7 @@ export const useThemeStore = create<ThemeState>()(
               if (photo && photo.startsWith('data:') && photo.length > LIMIT) {
                 return [key, { ...value, wallpaper: { ...value.wallpaper!, photo: undefined } }];
               }
-              return [key, value];
+              return [key, cleanSettings(value)];
             }),
           ),
           chatPhoto: s.chatPhoto && s.chatPhoto.startsWith('data:') && s.chatPhoto.length > LIMIT
@@ -1061,12 +1416,16 @@ export const useThemeStore = create<ThemeState>()(
         const p = (persisted || {}) as Partial<ThemeState>;
         const storedId = typeof p.themeId === 'number' ? p.themeId : 0;
         const customThemes = Array.isArray(p.customThemes) ? p.customThemes : [];
+        // Каталог админа может измениться (правка/удаление темы у всех) — тему
+        // собираем уже по нему, а не по заводскому списку.
+        const catalog = normalizeBuiltinCatalog(p.builtinCatalog);
+        const builtinList = buildBuiltinCatalog(catalog);
         const custom = customThemes.find(t => t && t.id === storedId);
-        const builtin = THEMES.find(t => t.id === storedId);
+        const builtin = builtinList.find(t => t.id === storedId);
         // Если сохранённая тема была удалена из каталога, themeId приводим к 0:
         // иначе в переключателе не выделена ни одна тема, а редактор путается.
         const themeId = custom || builtin ? storedId : 0;
-        const baseTheme = custom || builtin || THEMES[0];
+        const baseTheme = custom || builtin || builtinList[0] || THEMES[0];
         // Поверх базовой темы восстанавливаем пользовательское фото-фон чата
         const theme: Theme = {
           ...baseTheme,
@@ -1079,14 +1438,21 @@ export const useThemeStore = create<ThemeState>()(
           ...current,
           themeId,
           customThemes,
-          // Настройки каждой темы восстанавливаем как есть.
-          settingsByTheme: p.settingsByTheme || {},
+          builtinCatalog: catalog,
+          builtinThemes: builtinList,
+          // Снимки старых версий хранили обои как 'none' у всех тем сразу:
+          // подставляем текущий базовый фон темы, иначе у пользователя пропадал
+          // один общий фон без всяких переключений настроек.
+          settingsByTheme: fillMissingThemeWallpapers(p.settingsByTheme),
           theme,
           themeVersion: current.themeVersion || 0,
           chatPhoto: p.chatPhoto,
           chatBgImage: p.chatBgImage,
           chatBgImageOpacity: p.chatBgImageOpacity,
         };
+        // Настройки выбранной темы поднимаем сразу: иначе до первого
+        // переключения темы фон/звук/иконки оставались бы дефолтными.
+        applyRestoredThemeSettings();
       },
     }
   )
@@ -1096,10 +1462,120 @@ export const useThemeStore = create<ThemeState>()(
 // восстанавливаться на новом устройстве после привязки по QR.
 enableStoreSync('theme', useThemeStore);
 
+let builtinSocketBound = false;
+
+/**
+ * Подписка на `themes:updated`: админ сохранил каталог — встроенные темы
+ * обновляются у всех онлайн-клиентов без перезагрузки. Вызывается один раз
+ * (повторные вызовы ничего не добавляют).
+ */
+export function bindBuiltinThemesSocket(): void {
+  if (builtinSocketBound || typeof window === 'undefined') return;
+  builtinSocketBound = true;
+  import('../services/socket')
+    .then(({ getSocket }) => {
+      const socket = getSocket?.() as { on?: (event: string, handler: (payload: any) => void) => void } | null;
+      if (!socket?.on) {
+        // Сокет ещё не создан (не залогинились) — переподпишемся при следующем вызове.
+        builtinSocketBound = false;
+        return;
+      }
+      socket.on('themes:updated', (payload: any) => {
+        // Событие = серверный эталон. Но если админ прямо сейчас правит каталог
+        // и ещё не опубликовал, затирать его черновик нельзя: обновляем только
+        // эталон, локальные правки остаются и ждут «Применить для всех».
+        const s = useThemeStore.getState();
+        if (builtinCatalogDirty(s.builtinCatalog, s.publishedBuiltinCatalog)) {
+          s.markBuiltinCatalogPublished(payload?.themes);
+        } else {
+          s.applyBuiltinCatalog(payload?.themes, true);
+        }
+      });
+    })
+    .catch(() => { builtinSocketBound = false; });
+}
+
+/** Забрать каталог тем с сервера (после входа или переподключения). */
+export function refreshBuiltinThemes(): void {
+  // Каталог тянем только в браузере, и только если стор реально инициализирован:
+  // в небраузерных окружениях (vm-тесты, пререндер) getState может отсутствовать.
+  if (typeof window === 'undefined' || typeof useThemeStore.getState !== 'function') return;
+  useThemeStore.getState().loadBuiltinThemes();
+}
+
+/**
+ * Поднимает настройки темы при подъёме стора.
+ *
+ * Раньше фон применялся только к выбранной теме, а остальные темы оставались
+ * снимком с общим 'none' — и при переключении на них фон пропадал совсем.
+ * Теперь берём настройки и восстанавливаем уже с подстановкой.
+ */
+export function applyRestoredThemeSettings(): void {
+  const s = useThemeStore.getState();
+  const t = s.theme;
+  const settings = s.settingsByTheme[String(s.themeId)] || t.settings || themePreset(s.themeId);
+  applyThemeSettings(settings);
+}
+
+if (typeof window !== 'undefined') {
+  bindBuiltinThemesSocket();
+  refreshBuiltinThemes();
+}
+
 /**
  * Снимок текущих глобальных настроек — кладётся в тему при её сохранении.
  * Читает те же сторы, в которые потом пишет applyThemeSettings.
  */
+/**
+ * Базовый фон темы: свой выбор пользователя, иначе зашитый в тему.
+ *
+ * 'none' — сознательный отказ от фона, а не «не задано»: возвращать его как
+ * «фон темы» нельзя. Для темы без пресета фон не подставляется НИЧЕГО (в том
+ * числе проверки на «есть ли фон») — сравнение без проверок не воспринимается.
+ */
+export function themeBaseWallpaperId(state: {
+  themeId: number | null;
+  theme?: { settings?: ThemeSettings };
+  settingsByTheme?: Record<string, ThemeSettings>;
+}): string | null {
+  if (state.themeId === null || state.themeId === undefined) return null;
+  const own = state.settingsByTheme?.[String(state.themeId)]?.wallpaper?.stockId;
+  // Снимок пользователя — источник воли: 'none' там означает «без фона».
+  // Возвращать в этом случае фон темы нельзя, это тихо проигнорировало бы отказ.
+  if (own) return own === 'none' ? null : own;
+  const fromTheme = state.theme?.settings?.wallpaper?.stockId;
+  return fromTheme && fromTheme !== 'none' ? fromTheme : null;
+}
+
+/**
+ * Подставляет базовый фон темы в снимки, где обои не заданы.
+ *
+ * У пользователей старой миграции снимок содержал stockId 'none' у каждой темы
+ * (движок обоев ещё не умел хранить фон по-своему) — и после переноса они
+ * остались без обоев, при том что у каждой темы свой базовый фон.
+ *
+ * Свои выборы не трогаем: объект, у которого фон уже задан, возвращается без
+ * пробелов (иначе пересоздавался бы другой объект).
+ */
+export function fillMissingThemeWallpapers(
+  settingsByTheme: Record<string, ThemeSettings> | undefined | null,
+): Record<string, ThemeSettings> {
+  return Object.fromEntries(Object.entries(settingsByTheme || {}).map(([key, value]) => {
+    const preset = themePreset(Number(key));
+    // 'none' в старых снимках — это не «отказ от фона», а «обой не хранили»:
+    // такие записи достраиваем базовым фоном темы. Свой выбор (любой другой id)
+    // не трогаем.
+    const hasOwnWallpaper = !!value?.wallpaper?.stockId && value.wallpaper.stockId !== 'none';
+    if (hasOwnWallpaper) return [key, value];
+    if (!(preset?.wallpaper && preset.wallpaper.stockId)) return [key, value];
+    return [key, {
+      ...preset,
+      ...value,
+      wallpaper: { ...preset.wallpaper, ...value?.wallpaper, stockId: preset.wallpaper.stockId },
+    }];
+  }));
+}
+
 export function snapshotThemeSettings(): ThemeSettings {
   const bg = useChatBgPrefsStore.getState();
   const snd = useChatSoundStore.getState();
@@ -1113,6 +1589,7 @@ export function snapshotThemeSettings(): ThemeSettings {
       photoName: bg.userPhotoName,
       liveValue: bg.globalLiveValue,
       brightness: bg.defaultBrightness,
+      chatList: { value: bg.chatListBg, dim: bg.chatListDim, blur: bg.chatListBlur },
       // Галерея своих фото/видео НЕ дублируется в тему: она общая (её же
       // читает движок обоев), а копия data URL в каждой теме быстрее всего
       // убьёт квоту localStorage. Тема хранит только ВЫБРАННЫЕ обои.
@@ -1125,6 +1602,7 @@ export function snapshotThemeSettings(): ThemeSettings {
     animations: { ...anim.enabled },
     appearance: {
       brightness: us.brightness, textScale: us.textScale, globalFontFamily: us.globalFontFamily,
+      wallClock: { enabled: us.wallClockEnabled, avoid: us.wallClockAvoid, pos: us.wallClockPos, datePos: us.wallClockDatePos, seconds: us.wallClockSeconds, secondsPos: us.wallClockSecondsPos, secondsScale: us.wallClockSecondsScale, timeScale: us.wallClockTimeScale, dateScale: us.wallClockDateScale },
     },
     layout: { ...us.layout },
   };
@@ -1168,6 +1646,10 @@ function takeThemeSettings(
  * объект настроек не должен ломать переключение темы.
  */
 export function applyThemeSettings(s?: ThemeSettings) {
+  // Пустой снимок не должен ничего затирать: иначе переключение темы без
+  // настроек (старый снимок, битая ссылка) сбрасывало бы живые настройки.
+  // Выход обязан быть ДО try: иначе исключение всё равно пройдёт внутрь.
+  if (!s) return;
   try {
     if (s.wallpaper) {
       const bg = useChatBgPrefsStore.getState();
@@ -1185,6 +1667,12 @@ export function applyThemeSettings(s?: ThemeSettings) {
       }
       if (typeof s.wallpaper.brightness === 'number') {
         useChatBgPrefsStore.setState({ defaultBrightness: s.wallpaper.brightness });
+      }
+      // Обои списка чатов — только если поле есть в снимке (см. тип выше).
+      if (s.wallpaper.chatList) {
+        bg.setChatListBg(s.wallpaper.chatList.value ?? null);
+        if (typeof s.wallpaper.chatList.dim === 'number') bg.setChatListDim(s.wallpaper.chatList.dim);
+        if (typeof s.wallpaper.chatList.blur === 'number') bg.setChatListBlur(s.wallpaper.chatList.blur);
       }
     }
     if (s.sound) {
@@ -1206,6 +1694,38 @@ export function applyThemeSettings(s?: ThemeSettings) {
       us.set('brightness', s.appearance.brightness);
       us.set('textScale', s.appearance.textScale);
       us.set('globalFontFamily', s.appearance.globalFontFamily);
+      // Обои с календарём и часами применяются только когда поле реально есть в
+      // снимке: у старых настроек его нет, и «как есть» каждый переключатель
+      // темы выключал бы часы, заданные пользователем.
+      if (s.appearance.wallClock) {
+        // Битое/частичное значение в стор не пишем — иначе следующая тема
+        // получила бы мусор вместо прежней настройки.
+        if (typeof s.appearance.wallClock.avoid === 'boolean') {
+          us.set('wallClockAvoid', s.appearance.wallClock.avoid);
+        }
+        if (typeof s.appearance.wallClock.enabled === 'boolean') {
+          us.set('wallClockEnabled', s.appearance.wallClock.enabled);
+        }
+        us.set('wallClockPos', s.appearance.wallClock.pos);
+        if (s.appearance.wallClock.datePos !== undefined) {
+          us.set('wallClockDatePos', s.appearance.wallClock.datePos);
+        }
+        if (typeof s.appearance.wallClock.seconds === 'boolean') {
+          us.set('wallClockSeconds', s.appearance.wallClock.seconds);
+        }
+        if (s.appearance.wallClock.secondsPos !== undefined) {
+          us.set('wallClockSecondsPos', s.appearance.wallClock.secondsPos);
+        }
+        if (Number.isFinite(s.appearance.wallClock.secondsScale)) {
+          us.set('wallClockSecondsScale', s.appearance.wallClock.secondsScale);
+        }
+        if (Number.isFinite(s.appearance.wallClock.timeScale)) {
+          us.set('wallClockTimeScale', s.appearance.wallClock.timeScale);
+        }
+        if (Number.isFinite(s.appearance.wallClock.dateScale)) {
+          us.set('wallClockDateScale', s.appearance.wallClock.dateScale);
+        }
+      }
     }
     if (s.layout) {
       const us = useUserSettingsStore.getState();

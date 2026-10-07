@@ -37,8 +37,17 @@ export interface PhotoWallpaperMigrationPlan {
   };
 }
 
+// Соединение держим одно на всё приложение. Раньше openDb() открывал новое на
+// каждый get/put и никогда не закрывал: браузер держит такие соединения до
+// конца вкладки, и по мере накопления IndexedDB начинает заметно тормозить —
+// фото в обоях проявлялось через заметную задержку, тем сильнее, чем дольше
+// открыта вкладка. На upgrade соединение нас может заблокировать, поэтому на
+// versionchange закрываемся и роняем кэш — следующий open откроет заново.
+let dbPromise: Promise<IDBDatabase> | null = null;
+
 function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
     if (typeof indexedDB === 'undefined') {
       reject(new Error('IndexedDB недоступен'));
       return;
@@ -48,9 +57,31 @@ function openDb(): Promise<IDBDatabase> {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => { db.close(); dbPromise = null; };
+      db.onclose = () => { dbPromise = null; };
+      resolve(db);
+    };
+    req.onerror = () => { dbPromise = null; reject(req.error); };
   });
+  return dbPromise;
+}
+
+/**
+ * Прогреть картинку: декодировать заранее, пока она ещё не вставлена в DOM.
+ *
+ * object URL сам по себе не «загружает» фото — браузер разбирает JPEG в момент
+ * первой отрисовки, и на большом снимке это заметная задержка (несколько
+ * сотен миллисекунд). Если декодировать заранее через decode(), картинка
+ * появляется сразу. Ошибки глотаем: прекеширование не должно ломать показ.
+ */
+export function warmUpPhotoBgUrl(url: string): void {
+  if (typeof Image === 'undefined') return;
+  const img = new Image();
+  img.decoding = 'async';
+  img.src = url;
+  if (typeof img.decode === 'function') img.decode().catch(() => {});
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {
@@ -109,6 +140,9 @@ export function loadPhotoBgUrl(key: string): Promise<string | null> {
       if (!blob) return null;
       const url = URL.createObjectURL(blob);
       urlCache.set(key, url);
+      // Декодируем заранее: без этого фото «проявлялось» через заметную
+      // паузу — браузер разбирал JPEG прямо в момент первой отрисовки.
+      warmUpPhotoBgUrl(url);
       return url;
     } catch {
       return null;

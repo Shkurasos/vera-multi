@@ -7,6 +7,7 @@ import { THEMED_PACKS } from './themedPacks';
 import { packKeyFromPackId, packPartIds } from './packCatalog';
 import { registerAccountStore } from '../services/storeSyncSimple';
 import { walletApi } from '../services/api';
+import { usePetStore } from './petStore';
 
 export interface SkinPack {
   id: string;
@@ -136,6 +137,7 @@ export const useLootStore = create<LootState>()(persist((set, get) => ({
       const { data } = await walletApi.openCase(caseId);
       if (token !== localStorage.getItem('vera_token')) return null;
       get().hydrate(data);
+      void usePetStore.getState().load().catch(() => undefined);
       return SKIN_PACKS.find(p => p.id === data.drop) || null;
     } finally { if (token === localStorage.getItem('vera_token')) set({ pending: false }); }
   },
