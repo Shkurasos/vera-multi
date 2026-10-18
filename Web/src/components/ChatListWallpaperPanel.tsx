@@ -11,7 +11,7 @@
  */
 import React, { useMemo, useRef, useState } from 'react';
 import {
-  Box, Typography, Button, Slider, Alert, IconButton,
+  Box, Typography, Button, Alert, IconButton,
 } from '@mui/material';
 import { DeleteOutline, PhotoCamera } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
@@ -19,6 +19,7 @@ import { CHAT_LIST_SCOPE, useChatBgPrefsStore } from '../store/chatBgPrefsStore'
 import { savePhotoBg, clearPhotoBg } from '../services/chatBgPhotoStorage';
 import { usePhotoBgUrl, usePhotoBgUrls } from '../hooks/usePhotoBgUrl';
 import PhotoCropDialog from './PhotoCropDialog';
+import SliderWithInput from './SliderWithInput';
 
 /** Предупреждаем раньше, чем браузер съест память на декодирование. */
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
@@ -135,11 +136,11 @@ return (
           <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 0.5 }}>
             Затемнение: {Math.round(chatListDim * 100)}%
           </Typography>
-          <Slider size="small" min={0} max={0.9} step={0.05} value={chatListDim}
-            onChange={(_, v) => setChatListDim(Array.isArray(v) ? v[0] : v)} sx={{ color: theme.accent }} />
+          <SliderWithInput min={0} max={0.9} step={0.05} value={chatListDim}
+            onChange={(v) => setChatListDim(v)} scale={100} />
           <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 0.5 }}>Размытие: {chatListBlur} px</Typography>
-          <Slider size="small" min={0} max={24} step={1} value={chatListBlur}
-            onChange={(_, v) => setChatListBlur(Array.isArray(v) ? v[0] : v)} sx={{ color: theme.accent }} />
+          <SliderWithInput min={0} max={24} step={1} value={chatListBlur}
+            onChange={(v) => setChatListBlur(v)} />
         </Box>
       )}
       <Alert severity="info" sx={{ mt: 1.5, fontSize: 12 }}>

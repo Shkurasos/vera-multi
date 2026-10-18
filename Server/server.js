@@ -28,6 +28,7 @@ const cors = require(tryResolve('cors'));
 const { Server: IOServer } = require(tryResolve('socket.io'));
 const jwt = require(tryResolve('jsonwebtoken'));
 const bcrypt = require(tryResolve('bcrypt'));
+const { hashPassword, verifyAndMigrate } = require('./auth-crypto');
 const multer = require(tryResolve('multer'));
 const { v4: uuidv4 } = require(tryResolve('uuid'));
 const cookieParser = require(tryResolve('cookie-parser'));
@@ -40,6 +41,75 @@ const adminFonts = require('./admin-fonts');
 const musicShare = require('./music-share');
 const protoBoard = require('./proto-board');
 const communityThemes = require('./community-themes');
+const communityIconPacks = require('./community-icon-packs');
+const reactionSkins = require('./reaction-skins');
+
+const { stripImageMetadata, imageType } = require('./image-privacy');
+
+function sanitizeStoredImage(filePath, mimeType, originalName = filePath) {
+  try {
+    const original = fs.readFileSync(filePath);
+    const clean = stripImageMetadata(original, mimeType, originalName);
+    if (!clean.equals(original)) fs.writeFileSync(filePath, clean);
+    return { sha256: crypto.createHash('sha256').update(clean).digest('hex'), size: clean.length,
+      mimetype: imageType(clean) || mimeType };
+  } catch { return null; }
+}
+
+function sanitizeImageDataUrl(value) {
+  if (typeof value !== 'string' || !/^data:/i.test(value)) return value;
+  const match = value.match(/^data:((?:image|audio|video)\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/i);
+  if (!match) return '';
+  try {
+    const mime = match[1].toLowerCase() === 'image/jpg' ? 'image/jpeg' : match[1].toLowerCase();
+    const encoded = match[2].replace(/\s/g, '');
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded) || encoded.length % 4 === 1) return '';
+    const decoded = Buffer.from(encoded, 'base64');
+    if (!decoded.length || decoded.toString('base64') !== encoded) return '';
+    const clean = stripImageMetadata(decoded, mime);
+    return `data:${imageType(clean) || mime};base64,${clean.toString('base64')}`;
+  } catch { return ''; }
+}
+
+function messageIntegrityHash(message) {
+  const payload = {
+    id: message.id, chatId: message.chatId, senderId: message.senderId, text: message.text || '',
+    replyToId: message.replyToId || null, forwardFromId: message.forwardFromId || null,
+    poll: message.poll ? { question: message.poll.question, multiple: message.poll.multiple,
+      options: message.poll.options.map(o => ({ id: o.id, text: o.text })) } : null,
+    type: message.type || 'text', attachments: (message.attachments || []).map(a => ({
+      id: a.id, fileUrl: a.fileUrl, fileName: a.fileName, fileSize: a.fileSize, mimeType: a.mimeType, sha256: a.sha256 || null,
+    })), createdAt: message.createdAt,
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
+
+function attachmentIntegrityHash(attachment) {
+  const url = String(attachment?.fileUrl || attachment?.url || '');
+  if (/^\/uploads\/[A-Za-z0-9._\-/]+$/.test(url) && !url.includes('..')) {
+    const filePath = path.join(UPLOADS_DIR, ...url.slice('/uploads/'.length).split('/'));
+    if (path.relative(UPLOADS_DIR, filePath).startsWith('..')) return null;
+    try { return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex'); } catch { return null; }
+  }
+  if (url.startsWith('data:')) {
+    const clean = sanitizeImageDataUrl(url);
+    if (clean) return crypto.createHash('sha256').update(Buffer.from(clean.slice(clean.indexOf(',') + 1), 'base64')).digest('hex');
+  }
+  return null;
+}
+
+function sanitizeProfileMediaStore(store) {
+  if (!store || typeof store !== 'object') return store;
+  for (const key of Object.keys(store)) {
+    if (typeof store[key] === 'string' && /^data:(?:image|audio|video)\//i.test(store[key])) {
+      store[key] = sanitizeImageDataUrl(store[key]);
+    } else if (store[key] && typeof store[key] === 'object') sanitizeProfileMediaStore(store[key]);
+  }
+  for (const key of ['bannerUrl', 'aboutMediaUrl']) {
+    if (Object.hasOwn(store, key)) store[`${key}Sha256`] = attachmentIntegrityHash({ fileUrl: store[key] });
+  }
+  return store;
+}
 
 // ─── paths ────────────────────────────────────────────────────────────────────
 // В проде (Fly/Render) монтируем persistent-volume, путь передаём через env.
@@ -111,6 +181,8 @@ const SAVE_DEBOUNCE_MS = Number(process.env.DB_SAVE_DEBOUNCE_MS) || 300;
 let saveDbTimer = null;
 let saveDbDirty = false;
 if (!Array.isArray(db.refreshTokens)) db.refreshTokens = [];
+if (!Array.isArray(db.loginEvents)) db.loginEvents = [];
+if (!Array.isArray(db.authChallenges)) db.authChallenges = [];
 if (!Array.isArray(db.ipBans)) db.ipBans = [];
 if (!Array.isArray(db.moderationBans)) db.moderationBans = [];
 if (!Array.isArray(db.moderationWarnings)) db.moderationWarnings = [];
@@ -155,6 +227,9 @@ if (Number(db.marketplaceMigrationVersion || 0) < 1) {
   db.marketplaceMigrationVersion = 1;
   saveDb();
 }
+
+if (!Array.isArray(db.chats)) db.chats = [];
+if (migrateChatKinds()) saveDb();
 
 // При старте сервера все пользователи офлайн (сбрасываем stale-статус)
 if (db.users) {
@@ -223,8 +298,10 @@ function reloadDb() {
       if (!Array.isArray(db.moderationWarnings)) db.moderationWarnings = [];
       if (!Array.isArray(db.deletedMessages)) db.deletedMessages = [];
       if (!Array.isArray(db.reports)) db.reports = [];
+      if (!Array.isArray(db.scheduledMessages)) db.scheduledMessages = [];
       if (!db.moderationIps || typeof db.moderationIps !== 'object' || Array.isArray(db.moderationIps)) db.moderationIps = {};
       normalizeAllUsers();
+      if (migrateChatKinds()) saveDb();
       console.log('[DB] Reloaded from disk. Users:', db.users.length, 'Tracks:', db.tracks.length);
     } catch (e) { console.error('[DB] Reload failed:', e.message); }
   }
@@ -232,6 +309,9 @@ function reloadDb() {
 
 // ─── verification codes (in-memory) ──────────────────────────────────────────
 const verificationCodes = new Map(); // identifier/phone/email -> { code, expiresAt }
+const passwordFailures = new Map();
+const PASSWORD_FAILURE_LIMIT = 5;
+const PASSWORD_LOCK_MS = 15 * 60 * 1000;
 
 function normalizeIdentifier(value) {
   return String(value || '').trim().toLowerCase();
@@ -250,6 +330,7 @@ function normalizeUserRecord(user) {
   if (user.lastName === undefined) user.lastName = null;
   if (user.avatarUrl === undefined) user.avatarUrl = null;
   if (user.bio === undefined) user.bio = null;
+  if (user.passwordHashVersion === undefined && user.passwordHash) user.passwordHashVersion = /^\$argon2id\$/.test(user.passwordHash) ? 2 : 1;
   return user;
 }
 
@@ -632,7 +713,7 @@ const messageLimiter = makeRateLimit({ windowMs: 60_000, max: 120, key: byUserKe
 const uploadLimiter  = makeRateLimit({ windowMs: 60_000, max: 30,  key: byUserKey }); // 30 загрузок/мин
 const writeLimiter   = makeRateLimit({ windowMs: 60_000, max: 300, key: byUserKey }); // 300 mutating-запросов/мин
 const languageCorrectionLimiter = makeRateLimit({ windowMs: 60_000, max: 20, key: byUserKey });
-app.use(['/api/auth/device', '/api/auth/verify', '/api/auth/send-code', '/api/auth/verify-code', '/api/auth/logout', '/api/auth/refresh'], authLimiter);
+app.use(['/api/auth/device', '/api/auth/register', '/api/auth/login', '/api/auth/passkey', '/api/auth/logout', '/api/auth/refresh'], authLimiter);
 app.use('/api/users/search', searchLimiter);
 app.use(['/api/messages'], messageLimiter);
 app.use(['/api/files', '/api/users/avatar', '/api/users/me/avatar', '/api/music', '/api/ai/models'], uploadLimiter);
@@ -983,7 +1064,16 @@ function sniffActiveContent(filePath) {
 /** Удаляет свежезагруженный файл и отвечает 400, если это активный контент. */
 function dropIfActiveContent(req, res) {
   if (!req.file || !req.file.path) return false;
-  if (!sniffActiveContent(req.file.path)) return false;
+  if (!sniffActiveContent(req.file.path)) {
+    const info = sanitizeStoredImage(req.file.path, req.file.mimetype, req.file.originalname);
+    if (!info) {
+      try { fs.unlinkSync(req.file.path); } catch {}
+      res.status(400).json({ message: 'Не удалось обработать файл' });
+      return true;
+    }
+    Object.assign(req.file, info);
+    return false;
+  }
   try { fs.unlinkSync(req.file.path); } catch {}
   res.status(400).json({ message: 'Файл содержит запрещённый активный контент (HTML/SVG/XML)' });
   return true;
@@ -1330,6 +1420,105 @@ app.post('/api/auth/verify-code', (req, res) => {
 });
 */
 
+// Password fallback. Passwords are never logged or returned to the client.
+// Existing bcrypt hashes are upgraded to Argon2id after the first successful login.
+function authUserResponse(req, res, user, deviceId, isNewUser = false) {
+  const device = registerDevice(user.id, deviceId, getDeviceNameForRequest(req));
+  if (!device.ok) return res.status(403).json({ message: device.message, deviceError: true });
+  user.isOnline = true;
+  user.lastSeen = new Date().toISOString();
+  recordModerationIp(user.id, requestIp(req));
+  db.loginEvents.push({ id: uuidv4(), userId: user.id, deviceId, method: 'password', ip: requestIp(req), createdAt: Date.now() });
+  db.loginEvents = db.loginEvents.slice(-5000);
+  const accessToken = issueAccessToken(user, deviceId);
+  const { raw } = issueRefreshToken(user, deviceId);
+  const csrfToken = setAuthCookies(res, raw);
+  saveDb();
+  return res.json({ accessToken, csrfToken, deviceId, user: withDevFlag(req, user), isNewUser });
+}
+
+function getDeviceNameForRequest(req) {
+  return String(req.body?.deviceName || 'Моё устройство').slice(0, 80);
+}
+
+function passwordAttemptKey(req, identifier) {
+  return `${requestIp(req)}:${identifier}`;
+}
+
+function passwordAttemptBlocked(key) {
+  const attempt = passwordFailures.get(key);
+  if (!attempt) return false;
+  if (attempt.lockedUntil > Date.now()) return true;
+  if (attempt.lockedUntil && attempt.lockedUntil <= Date.now()) passwordFailures.delete(key);
+  return false;
+}
+
+function recordPasswordFailure(key) {
+  const current = passwordFailures.get(key) || { count: 0, lockedUntil: 0 };
+  current.count += 1;
+  if (current.count >= PASSWORD_FAILURE_LIMIT) current.lockedUntil = Date.now() + PASSWORD_LOCK_MS;
+  passwordFailures.set(key, current);
+  return current;
+}
+
+app.post('/api/auth/register', async (req, res) => {
+  const email = normalizeIdentifier(req.body?.email);
+  const username = String(req.body?.username || '').trim();
+  const password = req.body?.password;
+  if (!email || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ message: 'Некорректная почта' });
+  if (!/^[a-zA-Z0-9_.]{3,32}$/.test(username)) return res.status(400).json({ message: 'Некорректное имя пользователя' });
+  if (typeof password !== 'string' || password.length < 12) return res.status(400).json({ message: 'Пароль должен содержать не менее 12 символов' });
+  if (db.users.some(u => normalizeIdentifier(u.email) === email || normalizeIdentifier(u.username) === normalizeIdentifier(username))) {
+    return res.status(409).json({ message: 'Пользователь с такой почтой или именем уже существует' });
+  }
+  const installation = resolveInstallation(req, res, true);
+  if (!installation) return;
+  const user = { id: uuidv4(), email, phone: null, username, passwordHash: await hashPassword(password), passwordHashVersion: 2,
+    firstName: null, lastName: null, birthDate: null, country: null, region: null, city: null,
+    avatarUrl: null, bio: null, isOnline: true, lastSeen: new Date().toISOString(), createdAt: new Date().toISOString() };
+  db.users.push(user);
+  createSavedMessagesChat(user.id);
+  const device = registerDevice(user.id, installation.deviceId, getDeviceNameForRequest(req));
+  if (!device.ok) return res.status(403).json({ message: device.message });
+  device.device.installationHash = installation.hash;
+  return authUserResponse(req, res, user, installation.deviceId, true);
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const identifier = normalizeIdentifier(req.body?.identifier);
+  const password = req.body?.password;
+  const attemptKey = passwordAttemptKey(req, identifier);
+  if (passwordAttemptBlocked(attemptKey)) {
+    res.setHeader('Retry-After', String(Math.ceil(PASSWORD_LOCK_MS / 1000)));
+    return res.status(429).json({ message: 'Слишком много неудачных попыток. Попробуйте позже.' });
+  }
+  const user = db.users.find(u => normalizeIdentifier(u.email) === identifier || normalizeIdentifier(u.username) === identifier);
+  if (!user || typeof password !== 'string') {
+    recordPasswordFailure(attemptKey);
+    return res.status(401).json({ message: 'Неверные учётные данные' });
+  }
+  const result = await verifyAndMigrate(password, user);
+  if (!result.ok) {
+    recordPasswordFailure(attemptKey);
+    return res.status(401).json({ message: 'Неверные учётные данные' });
+  }
+  passwordFailures.delete(attemptKey);
+  const installation = resolveInstallation(req, res, true);
+  if (!installation) return;
+  return authUserResponse(req, res, user, installation.deviceId);
+});
+
+// WebAuthn must be implemented with a maintained verifier and an origin/RP policy.
+// Do not accept client-provided credential assertions without that verification.
+app.post('/api/auth/passkey/register/options', authMiddleware, (_req, res) => res.status(501).json({ code: 'WEBAUTHN_NOT_CONFIGURED', message: 'WebAuthn verifier is not configured' }));
+app.post('/api/auth/passkey/register/verify', authMiddleware, (_req, res) => res.status(501).json({ code: 'WEBAUTHN_NOT_CONFIGURED', message: 'WebAuthn verifier is not configured' }));
+app.post('/api/auth/passkey/login/options', (_req, res) => res.status(501).json({ code: 'WEBAUTHN_NOT_CONFIGURED', message: 'WebAuthn verifier is not configured' }));
+app.post('/api/auth/passkey/login/verify', (_req, res) => res.status(501).json({ code: 'WEBAUTHN_NOT_CONFIGURED', message: 'WebAuthn verifier is not configured' }));
+app.get('/api/auth/login-events', authMiddleware, (req, res) => {
+  const events = (db.loginEvents || []).filter(event => event.userId === req.userId).slice(-50).reverse();
+  res.json({ events });
+});
+
 // POST /api/auth/logout
 // SEC: инкрементим tokenVersion → все выданные JWT этому юзеру становятся невалидны.
 app.post('/api/auth/logout', authMiddleware, (req, res) => {
@@ -1637,7 +1826,7 @@ app.get('/api/users/search', authMiddleware, (req, res) => {
     .filter(item => item.rank < 99)
     .sort((a, b) => a.rank - b.rank || safeLower(a.user.username).localeCompare(safeLower(b.user.username)))
     .slice(0, 20)
-    .map(item => item.user);
+    .map(item => publicUserFields(item.user));
   res.json(results);
 });
 
@@ -1649,13 +1838,11 @@ function publishEquipment(user) {
   if (rooms.length) io.to(rooms).emit('user:equipment', equipment);
 }
 
-// GET /api/users/:id
-// SEC: возвращаем только публичные поля. phone/email/tokenVersion/etc не отдаём.
-app.get('/api/users/:id', authMiddleware, (req, res) => {
-  const user = db.users.find(u => u.id === req.params.id);
-  if (!user) return res.status(404).json({ message: 'Не найден' });
-  const isSelf = user.id === req.userId;
-  const publicFields = {
+// Search results are visible to any authenticated user. Keep this projection
+// separate from the stored record so credentials, session state, moderation
+// data and admin flags cannot leak through user search.
+function publicUserFields(user) {
+  return {
     id: user.id,
     username: user.username,
     firstName: user.firstName,
@@ -1673,6 +1860,15 @@ app.get('/api/users/:id', authMiddleware, (req, res) => {
     pinnedPlaylistId: user.pinnedPlaylistId || null,
     pinnedTrackId: user.pinnedTrackId || null,
   };
+}
+
+// GET /api/users/:id
+// SEC: возвращаем только публичные поля. phone/email/tokenVersion/etc не отдаём.
+app.get('/api/users/:id', authMiddleware, (req, res) => {
+  const user = db.users.find(u => u.id === req.params.id);
+  if (!user) return res.status(404).json({ message: 'Не найден' });
+  const isSelf = user.id === req.userId;
+  const publicFields = publicUserFields(user);
   // Себе можно вернуть больше (email/phone для настроек).
   if (isSelf) {
     publicFields.email = user.email;
@@ -1692,6 +1888,18 @@ const PET_CATALOG = {
   'pet-bunny': { name: 'Неоновый заяц', rarity: 'uncommon', cases: ['case-pets', 'case-signal'] },
   'pet-pixel': { name: 'Пиксельный кот', rarity: 'epic', cases: ['case-pets', 'case-games'] },
   'pet-phoenix': { name: 'Феникс', rarity: 'rare', cases: ['case-pets', 'case-eclipse'] },
+  // Эксклюзивные звери кейса «Бестиарий» (2000 ВП).
+  'pet-spider': { name: 'Пушистый паук', rarity: 'common', cases: ['case-pets-bestiary'] },
+  'pet-bear': { name: 'Мягкий медвежонок', rarity: 'uncommon', cases: ['case-pets-bestiary'] },
+  'pet-snake': { name: 'Зелёная змея', rarity: 'rare', cases: ['case-pets-bestiary'] },
+  'pet-pumpkin': { name: 'Светящийся Джек', rarity: 'epic', cases: ['case-pets-bestiary'] },
+  'pet-jellyfish': { name: 'Сияющая медуза', rarity: 'legendary', cases: ['case-pets-bestiary'] },
+  // Эксклюзивные питомцы кейса «Мифические питомцы» (2000 ВП).
+  'pet-panda': { name: 'Мягкая панда', rarity: 'common', cases: ['case-pets-mythical'] },
+  'pet-hedgehog': { name: 'Румяный ёжик', rarity: 'uncommon', cases: ['case-pets-mythical'] },
+  'pet-squirrel': { name: 'Ореховая белка', rarity: 'rare', cases: ['case-pets-mythical'] },
+  'pet-pixel-dragon': { name: 'Пиксельный дракон', rarity: 'epic', cases: ['case-pets-mythical'] },
+  'pet-bat': { name: 'Летучая мышь', rarity: 'legendary', cases: ['case-pets-mythical'] },
 };
 // Старые id питомцев (до редизайна) мигрируем на новые: старый инвентарь
 // и надетый питомец не должны пропадать.
@@ -1707,7 +1915,14 @@ function sanitizedEquippedPet(raw) {
 function petState(user) {
   const ownedPets = [...new Set((Array.isArray(user.ownedPets) ? user.ownedPets : []).map(normalizePetId).filter(id => PET_CATALOG[id]))];
   const equippedPet = sanitizedEquippedPet(user.equippedPet);
-  return { ownedPets, equippedPet };
+  // Счётчик копий: сколько раз питомец выпадал из кейсов/поступал с площадки.
+  // Дубликаты не создают второго питомца, но их количество не теряется.
+  const petCounts = {};
+  for (const id of ownedPets) {
+    const count = Math.floor(Number(user.petCounts?.[id]));
+    petCounts[id] = Number.isSafeInteger(count) && count > 1 ? count : 1;
+  }
+  return { ownedPets, equippedPet, petCounts };
 }
 app.get('/api/pets', authMiddleware, (req, res) => {
   const user = db.users.find(u => u.id === req.userId);
@@ -1725,13 +1940,30 @@ app.put('/api/pets/equipment', authMiddleware, (req, res) => {
   const owned = new Set((Array.isArray(user.ownedPets) ? user.ownedPets : []).map(normalizePetId).filter(id => PET_CATALOG[id]));
   user.ownedPets = [...owned];
   if (petId !== null && !owned.has(petId)) return res.status(403).json({ message: 'Питомец не найден в инвентаре' });
+  // Настройки каждого питомца живут отдельно: смена питомца не стирает размер,
+  // имя и шрифт уходящего, а новый питомец наследует их, пока не настроен сам.
+  const savedPetSettings = user.petSettings && typeof user.petSettings === 'object' ? { ...user.petSettings } : {};
+  const outgoing = sanitizedEquippedPet(user.equippedPet);
+  if (outgoing && outgoing.id !== petId) savedPetSettings[outgoing.id] = outgoing.settings;
   if (petId === null) user.equippedPet = null;
   else {
     const raw = req.body?.settings || {};
-    const current = user.equippedPet?.id === petId ? user.equippedPet.settings : {};
+    const current = outgoing?.id === petId ? outgoing.settings : (savedPetSettings[petId] || outgoing?.settings || {});
     const settings = { ...DEFAULT_PET_SETTINGS, ...current };
+    // Санируем унаследованную/сохранённую базу: старые данные могли лежать сырыми.
+    for (const key of ['x', 'y']) {
+      const value = Number(settings[key]);
+      settings[key] = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : DEFAULT_PET_SETTINGS[key];
+    }
+    const baseSize = Number(settings.size);
+    settings.size = Number.isFinite(baseSize) ? Math.max(36, baseSize) : DEFAULT_PET_SETTINGS.size;
+    settings.name = String(settings.name ?? '').trim().slice(0, 32);
+    const savedFont = typeof settings.font === 'string' ? settings.font.trim().slice(0, 64) : '';
+    settings.font = savedFont || 'inherit';
     for (const key of ['x', 'y']) if (raw[key] !== undefined) settings[key] = Math.max(0, Math.min(100, Number(raw[key])));
-    if (raw.size !== undefined) settings.size = Math.max(36, Math.min(180, Number(raw.size)));
+    // The client caps the rendered size to one fifth of its viewport.
+    // Keep the preferred pixel size across devices without a fixed monitor limit.
+    if (raw.size !== undefined) settings.size = Math.max(36, Number(raw.size));
     if (raw.name !== undefined) settings.name = String(raw.name).trim().slice(0, 32);
     if (raw.font !== undefined) {
       // Любая корректная CSS font-family строка из пресетов клиента
@@ -1742,7 +1974,9 @@ app.put('/api/pets/equipment', authMiddleware, (req, res) => {
     }
     if (![settings.x, settings.y, settings.size].every(Number.isFinite)) return res.status(400).json({ message: 'Некорректные настройки питомца' });
     user.equippedPet = { id: petId, settings };
+    savedPetSettings[petId] = settings;
   }
+  user.petSettings = savedPetSettings;
   saveDb();
   const state = petState(user);
   for (const sid of userSockets.get(user.id) || []) io.to(sid).emit('pets:updated', state);
@@ -1802,6 +2036,7 @@ app.get('/api/users/:id/customization', authMiddleware, (req, res) => {
   res.json({
     data: {
       bannerUrl: pick('bannerUrl') || '',
+      bannerUrlSha256: pick('bannerUrlSha256') || null,
       bannerColor: pick('bannerColor') || '',
       cardAccent: pick('cardAccent') || '',
       cardOpacity: pick('cardOpacity'),
@@ -1809,6 +2044,7 @@ app.get('/api/users/:id/customization', authMiddleware, (req, res) => {
       activityKind: pick('activityKind'),
       activityText: pick('activityText') || '',
       aboutMediaUrl: pick('aboutMediaUrl') || '',
+      aboutMediaUrlSha256: pick('aboutMediaUrlSha256') || null,
     },
   });
 });
@@ -1832,6 +2068,7 @@ app.post('/api/users/avatar', authMiddleware, uploadAvatar.single('avatar'), (re
   if (!req.file) return res.status(400).json({ message: 'Файл не загружен' });
   if (dropIfActiveContent(req, res)) return;
   user.avatarUrl = `/uploads/avatars/${req.file.filename}`;
+  user.avatarSha256 = req.file.sha256;
   saveDb();
   res.json(user);
 });
@@ -1843,6 +2080,7 @@ app.put('/api/users/me/avatar', authMiddleware, uploadAvatar.single('avatar'), (
   if (!req.file) return res.status(400).json({ message: 'Файл не загружен' });
   if (dropIfActiveContent(req, res)) return;
   user.avatarUrl = `/uploads/avatars/${req.file.filename}`;
+  user.avatarSha256 = req.file.sha256;
   saveDb();
   res.json(user);
 });
@@ -1869,6 +2107,7 @@ app.put('/api/settings', authMiddleware, (req, res) => {
   if (!db.userSettings) db.userSettings = {};
   const clean = JSON.parse(serialized);
   delete clean.owned;
+  sanitizeProfileMediaStore(clean);
   delete clean.balanceVp;
   clean.__updatedAt = new Date().toISOString();
   db.userSettings[req.userId] = clean;
@@ -1959,6 +2198,7 @@ app.put('/api/sync/stores/:name', authMiddleware, (req, res) => {
 
   const clean = JSON.parse(serialized);
   const updatedAt = new Date().toISOString();
+  sanitizeProfileMediaStore(clean);
   
   db.userStores[req.userId][storeName] = {
     data: clean,
@@ -2037,6 +2277,25 @@ communityThemes.install({
   upload: uploadCommunityTheme,
   onUploadError: handleUploadError,
   notify: catalog => { try { io.emit('community:themes:updated', { themes: catalog }); } catch {} },
+});
+
+// Паки иконок сообщества (редактор тем → «Иконки и стиль» → свои паки).
+communityIconPacks.install({
+  app,
+  getDb: () => db,
+  saveDb,
+  auth: authMiddleware,
+  isAdmin: req => isAdminUser(req, db.users.find(u => u.id === req.userId)),
+  dataDir: DATA_DIR,
+});
+
+// Скины реакций: 10 слотов быстрых реакций (кастомизация профиля).
+reactionSkins.install({
+  app,
+  getDb: () => db,
+  saveDb,
+  authMiddleware,
+  emitToUser: (user, event, payload) => { for (const sid of userSockets.get(user.id) || []) io.to(sid).emit(event, payload); },
 });
 
 // ─── Общая библиотека музыки ──────────────────────────────────────────────────
@@ -2314,6 +2573,10 @@ function grantItemToUser(user, itemId) {
   if (isPetId(itemId)) {
     const id = normalizePetId(itemId);
     user.ownedPets = [...new Set([...(user.ownedPets || []), id])];
+    // Возврат копии из эскроу увеличивает счётчик (шт.), а не дублирует питомца.
+    const stored = Math.floor(Number(user.petCounts?.[id]));
+    const previous = Number.isSafeInteger(stored) && stored > 0 ? stored : 0;
+    user.petCounts = { ...user.petCounts, [id]: previous + 1 };
   } else {
     user.ownedItems = [...new Set([...user.ownedItems, itemId])];
     setSyncedShopOwnership(user.id, itemId, true);
@@ -2322,7 +2585,15 @@ function grantItemToUser(user, itemId) {
 function removeItemFromUser(user, itemId) {
   if (isPetId(itemId)) {
     const id = normalizePetId(itemId);
+    const stored = Math.floor(Number(user.petCounts?.[id]));
+    const copies = Number.isSafeInteger(stored) && stored > 0 ? stored : ((user.ownedPets || []).includes(id) || (user.ownedPets || []).includes(itemId)) ? 1 : 0;
+    if (copies > 1) {
+      // В эскроу уходит одна копия, остальные (и надетый питомец) остаются.
+      user.petCounts = { ...user.petCounts, [id]: copies - 1 };
+      return;
+    }
     user.ownedPets = (user.ownedPets || []).filter(pid => pid !== id && pid !== itemId);
+    user.petCounts = { ...user.petCounts, [id]: 0 };
     if (user.equippedPet && (user.equippedPet.id === id || user.equippedPet.id === itemId)) user.equippedPet = null;
   } else {
     user.ownedItems = user.ownedItems.filter(id => id !== itemId);
@@ -2498,6 +2769,11 @@ function caseState(user) {
     balance: user.walletBalance, ownedItems: user.ownedItems,
     caseCounts: normalizeCaseInventory(user.caseCounts),
     packs: user.casePacks || {}, lastDrop: user.lastCaseDrop || null,
+    // Обе части состояния реакций вместе: 
+    // событие cases:updated держит только владение, и без reactionSlots
+    // клиент затирал выбранные 10 слотов быстрых реакций в сток.
+    reactionSkins: reactionSkins.ownedSkins(user),
+    reactionSlots: reactionSkins.slots(user),
     prices: CASE_PRICES,
   };
 }
@@ -2509,6 +2785,9 @@ for (const action of ['buy', 'open']) {
   app.post(`/api/cases/${action}`, authMiddleware, (req, res) => {
     const definition = CASE_CATALOG.find(c => c.id === req.body?.caseId);
     if (!definition) return res.status(400).json({ message: 'Неизвестный кейс' });
+    // Скрытый кейс (hidden: true) снят с продажи — купить нельзя, но открытый
+    // ранее запас позволяет открыть его из инвентаря.
+    if (action === 'buy' && definition.hidden) return res.status(403).json({ message: 'Кейс временно снят с продажи' });
     const user = ensureWallet(db.users.find(u => u.id === req.userId));
     const counts = normalizeCaseInventory(user.caseCounts);
     const price = CASE_PRICES[definition.id];
@@ -2524,9 +2803,19 @@ for (const action of ['buy', 'open']) {
       let roll = crypto.randomInt(definition.rewards.reduce((sum, reward) => sum + reward.weight, 0));
       const reward = definition.rewards.find(reward => (roll -= reward.weight) < 0);
       const key = reward.key;
-      if (key.startsWith('pet-')) {
+      if (key.startsWith('rx-')) {
+        // Скин реакции: копия идёт в счётчик, слоты пользователь настраивает сам.
         drop = key;
+        reactionSkins.grant(user, key);
+      } else if (key.startsWith('pet-')) {
+        drop = key;
+        // Дубликат не плодит второго питомца — он идёт в счётчик копий (шт.).
+        // Старые id (pet-owl и т.п.) считаем уже нормализованными.
+        const alreadyOwned = (user.ownedPets || []).some(pid => normalizePetId(pid) === key);
+        const stored = Math.floor(Number(user.petCounts?.[key]));
+        const previous = Number.isSafeInteger(stored) && stored > 0 ? stored : (alreadyOwned ? 1 : 0);
         user.ownedPets = [...new Set([...(user.ownedPets || []), key])];
+        user.petCounts = { ...user.petCounts, [key]: previous + 1 };
       } else {
         drop = `pack-${key}`;
         const parts = key.startsWith('r-') ? [`ring-${key}`, `selfcard-${key}`, `bubble-${key}`] : [`ring-pack-${key}`, `selfcard-pack-${key}`, `bubble-${key}`];
@@ -3120,10 +3409,12 @@ app.get('/api/chats', authMiddleware, (req, res) => {
     const au = (a.unreadCount || 0) > 0 ? 1 : 0;
     const bu = (b.unreadCount || 0) > 0 ? 1 : 0;
     if (au !== bu) return bu - au;
-    // 3) чем новее входящее — тем выше
-    const ta = a.lastMessage?.createdAt || a.createdAt;
-    const tb = b.lastMessage?.createdAt || b.createdAt;
-    return new Date(tb).getTime() - new Date(ta).getTime();
+    // 3) чем новее активность группы — тем выше.
+    // Правка доски и холста поднимает chat.updatedAt, но не создаёт сообщение: без максимума
+    // оно не подняло бы обычный чат со свежим сообщением внизу.
+    const ta = Math.max(Date.parse(a.lastMessage?.createdAt) || 0, Date.parse(a.updatedAt) || 0, Date.parse(a.createdAt) || 0);
+    const tb = Math.max(Date.parse(b.lastMessage?.createdAt) || 0, Date.parse(b.updatedAt) || 0, Date.parse(b.createdAt) || 0);
+    return tb - ta;
   });
   res.json(chats);
 });
@@ -3149,6 +3440,19 @@ app.post('/api/chats/direct', authMiddleware, (req, res) => {
       joinedAt: m.joinedAt, isMuted: m.muted || false,
       user: db.users.find(u => u.id === m.userId) || null, skins: m.skins,
     }));
+    // Самоисцеление: участники могли открыть приложение ДО создания чата —
+    // тогда их сокеты не состояли в socket-комнате `chat:<id>`. Сажаем
+    // сокеты в комнату и шлём событие лично каждому участнику.
+    // typeof — потому что vm-тесты сервера вырезают этот кусок без
+    // объявления userSockets.
+    if (typeof userSockets !== 'undefined') {
+      for (const uid of [req.userId, targetUserId]) {
+        for (const sid of userSockets.get(uid) || []) {
+          io.to(sid).socketsJoin?.(`chat:${chat.id}`);
+          io.to(sid).emit('chat:updated', { ...chat, type: chat.type || 'direct', members });
+        }
+      }
+    }
     return res.json({ ...chat, type: chat.type || 'direct', members });
   }
 
@@ -3170,18 +3474,95 @@ app.post('/api/chats/direct', authMiddleware, (req, res) => {
     joinedAt: m.joinedAt, isMuted: false,
     user: db.users.find(u => u.id === m.userId) || null, skins: m.skins,
   }));
-  res.json({ ...chat, members });
+  const payload = { ...chat, members };
+  // Новый direct-чат: участники ещё не в его socket-комнате (её джойнят при
+  // коннекте или открытии чата), поэтому сообщаем собеседнику вживую и сразу
+  // сажаем сокеты обоих в комнату — иначе собеседник увидит чат и первое
+  // сообщение только после перезагрузки страницы.
+  if (typeof userSockets !== 'undefined') {
+    for (const uid of [req.userId, targetUserId]) {
+      for (const sid of userSockets.get(uid) || []) {
+        io.to(sid).socketsJoin?.(`chat:${chat.id}`);
+        io.to(sid).emit('chat:updated', payload);
+      }
+    }
+  }
+  res.json(payload);
 });
 
 // POST /api/chats/group
+/**
+ * Разобрать служебный символ в начале названия при создании чата.
+ *
+ * «!Новости» — публичный канал, «/desk Дело» — доска, «/canvas Рисунки» — холст.
+ * Команда задаёт вид чата только один раз, при создании, и в название не
+ * попадает: дальше вид хранится отдельно (type / kind), и переименование его
+ * не меняет. «/холст» или «/deskx» — не команда, а обычное название.
+ */
+function splitChatKindPrefix(raw) {
+  const text = String(raw || '').trim();
+  if (text.startsWith('!')) return { kind: 'channel', name: text.replace(/^!+/, '').trim() };
+  const command = /^\/(desk|canvas)(?=\s|$)/i.exec(text);
+  if (command) {
+    return { kind: command[1].toLowerCase() === 'desk' ? 'desk' : 'whiteboard', name: text.slice(command[0].length).trim() };
+  }
+  return { kind: null, name: text };
+}
+
+/** Старые маркеры для миграции: раньше «|» значил доску, а «/» — холст. */
+function splitLegacyChatKindPrefix(raw) {
+  const parsed = splitChatKindPrefix(raw);
+  if (parsed.kind) return parsed;
+  const text = String(raw || '').trim();
+  const kind = text.startsWith('|') ? 'desk' : text.startsWith('/') ? 'whiteboard' : null;
+  if (!kind) return parsed;
+  return { kind, name: text.replace(/^[|/\s]+/, '').trim() };
+}
+
+// Функция, а не const: migrateChatKinds() вызывается при старте (выше по файлу),
+// и обращение к const до его объявления роняло сервер (TDZ ReferenceError)
+// на любом старом чате с пустым названием после символа, например «/».
+function defaultChatNameByKind(kind) {
+  return kind === 'channel' ? 'Канал' : kind === 'desk' ? 'Доска' : kind === 'whiteboard' ? 'Холст' : '';
+}
+
+/**
+ * Одноразовая миграция старых чатов: раньше вид чата читался из названия
+ * на лету («!Новости», «| Дело», «/ Холст»). Переносим его в поле и срезаем
+ * символ из названия. Версия нужна, чтобы новая группа, которую назвали
+ * «| что-то» уже после миграции, не превратилась в доску при рестарте.
+ */
+function migrateChatKinds() {
+  if (Number(db.chatKindMigrationVersion || 0) >= 1) return false;
+  for (const chat of db.chats || []) {
+    if (!chat || (chat.type !== 'group' && chat.type !== 'channel')) continue;
+    const parsed = splitLegacyChatKindPrefix(chat.name);
+    if (!parsed.kind) continue;
+    if (chat.type === 'channel') {
+      if (parsed.kind !== 'channel') continue;
+    } else if (parsed.kind === 'desk' || parsed.kind === 'whiteboard') {
+      if (!chat.kind) chat.kind = parsed.kind;
+    } else {
+      continue;
+    }
+    chat.name = parsed.name || defaultChatNameByKind(parsed.kind);
+  }
+  db.chatKindMigrationVersion = 1;
+  return true;
+}
+
 app.post('/api/chats/group', authMiddleware, (req, res) => {
   const { name, memberIds } = req.body;
+  const parsed = splitChatKindPrefix(name);
+  const isChannel = parsed.kind === 'channel';
+  const boardKind = parsed.kind === 'desk' || parsed.kind === 'whiteboard' ? parsed.kind : null;
   const chat = {
     id: uuidv4(),
-    type: String(name || '').trim().startsWith('!') ? 'channel' : 'group',
-    name: String(name || 'Группа').trim(),
+    type: isChannel ? 'channel' : 'group',
+    name: parsed.name || defaultChatNameByKind(parsed.kind) || 'Группа',
+    ...(boardKind ? { kind: boardKind } : {}),
     ownerId: req.userId,
-    isPublic: String(name || '').trim().startsWith('!'),
+    isPublic: isChannel,
     avatarUrl: null,
     createdAt: new Date().toISOString(),
     pinnedMessageId: null,
@@ -3199,7 +3580,19 @@ app.post('/api/chats/group', authMiddleware, (req, res) => {
     joinedAt: m.joinedAt,
     user: db.users.find(u => u.id === m.userId) || null, skins: m.skins,
   }));
-  res.json({ ...chat, members });
+  const payload = { ...chat, members };
+  // Как в direct-чате: участники могли открыть приложение до создания группы —
+  // их сокеты не в комнате `chat:<id>`, поэтому сажаем в комнату и шлём
+  // событие лично каждому. typeof — для vm-тестов без userSockets.
+  if (typeof userSockets !== 'undefined') {
+    for (const uid of allMembers) {
+      for (const sid of userSockets.get(uid) || []) {
+        io.to(sid).socketsJoin?.(`chat:${chat.id}`);
+        io.to(sid).emit('chat:updated', payload);
+      }
+    }
+  }
+  res.json(payload);
 });
 
 // POST /api/chats/channel
@@ -3208,7 +3601,7 @@ app.post('/api/chats/channel', authMiddleware, (req, res) => {
   const chat = {
     id: uuidv4(),
     type: 'channel',
-    name: '!' + String(name || 'Канал').trim().replace(/^!+/, ''),
+    name: String(name || '').trim().replace(/^!+/, '').trim() || 'Канал',
     ownerId: req.userId,
     isPublic: true,
     description: description || '',
@@ -3258,7 +3651,10 @@ app.patch('/api/chats/:id/mute', authMiddleware, (req, res) => {
 app.get('/api/channels/search', authMiddleware, (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase();
   if (!q.startsWith('!') || q.length < 2) return res.json([]);
-  res.json(db.chats.filter(c => c.type === 'channel' && c.isPublic && c.name.toLowerCase().includes(q))
+  // «!» — только признак поиска каналов; в названиях каналов его больше нет.
+  const term = q.replace(/^!+/, '').trim();
+  if (!term) return res.json([]);
+  res.json(db.chats.filter(c => c.type === 'channel' && c.isPublic && String(c.name || '').toLowerCase().includes(term))
     .slice(0, 30).map(c => ({ id: c.id, name: c.name, avatarUrl: c.avatarUrl, description: c.description })));
 });
 
@@ -3464,7 +3860,13 @@ app.patch('/api/chats/:id', authMiddleware, (req, res) => {
   for (const key of ['activeRing', 'activeSelfCard', 'activeBubble']) {
     if (req.body[key] !== undefined) chat[key] = req.body[key];
   }
-  if (name !== undefined) chat.name = chat.type === 'channel' ? '!' + String(name).trim().replace(/^!+/, '') : name;
+  // Название — просто текст: вид чата (канал/доска/холст) задаётся только при
+  // создании и переименованием не меняется.
+  if (name !== undefined) {
+    const nextName = String(name).trim();
+    if (!nextName) return res.status(400).json({ message: 'Название не может быть пустым' });
+    chat.name = nextName.slice(0, 128);
+  }
   if (description !== undefined) chat.description = description;
   if (avatarUrl !== undefined) chat.avatarUrl = avatarUrl;
   if (wallpaper !== undefined) {
@@ -3697,6 +4099,12 @@ app.post('/api/messages/:chatId/reaction', authMiddleware, (req, res) => {
 
   if (!msg.reactions) msg.reactions = [];
   const rIdx = msg.reactions.findIndex(r => r.emoji === emoji);
+  // Снять уже поставленную реакцию можно всегда (даже проданный скин), а
+  // поставить скин реакции — только из своего инвентаря.
+  const removing = rIdx >= 0 && msg.reactions[rIdx].userIds.includes(req.userId);
+  if (!removing && !reactionSkins.canReact(db.users.find(u => u.id === req.userId), emoji)) {
+    return res.status(typeof emoji === 'string' && emoji.startsWith('rx-') ? 403 : 400).json({ message: 'Эта реакция недоступна' });
+  }
   if (rIdx >= 0) {
     const r = msg.reactions[rIdx];
     if (r.userIds.includes(req.userId)) {
@@ -3726,10 +4134,12 @@ app.post('/api/messages/:chatId/reaction', authMiddleware, (req, res) => {
 // DELETE /api/chats/:id  (удалить чат — только owner/admin. Обычный участник → /leave)
 app.delete('/api/chats/:id', authMiddleware, (req, res) => {
   const chatId = req.params.id;
-  const member = db.chatMembers.find(m => m.chatId === chatId && m.userId === req.userId);
-  if (!member) return res.status(403).json({ message: 'Нет доступа к чату' });
+  // Сначала проверяем существование: клиент считает 404 «уже удалён» и
+  // убирает чат из локального архива. Раньше здесь отдавался 403.
   const chat = db.chats.find(c => c.id === chatId);
   if (!chat) return res.status(404).json({ message: 'Чат не найден' });
+  const member = db.chatMembers.find(m => m.chatId === chatId && m.userId === req.userId);
+  if (!member) return res.status(403).json({ message: 'Нет доступа к чату' });
   // Direct/saved — удалять может любой участник (это их личный чат).
   // Group/channel — только owner/admin.
   const isDirect = chat.type === 'direct' || chat.type === 'saved' || chat.type === 'private';
@@ -3907,6 +4317,7 @@ app.get('/api/messages/:chatId', authMiddleware, (req, res) => {
       fileSize: a.size || a.fileSize || 0,
       mimeType: a.mimeType || '',
       data: a.data || null,
+      sha256: a.sha256 || null,
     }));
     return {
       ...m,
@@ -3950,7 +4361,7 @@ function safeAttachmentUrl(raw) {
   if (SAFE_RELATIVE_URL.test(url) && !url.includes('..')) return url;
   if (url.length <= 6 * 1024 * 1024 && SAFE_MEDIA_DATA_URL.test(url)) {
     const payload = url.slice(url.indexOf(',') + 1);
-    if (/^[A-Za-z0-9+/=\s]+$/.test(payload)) return url;
+    if (/^[A-Za-z0-9+/=\s]+$/.test(payload)) return sanitizeImageDataUrl(url);
   }
   return '';
 }
@@ -3968,6 +4379,7 @@ function normalizeClientAttachment(a) {
     fileName,
     fileSize: Number.isFinite(sizeRaw) && sizeRaw >= 0 ? Math.min(sizeRaw, 200 * 1024 * 1024) : 0,
     mimeType: SAFE_ATTACH_MIME.test(mime) ? mime : '',
+    sha256: attachmentIntegrityHash({ fileUrl }),
     data: null,
   };
 }
@@ -4071,17 +4483,7 @@ function handleSendMessage(chatId, userId, body, res) {
 
   // Клиентские вложения проходят строгую валидацию URL/MIME/размеров;
   // пересылка берёт уже проверенные данные из исходного сообщения.
-  const normAttachments = (forwardedMessage
-    ? safeAttachments.map(a => ({
-        id: a.id || uuidv4(),
-        fileUrl: a.url || a.fileUrl || '',
-        fileName: a.originalName || a.fileName || '',
-        fileSize: a.size || a.fileSize || 0,
-        mimeType: a.mimeType || '',
-        data: a.data || null,
-      }))
-    : safeAttachments.map(normalizeClientAttachment).filter(Boolean)
-  );
+  const normAttachments = safeAttachments.map(normalizeClientAttachment).filter(Boolean);
 
   // Если после валидации не осталось ни текста, ни вложений — сообщение пустое
   // (например, все URL вложений оказались опасными и были отброшены).
@@ -4110,6 +4512,7 @@ function handleSendMessage(chatId, userId, body, res) {
     isDeleted: false,
     createdAt: new Date().toISOString(),
   };
+  message.integrityHash = messageIntegrityHash(message);
   db.messages.push(message);
   try { saveDb(); } catch {
     db.messages = db.messages.filter(m => m !== message);
@@ -4119,6 +4522,17 @@ function handleSendMessage(chatId, userId, body, res) {
   const sender = messageSender(message);
   const result = { ...message, sender };
 
+  // Сажаем сокеты участников в комнату чата перед рассылкой: чат мог быть
+  // создан ПОСЛЕ их коннекта, и тогда собеседник не состоял в комнате и
+  // первое сообщение не доходило до него без перезагрузки страницы.
+  // typeof — потому что vm-тесты вырезают этот кусок без userSockets.
+  if (typeof userSockets !== 'undefined') {
+    for (const m of db.chatMembers.filter((m) => m.chatId === chatId)) {
+      for (const sid of userSockets.get(m.userId) || []) {
+        io.to(sid).socketsJoin?.(`chat:${chatId}`);
+      }
+    }
+  }
   io.to(`chat:${chatId}`).emit('message:new', result);
   res.status(201).json(result);
 }
@@ -4132,6 +4546,15 @@ app.post('/api/messages/:chatId', authMiddleware, (req, res) => {
 app.post('/api/messages/:chatId/send', authMiddleware, (req, res) => {
   handleSendMessage(req.params.chatId, req.userId, req.body, res);
 });
+
+// Отложенные сообщения (/time ЧЧ:ММ:СС "текст"): очередь в db.scheduledMessages,
+// доставка на сервере тем же handleSendMessage — отправителю не нужно быть онлайн.
+// typeof — vm-тесты вырезают этот участок без require.
+if (typeof require === 'function') {
+  require('./scheduled-messages').registerScheduledMessages({
+    app, getDb: () => db, auth: authMiddleware, saveDb, handleSendMessage,
+  });
+}
 
 // POST /api/messages/:id/poll-vote — голосование в опросе канала.
 app.post('/api/messages/:id/poll-vote', authMiddleware, (req, res) => {
@@ -4180,6 +4603,7 @@ app.put('/api/messages/:id', authMiddleware, (req, res) => {
   msg.content = msg.text;
   msg.editedAt = new Date().toISOString();
   msg.isEdited = true;
+  msg.integrityHash = messageIntegrityHash(msg);
   saveDb();
   const sender = messageSender(msg);
   // Нормализуем так же, как в GET /api/messages/:chatId (клиент читает content)
@@ -4262,6 +4686,7 @@ app.post('/api/files/upload', authMiddleware, uploadFile.single('file'), (req, r
   if (dropIfActiveContent(req, res)) return;
   res.json({
     url: `/uploads/files/${req.file.filename}`,
+    sha256: req.file.sha256,
     originalName: req.file.originalname,
     size: req.file.size,
     mimeType: req.file.mimetype,
@@ -4285,6 +4710,9 @@ app.post('/api/files/upload-base64', authMiddleware, (req, res) => {
     return res.status(400).json({ message: 'Некорректная base64-строка' });
   }
   const buf = Buffer.from(base64, 'base64');
+  if (buf.toString('base64') !== base64) {
+    return res.status(400).json({ message: 'Invalid base64 encoding' });
+  }
   if (!buf.length || buf.length > 5 * 1024 * 1024) {
     return res.status(413).json({ message: 'Изображение слишком большое' });
   }
@@ -4299,11 +4727,15 @@ app.post('/api/files/upload-base64', authMiddleware, (req, res) => {
   const filename = uuidv4() + '.' + ext;
   const subfolder = 'avatars';
   const dest = path.join(UPLOADS_DIR, subfolder, filename);
-  fs.writeFileSync(dest, buf);
+  let cleanImage;
+  try { cleanImage = stripImageMetadata(buf, actualMime); }
+  catch (err) { return res.status(400).json({ message: err.message }); }
+  fs.writeFileSync(dest, cleanImage);
   res.json({
     url: `/uploads/${subfolder}/${filename}`,
     originalName: fileName || filename,
-    size: buf.length,
+    size: cleanImage.length,
+    sha256: crypto.createHash('sha256').update(cleanImage).digest('hex'),
     mimeType: actualMime,
   });
 });
@@ -5119,6 +5551,13 @@ const io = new IOServer(server, {
 });
 
 const userSockets = new Map(); // userId -> Set<socketId>
+// Морской бой (/warship): сессии-карточки в чате с accept/decline/finish.
+// Регистрируем ПОСЛЕ создания io — модуль рассылает message:edited.
+if (typeof require === 'function') {
+  require('./warships').registerWarships({
+    app, getDb: () => db, auth: authMiddleware, saveDb, io,
+  });
+}
 const socketIpCounts = new Map();
 const socketIpHits = new Map();
 const wsEventHits = new Map();
@@ -5329,10 +5768,20 @@ io.on('connection', (socket) => {
       isDeleted: false,
       createdAt: new Date().toISOString(),
     };
+    message.integrityHash = messageIntegrityHash(message);
     db.messages.push(message);
     saveDb();
 
     const result = { ...message, sender: db.users.find(u => u.id === userId) };
+    // Тот же посадочный фикс, что и в handleSendMessage: участники могли
+    // коннектиться до создания чата и не состоять в его комнате.
+    if (typeof userSockets !== 'undefined') {
+      for (const m of db.chatMembers.filter((m) => m.chatId === chatId)) {
+        for (const sid of userSockets.get(m.userId) || []) {
+          io.to(sid).socketsJoin?.(`chat:${chatId}`);
+        }
+      }
+    }
     io.to(`chat:${chatId}`).emit('message:new', result);
     callback && callback(result);
   });

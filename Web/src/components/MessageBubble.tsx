@@ -1,16 +1,18 @@
-import React, { useState, useRef, useEffect, useMemo, memo } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useMemo, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { Box, Typography, Avatar, IconButton, Tooltip, Slider, Popover, Button, CircularProgress } from '@mui/material';
 import {
   Reply, Delete, ContentCopy, DoneAll, Done, AccessTime, GraphicEq, Pause, Download,
-  PushPin, Forward, AddReaction, OpenInNew, Edit, Close,
+  PushPin, Forward, AddReaction, OpenInNew, Edit, Close, VolumeUp, VolumeOff,
   Image as ImageIcon, Videocam, AudioFile, PictureAsPdf,
   FolderZip, Description, TableChart, Slideshow,
   TextSnippet, Code, AttachFile, RecordVoiceOver,
+  // Через шим: «Выделить» — слот редактора иконок, пак может его заменить.
+  CheckCircleOutline,
 } from '@mui/icons-material';
 import { Message, User } from '../types';
-import { useChatStore } from '../store/chatStore';
+import { useChatStore, MESSAGE_DELETE_EXIT_MS } from '../store/chatStore';
 import { useThemeStore } from '../store/themeStore';
 import { useAuthStore } from '../store/authStore';
 import { useChatSettingsStore } from '../store/chatSettingsStore';
@@ -26,24 +28,35 @@ import { buildPlaqueSx, buildShopRingSx } from '../utils/rarityStyles';
 import { skinColors } from '../utils/skinColors';
 import { bubbleSkin, selfcardSkin } from '../utils/bubbleSkin';
 import { mirrorBubble } from '../utils/mirrorBubble';
-import { clampBubble } from '../utils/bubbleSettings';
+import { ringPoint, continueRingDrag } from '../utils/roundNote';
+import { clampBubble, metaOnRight, normalizeMetaPos } from '../utils/bubbleSettings';
+import type { BubbleMetaPos } from '../utils/bubbleSettings';
 import { clampAlpha, withAlpha, isTranslucentColor } from '../utils/colorAlpha';
 import { bubbleBackground } from '../utils/bubbleGradient';
 import { useMessageHoverStore } from '../store/messageHoverStore';
+import { useMessageSelectionStore } from '../store/messageSelectionStore';
+import CheckCircle from '@mui/icons-material/CheckCircle';
+import RadioButtonUnchecked from '@mui/icons-material/RadioButtonUnchecked';
 import { messagesApi, voiceApi } from '../services/api';
 import PlaylistMessageCard, { VeraPlaylistPayload } from './PlaylistMessageCard';
 import GroupInviteCard from './GroupInviteCard';
+import WarshipGameCard from './WarshipGameCard';
 import ContextMenu from './ContextMenu';
 import ChannelComments from './ChannelComments';
 import { hasGroupRight } from '../services/groupPermissions';
+import { spawnMessageDust } from '../utils/messageDust';
 import { membranePressSx, motion } from '../styles/motion';
 import { useClockAvoid } from '../hooks/useClockAvoid';
+import { useReactionSkinStore, reactionLabel } from '../store/reactionSkinStore';
+import ReactionGlyph from './ReactionGlyph';
 
 interface Props {
   message: Message;
   isOwn: boolean;
   onReply: (message: Message) => void;
   onForward: (message: Message) => void;
+  /** Редактирование перенесено в строку ввода ChatWindow — пузырь только сообщает, какое сообщение править. */
+  onEdit?: (message: Message) => void;
   onAvatarClick?: (user: User) => void;
   onScrollToMessage?: (messageId: string) => void;
   /** theme.accent — вынесен в пропсы чтобы React.memo учитывал смену темы. */
@@ -67,12 +80,15 @@ interface Props {
   bubbleEnabled?: boolean;
   bubbleTextSize?: number;
   bubblePadding?: number;
+  /** Выравнивание по стенке: текст прижат к стороне пузыря (свои — вправо, чужие — влево). */
+  bubbleWallAlign?: boolean;
+  /** Где в пузыре время и галочки. */
+  bubbleMetaPos?: BubbleMetaPos;
   /** Соседние сообщения того же автора в пределах одной даты. */
   isGroupStart?: boolean;
   isGroupEnd?: boolean;
 }
 
-const REACTION_EMOJIS = ['👍', '❤️', '🔥', '😂', '😮', '😢', '😡', '🎉', '👎', '⭐'];
 
 /**
  * Виртуальный якорь из снятого прямоугольника.
@@ -288,11 +304,75 @@ function AudioPlayer({ src, fileName, accent, attachmentId }: { src: string; fil
 }
 
 // ── Просмотр картинки во весь экран ──────────────────────────────────────────
-function ImageViewer({ src, border }: { src: string; border: string }) {
+/** Копирует изображение в буфер обмена как PNG (для не-PNG — через canvas). */
+async function copyImageToClipboard(url: string): Promise<boolean> {
+  try {
+    if (!navigator.clipboard || typeof ClipboardItem === 'undefined') return false;
+    const resp = await fetch(url);
+    const blob = await resp.blob();
+    let png: Blob = blob;
+    if (blob.type !== 'image/png') {
+      const bitmap = await createImageBitmap(blob);
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      canvas.getContext('2d')?.drawImage(bitmap, 0, 0);
+      const converted = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+      if (!converted) return false;
+      png = converted;
+    }
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Скачивание картинки: URL тот же-origin, поэтому <a download> работает. */
+function downloadImage(url: string) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+interface ImageViewerProps {
+  src: string;
+  border: string;
+  /** Плитка VK-коллажа: квадратный кроп, картинка заполняет ячейку сетки. */
+  tile?: boolean;
+  /** Ячейка растягивается по высоте соседей (первый кадр в коллаже из 3 фото). */
+  fill?: boolean;
+  /** Все изображения сообщения — для листания в полноэкранном режиме. */
+  gallery?: string[];
+  /** Индекс этой картинки в галерее (с него открывается просмотр). */
+  index?: number;
+  /** ПКМ по картинке: (событие, src картинки, на которую кликнули). */
+  onContextMenu?: (e: React.MouseEvent, src: string) => void;
+}
+
+function ImageViewer({ src, border, tile = false, fill = false, gallery, index = 0, onContextMenu }: ImageViewerProps) {
+  const images = gallery && gallery.length ? gallery : [src];
+  const safeIndex = Math.min(Math.max(index, 0), images.length - 1);
+  const [idx, setIdx] = useState(safeIndex);
   const [open, setOpen] = useState(false);
+  // Поворот только в полноэкранном просмотре. Угол копится (−90, 360…), чтобы
+  // анимация всегда шла кратчайшим путём, а не крутилась назад через 0.
+  const [rotation, setRotation] = useState(0);
+  const quarterTurned = (((rotation / 90) % 2) + 2) % 2 === 1;
+  const current = images[Math.min(Math.max(idx, 0), images.length - 1)] || src;
+  // Новое фото в галерее открывается без поворота.
+  useEffect(() => { setRotation(0); }, [idx, open]);
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+      else if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'r' || e.key === 'R' || e.key === 'к' || e.key === 'К')) setRotation((r) => r + (e.shiftKey ? -90 : 90));
+      else if (images.length > 1 && e.key === 'ArrowRight') setIdx((i) => (i + 1) % images.length);
+      else if (images.length > 1 && e.key === 'ArrowLeft') setIdx((i) => (i - 1 + images.length) % images.length);
+    };
     window.addEventListener('keydown', onKey);
     // блокируем скролл фона пока открыт просмотр
     const prevOverflow = document.body.style.overflow;
@@ -301,22 +381,47 @@ function ImageViewer({ src, border }: { src: string; border: string }) {
       window.removeEventListener('keydown', onKey);
       document.body.style.overflow = prevOverflow;
     };
-  }, [open]);
+  }, [open, images.length]);
+  const openAtOwn = () => { setIdx(safeIndex); setOpen(true); };
+  // preventDefault/stopPropagation делает обработчик меню (openImageMenu):
+  // для тач-долгого нажатия (button !== 2) событие должно всплыть к пузырю,
+  // чтобы сработала обычная панель действий сообщения.
+  const handleCtx = (e: React.MouseEvent, ctxSrc: string) => {
+    if (!onContextMenu) return;
+    onContextMenu(e, ctxSrc);
+  };
   return (
     <>
-      <Box onClick={() => setOpen(true)} sx={{
-        mt: 0.75, cursor: 'zoom-in',
-        display: 'block', maxWidth: '100%',
-        overflow: 'hidden', borderRadius: 2,
-        border: `1px solid ${border}`,
-      }}>
-        <Box component="img" src={src} loading="lazy" decoding="async" sx={{
+      <Box
+        onClick={openAtOwn}
+        onContextMenu={(e) => handleCtx(e, src)}
+        sx={tile ? {
+          position: 'relative', display: 'block', width: '100%', minWidth: 0,
+          // Растянутая ячейка (коллаж из 3 фото) берёт высоту строк сетки,
+          // квадратная — задаёт её сама через aspect-ratio.
+          height: fill ? '100%' : undefined,
+          aspectRatio: fill ? undefined : '1 / 1',
+          cursor: 'zoom-in', overflow: 'hidden', borderRadius: 2,
+          border: `1px solid ${border}`,
+        } : {
+          mt: 0.75, cursor: 'zoom-in',
+          display: 'block', maxWidth: '100%',
+          overflow: 'hidden', borderRadius: 2,
+          border: `1px solid ${border}`,
+        }}>
+        <Box component="img" src={src} loading="lazy" decoding="async" sx={tile ? {
+          position: 'absolute', inset: 0, width: '100%', height: '100%',
+          objectFit: 'cover', display: 'block',
+        } : {
           width: '100%', height: 'auto', maxHeight: 420,
           objectFit: 'contain', display: 'block',
         }} />
       </Box>
       {open && createPortal((
-        <Box onClick={() => setOpen(false)} sx={{
+        <Box
+          onClick={() => setOpen(false)}
+          onContextMenu={(e) => handleCtx(e, current)}
+          sx={{
           position: 'fixed', inset: 0, zIndex: 13000,
           bgcolor: 'rgba(0,0,0,0.94)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -329,7 +434,7 @@ function ImageViewer({ src, border }: { src: string; border: string }) {
             <Close />
           </IconButton>
           <IconButton
-            component="a" href={src} download
+            component="a" href={current} download
             onClick={(e) => e.stopPropagation()}
             sx={{
               position: 'absolute', top: 16, right: 72, color: '#fff',
@@ -337,11 +442,296 @@ function ImageViewer({ src, border }: { src: string; border: string }) {
             }}>
             <Download />
           </IconButton>
-          <Box component="img" src={src} onClick={(e) => e.stopPropagation()}
-            sx={{ maxWidth: '96vw', maxHeight: '94vh', objectFit: 'contain', borderRadius: 1, boxShadow: '0 8px 40px rgba(0,0,0,0.6)' }} />
+          {[
+            { label: 'Повернуть влево', delta: -90, right: 184, path: 'M7.11 8.53 5.7 7.11C4.8 8.27 4.24 9.61 4.07 11h2.02c.14-.87.49-1.72 1.02-2.47zM6.09 13H4.07c.17 1.39.72 2.73 1.62 3.89l1.41-1.42c-.52-.75-.87-1.59-1.01-2.47zm1.01 5.32c1.16.9 2.51 1.44 3.9 1.61V17.9c-.87-.15-1.71-.49-2.46-1.03L7.1 18.32zM13 4.07V1L8.45 5.55 13 10V6.09c2.84.48 5 2.94 5 5.91s-2.16 5.43-5 5.91v2.02c3.95-.49 7-3.85 7-7.93s-3.05-7.44-7-7.93z' },
+            { label: 'Повернуть вправо', delta: 90, right: 128, path: 'M15.55 5.55 11 1v3.07C7.06 4.56 4 7.92 4 12s3.05 7.44 7 7.93v-2.02c-2.84-.48-5-2.94-5-5.91s2.16-5.43 5-5.91V10l4.55-4.45zM19.93 11c-.17-1.39-.72-2.73-1.62-3.89l-1.42 1.42c.54.75.88 1.6 1.02 2.47h2.02zM13 17.9v2.02c1.39-.17 2.74-.71 3.9-1.61l-1.44-1.44c-.75.54-1.59.89-2.46 1.03zm3.89-2.42 1.42 1.41c.9-1.16 1.45-2.5 1.62-3.89h-2.02c-.14.87-.48 1.72-1.02 2.48z' },
+          ].map((btn) => (
+            <Tooltip key={btn.label} title={`${btn.label} (${btn.delta < 0 ? 'Shift+R' : 'R'})`} PopperProps={{ sx: { zIndex: 13001 } }}>
+              <IconButton
+                aria-label={btn.label}
+                onClick={(e) => { e.stopPropagation(); setRotation((r) => r + btn.delta); }}
+                sx={{
+                  position: 'absolute', top: 16, right: btn.right, color: '#fff',
+                  bgcolor: 'rgba(0,0,0,0.5)', '&:hover': { bgcolor: 'rgba(0,0,0,0.75)' }, zIndex: 2,
+                }}>
+                <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d={btn.path} fill="currentColor" /></svg>
+              </IconButton>
+            </Tooltip>
+          ))}
+          {images.length > 1 && (
+            <>
+              <IconButton
+                aria-label="Предыдущее фото"
+                onClick={(e) => { e.stopPropagation(); setIdx((i) => (i - 1 + images.length) % images.length); }}
+                sx={{
+                  position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
+                  color: '#fff', bgcolor: 'rgba(0,0,0,0.5)', zIndex: 2,
+                  fontSize: 28, lineHeight: 1, '&:hover': { bgcolor: 'rgba(0,0,0,0.75)' },
+                }}>
+                ‹
+              </IconButton>
+              <IconButton
+                aria-label="Следующее фото"
+                onClick={(e) => { e.stopPropagation(); setIdx((i) => (i + 1) % images.length); }}
+                sx={{
+                  position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+                  color: '#fff', bgcolor: 'rgba(0,0,0,0.5)', zIndex: 2,
+                  fontSize: 28, lineHeight: 1, '&:hover': { bgcolor: 'rgba(0,0,0,0.75)' },
+                }}>
+                ›
+              </IconButton>
+              <Typography
+                sx={{
+                  position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)',
+                  color: 'rgba(255,255,255,0.85)', fontSize: 13, px: 1.25, py: 0.4,
+                  borderRadius: 999, bgcolor: 'rgba(0,0,0,0.5)', zIndex: 2, pointerEvents: 'none',
+                }}>
+                {Math.min(Math.max(idx, 0), images.length - 1) + 1} / {images.length}
+              </Typography>
+            </>
+          )}
+          <Box component="img" src={current} onClick={(e) => e.stopPropagation()}
+            sx={{
+              // При повороте на 90°/270° ширина и высота меняются местами —
+              // меняем и ограничения, чтобы фото целиком влезало в экран.
+              maxWidth: quarterTurned ? '94vh' : '96vw',
+              maxHeight: quarterTurned ? '96vw' : '94vh',
+              objectFit: 'contain', borderRadius: 1, boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
+              transform: `rotate(${rotation}deg)`,
+              transition: 'transform 250ms ease, max-width 250ms ease, max-height 250ms ease',
+              '@media (prefers-reduced-motion: reduce)': { transition: 'none' },
+            }} />
         </Box>
       ), document.body)}
     </>
+  );
+}
+
+// ── Кружок (видеосообщение) ─────────────────────────────────────────────────
+// Голый круг без пузыря: видео заполняет круг целиком (cover, края кадра
+// обрезаются), прогресс — кольцом поверх края. Кольцо — ещё и перемотка.
+const ROUND_SIZE = 320;
+const ROUND_RING = 3; // толщина кольца в единицах viewBox (из 100)
+const ROUND_HIT = 14; // толщина невидимой зоны захвата для перемотки
+const ROUND_CIRCUMFERENCE = Math.PI * (100 - ROUND_RING);
+const ROUND_SEEK_STEP = 5; // секунд на стрелку
+
+function RoundVideoNote({ src, accent }: { src: string; accent: string }) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+  const [muted, setMuted] = useState(false);
+  // Доля, на которой сейчас палец; null — перетаскивания нет.
+  const drag = useRef<number | null>(null);
+  const ringRadius = 50 - ROUND_RING / 2;
+
+  // У webm из MediaRecorder нет длительности в заголовке (duration = Infinity):
+  // перематываем в «бесконечность», браузер дочитывает файл и узнаёт длину.
+  const resolveDuration = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (Number.isFinite(v.duration) && v.duration > 0) { setDuration(v.duration); return; }
+    const onFixed = () => {
+      if (!Number.isFinite(v.duration)) return;
+      v.removeEventListener('durationchange', onFixed);
+      setDuration(v.duration);
+      v.currentTime = 0;
+    };
+    v.addEventListener('durationchange', onFixed);
+    v.currentTime = 1e101;
+  };
+
+  // Плавное кольцо: rAF вместо редкого timeupdate (~4 раза в секунду).
+  useEffect(() => {
+    if (!playing) return;
+    let frame = 0;
+    const tick = () => {
+      const v = videoRef.current;
+      if (v && duration > 0 && drag.current === null) {
+        setProgress(Math.min(1, v.currentTime / duration));
+        setElapsed(v.currentTime);
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [playing, duration]);
+
+  const toggle = (e: React.SyntheticEvent) => {
+    e.stopPropagation();
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) void v.play().catch(() => {});
+    else v.pause();
+  };
+
+  const seekTo = (fraction: number) => {
+    const v = videoRef.current;
+    if (!v || duration <= 0) return;
+    const f = Math.max(0, Math.min(1, fraction));
+    // Ровно в конец не прыгаем, иначе сработает ended и кольцо сбросится.
+    const time = Math.min(f * duration, Math.max(0, duration - 0.05));
+    v.currentTime = time;
+    setProgress(f);
+    setElapsed(time);
+  };
+
+  const fractionAt = (e: React.PointerEvent) => {
+    const rect = rootRef.current?.getBoundingClientRect();
+    return rect ? ringPoint(e.clientX, e.clientY, rect).fraction : 0;
+  };
+
+  const onSeekDown = (e: React.PointerEvent<SVGCircleElement>) => {
+    if (duration <= 0) return; // длина ещё не известна — клик просто запустит видео
+    e.stopPropagation();
+    e.preventDefault();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    const f = fractionAt(e);
+    drag.current = f;
+    seekTo(f);
+  };
+  const onSeekMove = (e: React.PointerEvent<SVGCircleElement>) => {
+    if (drag.current === null) return;
+    e.stopPropagation();
+    const f = continueRingDrag(drag.current, fractionAt(e));
+    drag.current = f;
+    seekTo(f);
+  };
+  const onSeekEnd = (e: React.PointerEvent<SVGCircleElement>) => {
+    if (drag.current === null) return;
+    e.stopPropagation();
+    drag.current = null;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+  };
+
+  const flipMute = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.muted = !v.muted;
+    setMuted(v.muted);
+  };
+  const toggleMute = (e: React.MouseEvent) => { e.stopPropagation(); flipMute(); };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(e); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === 'm' || e.key === 'M' || e.key === 'ь' || e.key === 'Ь') {
+      e.preventDefault(); e.stopPropagation(); flipMute(); return;
+    }
+    const v = videoRef.current;
+    if (!v || duration <= 0) return;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault(); e.stopPropagation();
+      const delta = e.key === 'ArrowLeft' ? -ROUND_SEEK_STEP : ROUND_SEEK_STEP;
+      seekTo((v.currentTime + delta) / duration);
+    }
+  };
+
+  const shown = playing || elapsed > 0 ? elapsed : duration;
+  const label = `${Math.floor(shown / 60)}:${String(Math.floor(shown % 60)).padStart(2, '0')}`;
+
+  return (
+    <Box
+      ref={rootRef}
+      role="button"
+      tabIndex={0}
+      aria-label={`${playing ? 'Пауза видеосообщения' : 'Воспроизвести видеосообщение'}. Стрелки — перемотка, M — звук`}
+      aria-pressed={playing}
+      onClick={toggle}
+      onKeyDown={onKeyDown}
+      sx={{
+        position: 'relative', width: ROUND_SIZE, maxWidth: '100%', aspectRatio: '1',
+        cursor: 'pointer', borderRadius: '50%', overflow: 'hidden', outline: 'none',
+        bgcolor: '#000',
+        '&:focus-visible': { boxShadow: `0 0 0 3px ${accent}88` },
+      }}
+    >
+      <video
+        ref={videoRef}
+        src={src}
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={resolveDuration}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onVolumeChange={() => { if (videoRef.current) setMuted(videoRef.current.muted); }}
+        onEnded={() => { setPlaying(false); setProgress(0); setElapsed(0); if (videoRef.current) videoRef.current.currentTime = 0; }}
+        style={{
+          // Край видео = край круга: кадр обрезается cover'ом, кольцо лежит поверх.
+          position: 'absolute', inset: 0, width: '100%', height: '100%',
+          borderRadius: '50%', objectFit: 'cover', display: 'block',
+        }}
+      />
+      <svg viewBox="0 0 100 100" aria-hidden="true" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', transform: 'rotate(-90deg)', pointerEvents: 'none' }}>
+        <circle cx="50" cy="50" r={ringRadius} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth={ROUND_RING} />
+        <circle
+          cx="50" cy="50" r={ringRadius} fill="none" stroke={accent} strokeWidth={ROUND_RING}
+          strokeLinecap="round" strokeDasharray={ROUND_CIRCUMFERENCE}
+          strokeDashoffset={ROUND_CIRCUMFERENCE * (1 - progress)}
+          style={{ opacity: progress > 0 ? 1 : 0, transition: 'opacity 150ms' }}
+        />
+        {/* Ручка перемотки на конце прогресса */}
+        {duration > 0 && (playing || progress > 0) && (
+          <circle
+            cx={50 + ringRadius * Math.cos(2 * Math.PI * progress)}
+            cy={50 + ringRadius * Math.sin(2 * Math.PI * progress)}
+            r={ROUND_RING * 1.4} fill="#fff" stroke={accent} strokeWidth={1}
+          />
+        )}
+        {/* Невидимая зона захвата: кольцо шире видимого, чтобы попадать пальцем */}
+        <circle
+          data-testid="round-seek"
+          cx="50" cy="50" r={50 - ROUND_HIT / 2} fill="none" stroke="transparent" strokeWidth={ROUND_HIT}
+          pointerEvents="stroke"
+          style={{ cursor: duration > 0 ? 'grab' : 'pointer', touchAction: 'none' }}
+          onPointerDown={onSeekDown}
+          onPointerMove={onSeekMove}
+          onPointerUp={onSeekEnd}
+          onPointerCancel={onSeekEnd}
+          onClick={(e) => { if (duration > 0) e.stopPropagation(); }}
+        />
+      </svg>
+      {/* Время и звук — в нижней части круга, внутри (вне зоны перемотки). */}
+      <Box sx={{
+        position: 'absolute', left: '50%', bottom: '18%', transform: 'translateX(-50%)',
+        display: 'flex', alignItems: 'center', gap: 0.75,
+      }}>
+        {duration > 0 && (
+          <Box sx={{
+            px: 0.8, py: 0.2, borderRadius: 2,
+            bgcolor: 'rgba(0,0,0,0.5)', color: '#fff', fontSize: 12, lineHeight: 1.4, pointerEvents: 'none',
+          }}>
+            {label}
+          </Box>
+        )}
+        <IconButton
+          size="small"
+          aria-label={muted ? 'Включить звук' : 'Выключить звук'}
+          aria-pressed={muted}
+          onClick={toggleMute}
+          onKeyDown={(e) => e.stopPropagation()}
+          sx={{
+            p: 0.5, bgcolor: 'rgba(0,0,0,0.5)', color: '#fff',
+            '&:hover': { bgcolor: 'rgba(0,0,0,0.7)' },
+            '&:focus-visible': { outline: `2px solid ${accent}` },
+          }}
+        >
+          {muted ? <VolumeOff sx={{ fontSize: 18 }} /> : <VolumeUp sx={{ fontSize: 18 }} />}
+        </IconButton>
+      </Box>
+      {!playing && (
+        <Box sx={{
+          position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+          width: 52, height: 52, borderRadius: '50%', bgcolor: 'rgba(0,0,0,0.45)',
+          display: 'grid', placeItems: 'center', pointerEvents: 'none',
+        }}>
+          <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M8 5v14l11-7z" fill="#fff" /></svg>
+        </Box>
+      )}
+    </Box>
   );
 }
 
@@ -452,6 +842,7 @@ function MessageBubble({
   isOwn,
   onReply,
   onForward,
+  onEdit,
   onAvatarClick,
   onScrollToMessage,
   accent,
@@ -468,6 +859,8 @@ function MessageBubble({
   bubbleEnabled = true,
   bubbleTextSize,
   bubblePadding = 6,
+  bubbleWallAlign = false,
+  bubbleMetaPos = 'belowLeft',
   isGroupStart = true,
   isGroupEnd = true,
 }: Props) {
@@ -502,14 +895,18 @@ function MessageBubble({
   const addReaction = useChatStore((s) => s.addReaction);
   const pinMessage = useChatStore((s) => s.pinMessage);
   const unpinMessage = useChatStore((s) => s.unpinMessage);
-  const editMessage = useChatStore((s) => s.editMessage);
   const deleteMessage = useChatStore((s) => s.deleteMessage);
+  // Флаг анимации удаления: как только стор пометил сообщение удаляемым,
+  // пузырь рассыпается на частицы и строка схлопывается до реального remove.
+  const isDeleting = useChatStore((s) => s.deletingMessageIds.has(message.id));
   const sendMessage = useChatStore((s) => s.sendMessage);
   const addMessage = useChatStore((s) => s.addMessage);
   const updateMessage = useChatStore((s) => s.updateMessage);
   const theme = useThemeStore((s) => s.theme);
   const fontSize = useChatSettingsStore((s) => s.fontSize);
   const emojiSize = useChatSettingsStore((s) => s.emojiSize);
+  // 10 слотов быстрых реакций пользователя (сток или скины из кейса).
+  const reactionSlots = useReactionSkinStore((s) => s.slots);
   // Шрифт конкретного чата: при смене перерисовываются только пузыри этого чата.
   const chatFont = useChatFontStore((s) => s.perChatFonts[message.chatId]);
   const globalFontFamily = useUserSettingsStore((s) => s.globalFontFamily);
@@ -519,6 +916,12 @@ function MessageBubble({
   // auto — как обычно (свои справа, чужие слева); left/right — все с одной стороны.
   const isOwnSide = messageAlign === 'left' ? false : messageAlign === 'right' ? true : isOwn;
   const maxWidthPct = Math.min(95, Math.max(35, messageMaxWidth || 72));
+  // Время и галочки: в строке с текстом (справа/слева) или отдельной строкой снизу.
+  const metaPos = normalizeMetaPos(bubbleMetaPos);
+  const metaInline = metaPos === 'inlineRight' || metaPos === 'inlineLeft';
+  const metaRight = metaOnRight(metaPos, isOwnSide);
+  // «По стенке»: текст прижат к стороне, где стоит пузырь, а не к центру ленты.
+  const wallTextAlign = bubbleWallAlign ? (isOwnSide ? 'right' : 'left') : undefined;
 
   // Активные покупки из магазина: обводка аватара и «плашка» своих сообщений.
   const shopActiveRing = useShopStore((s) => s.activeRing);
@@ -549,6 +952,9 @@ function MessageBubble({
   // тапу (тач). Стор хранит id открытой панели — в чате максимум одна такая,
   // а сброс ховера (setHoveredId(null)) её попутно закрывает.
   const actionsOpen = useMessageHoverStore((s) => s.actionsId === message.id);
+  // Режим выделения: булевы селекторы — клик по галочке перерисовывает один пузырь.
+  const selectionActive = useMessageSelectionStore((s) => s.chatId === message.chatId);
+  const selected = useMessageSelectionStore((s) => !!s.ids[message.id]);
   const storeOpenActions = useMessageHoverStore((s) => s.openActions);
   const openActions = () => storeOpenActions(message.id);
   // Прямоугольник сообщения снимается РОВНО один раз на вход указателя и дальше
@@ -562,6 +968,7 @@ function MessageBubble({
   // одинаково для своих и чужих — перекрывают часы они оба.
   const rowRef = useRef<HTMLDivElement>(null);
   const bubbleRef = useRef<HTMLDivElement>(null);
+  const textRef = useRef<HTMLParagraphElement>(null);
   const clockAvoid = useClockAvoid(bubbleRef, rowRef);
   const clockAvoidOn = useUserSettingsStore((st) => st.wallClockAvoid);
 
@@ -571,6 +978,9 @@ function MessageBubble({
   const [forwardChatId, setForwardChatId] = useState('');
   const [chatListAnchor, setChatListAnchor] = useState<HTMLElement | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  // ПКМ по картинке (VK-стиль): отдельное меню с копированием изображения.
+  // В состоянии src — конкретная картинка, на которую кликнули.
+  const [imageMenu, setImageMenu] = useState<{ x: number; y: number; src: string } | null>(null);
   // Якорь попапа реакций — виртуальный (координаты кнопки на момент клика), а не
   // живой DOM-узел. Панель быстрого доступа условно монтируется ({actionsVisible &&…})
   // и размонтируется, как только сбрасывается ховер. С живым якорем MUI звал
@@ -590,8 +1000,6 @@ function MessageBubble({
     holdTimer.current = null;
   };
   useEffect(() => cancelHold, []);
-  const [editing, setEditing] = useState(false);
-  const [editText, setEditText] = useState(message.content || '');
   const [pollSelection, setPollSelection] = useState<string[]>([]);
   const [pollBusy, setPollBusy] = useState(false);
   const [pollError, setPollError] = useState('');
@@ -655,6 +1063,32 @@ function MessageBubble({
   const senderAvatar = sender?.avatarUrl ? resolveFileUrl(sender.avatarUrl) : undefined;
 
   const attachment = message.attachments?.[0];
+  // Кружок без подписи/ответа рисуем без пузыря: только круг и время под ним.
+  const isRoundNote = message.attachments?.length === 1
+    && /^video-note\.(webm|mp4)$/.test(attachment?.fileName || '')
+    && !message.content && !message.replyToId && !message.forwardFromId && !channelPost;
+
+  // ── VK-альбом: все вложения сообщения — картинки ──────────────────────────
+  const messageAttachments = message.attachments || [];
+  const isImageAttachment = (a: { mimeType?: string }) =>
+    a.mimeType?.startsWith('image/') || (messageAttachments.length === 1 && message.type === 'photo');
+  const imageAttachments = messageAttachments.filter(isImageAttachment);
+  // Альбом рисуем сеткой-коллажем, а не каруселью: так, как в ВК.
+  const isPhotoAlbum = messageAttachments.length > 1
+    && imageAttachments.length === messageAttachments.length;
+  const albumUrls = imageAttachments.map((a) => resolveFileUrl(a.fileUrl));
+  // Сколько плиток показывать в сетке (ВК ограничивает альбом, дальше — «ещё»).
+  const albumTiles = albumUrls.slice(0, 9);
+
+  // ПКМ/долгое нажатие по картинке: отдельное меню (копировать, сохранить…).
+  const openImageMenu = (e: React.MouseEvent, src: string) => {
+    // Тач-долгое нажатие (button !== 2) не трогаем — у сообщения своя панель.
+    if (e.button !== 2 || !src) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu(null);
+    setImageMenu({ x: e.clientX, y: e.clientY, src });
+  };
 
   const handleAddReaction = (emoji: string) => {
     void runAction(async () => {
@@ -669,17 +1103,6 @@ function MessageBubble({
     void runAction(() => (message.isPinned
       ? unpinMessage(message.chatId, message.id)
       : pinMessage(message.chatId, message.id)));
-  };
-
-  const handleSaveEdit = () => {
-    const trimmed = editText.trim();
-    void runAction(async () => {
-      if (trimmed !== (message.content || '')) {
-        if (!trimmed && !message.attachments?.length) throw new Error('Сообщение не может быть пустым');
-        await editMessage(message.id, trimmed);
-      }
-      setEditing(false);
-    });
   };
 
   const handleDelete = () => {
@@ -866,11 +1289,110 @@ function MessageBubble({
     Object.assign(selfPlaqueSx, specToStyle(customSelfcardSpec));
     selfPlaqueClass = specAnimationClass(customSelfcardSpec);
   }
+  // ─── «По стенке»: пузырь по ширине самой длинной строки ───
+  // Перенесённый текст CSS держит на полной max-width, и у прижатого к стенке
+  // текста с другой стороны остаётся пустое поле. Меряем реальные строки
+  // (Range.getClientRects) и сужаем блок текста до самой широкой из них.
+  // Переносы не меняются: новая ширина не меньше любой строки.
+  useLayoutEffect(() => {
+    const el = textRef.current;
+    if (!el) return;
+    const reset = () => { el.style.width = ''; el.style.flex = ''; };
+    if (!bubbleWallAlign) { reset(); return; }
+    const fit = () => {
+      reset();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      let left = Infinity;
+      let right = -Infinity;
+      for (const r of Array.from(range.getClientRects())) {
+        if (r.width === 0) continue;
+        left = Math.min(left, r.left);
+        right = Math.max(right, r.right);
+      }
+      const width = Math.ceil(right - left) + 1;
+      if (Number.isFinite(width) && width > 0 && width < el.clientWidth) {
+        el.style.width = `${width}px`;
+        el.style.flex = '0 0 auto';
+      }
+    };
+    fit();
+    // Ширина ленты меняется (окно, панель) — переносы другие, мерим заново.
+    // Следим за строкой, а не за текстом: её ширина от нашей правки не зависит.
+    const host = rowRef.current;
+    if (!host || typeof ResizeObserver === 'undefined') return reset;
+    let raf = 0;
+    const ro = new ResizeObserver(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(fit); });
+    ro.observe(host);
+    return () => { ro.disconnect(); cancelAnimationFrame(raf); reset(); };
+  }, [bubbleWallAlign, message.content, bubbleTextSize, fontSize, fontFamily, maxWidthPct, emojiSize]);
+
+
+
+  // ─── Анимация удаления: распад пузыря на частицы + схлопывание строки ───
+  // Стор держит флаг MESSAGE_DELETE_EXIT_MS и только потом убирает сообщение
+  // из состояния. Частицы спавнятся в портал document.body, поэтому долетают,
+  // даже когда строка уже размонтировалась. При reduced-motion стор удаляет
+  // мгновенно, флаг не выставляется — эффект не срабатывает.
+  useLayoutEffect(() => {
+    if (!isDeleting) return;
+    const row = rowRef.current;
+    const bubble = bubbleRef.current;
+    if (bubble) {
+      spawnMessageDust(bubble.getBoundingClientRect(), [accent, bubbleTextColor, theme.textSec]);
+      bubble.style.transition = `opacity 180ms ${motion.easeOut}, filter 220ms ${motion.easeOut}`;
+      bubble.style.opacity = '0';
+      bubble.style.filter = 'blur(8px)';
+    }
+    if (row) {
+      // Высота замеряется ДО каких-либо правок — строка схлопывается ровно
+      // на свою фактическую высоту, соседи подтягиваются плавно.
+      row.style.overflow = 'hidden';
+      row.style.height = `${row.scrollHeight}px`;
+      void row.offsetHeight; // форсируем reflow, иначе transition не стартует
+      row.style.transition = [
+        `height ${MESSAGE_DELETE_EXIT_MS}ms cubic-bezier(0.4, 0, 0.2, 1)`,
+        `padding ${MESSAGE_DELETE_EXIT_MS}ms cubic-bezier(0.4, 0, 0.2, 1)`,
+        'opacity 160ms ease-out',
+      ].join(', ');
+      row.style.height = '0px';
+      row.style.paddingTop = '0px';
+      row.style.paddingBottom = '0px';
+      row.style.opacity = '0';
+    }
+    return () => {
+      // Откат (размонтирование/гонка loadMessages до конца анимации):
+      // снимаем инлайн-стили, чтобы сообщение не вернулось «сжатым».
+      if (row) {
+        row.style.transition = '';
+        row.style.height = '';
+        row.style.paddingTop = '';
+        row.style.paddingBottom = '';
+        row.style.overflow = '';
+        row.style.opacity = '';
+      }
+      if (bubble) {
+        bubble.style.transition = '';
+        bubble.style.opacity = '';
+        bubble.style.filter = '';
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDeleting]);
 
   return (
     <Box
       id={`msg-${message.id}`}
       ref={rowRef}
+      // В режиме выделения вся строка — одна большая кнопка: клик ставит или
+      // снимает галочку и не доходит до ссылок, картинок и плееров внутри.
+      onClickCapture={selectionActive ? (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        useMessageSelectionStore.getState().toggle(message.id);
+      } : undefined}
+      aria-selected={selectionActive ? selected : undefined}
+      onContextMenu={selectionActive ? (e) => e.preventDefault() : undefined}
       sx={{
         display: 'flex',
         flexDirection: isOwnSide ? 'row-reverse' : 'row',
@@ -881,13 +1403,36 @@ function MessageBubble({
         // чтобы соседние сообщения не «ловили» hover пустой плоскостью строки.
         width: '100%', boxSizing: 'border-box',
         px: { xs: 1, md: 1.5 },
+        // Слева освобождаем место под кружок выделения.
+        ...(selectionActive ? { pl: { xs: 5, md: 5.5 }, cursor: 'pointer' } : {}),
         pt: isGroupStart ? { xs: 0.75, md: 1.1 } : 0.15,
         pb: isGroupEnd ? { xs: 1.2, md: 1.6 } : 0.15,
         position: 'relative',
         touchAction: 'pan-y',
         zIndex: isHovered ? 20 : 'auto',
+        bgcolor: selectionActive && selected ? accent + '1F' : undefined,
+        transition: 'background-color 150ms ease, padding 150ms ease',
+        // Внутренние элементы не перехватывают указатель — иначе hover-эффекты
+        // и панели действий мешали бы выделению.
+        ...(selectionActive ? { '& > *': { pointerEvents: 'none' } } : {}),
       }}
     >
+      {selectionActive && (
+        <Box
+          aria-hidden
+          sx={{
+            position: 'absolute', left: { xs: 8, md: 12 }, bottom: isGroupEnd ? { xs: 14, md: 18 } : 6,
+            width: 24, height: 24, display: 'grid', placeItems: 'center',
+            color: selected ? accent : theme.textSec,
+            pointerEvents: 'none',
+            '& svg': { fontSize: 24, filter: 'drop-shadow(0 1px 2px rgba(0,0,0,.45))' },
+          }}
+        >
+          {selected
+            ? <CheckCircle />
+            : <RadioButtonUnchecked />}
+        </Box>
+      )}
       {isGroupEnd ? <Avatar
           src={senderAvatar}
           sx={avatarSx}
@@ -950,11 +1495,8 @@ function MessageBubble({
         }}
         onPointerLeave={(e) => { if (e.pointerType === 'mouse') { hoverNone(); bubbleRectRef.current = null; } }}
         sx={{
-          // Редактор не должен наследовать пользовательское ограничение ширины
-          // обычных пузырей (например, 35%): на узком окне оно делает поле
-          // ввода практически непригодным для текста.
-          width: editing ? { xs: '100%', sm: 'min(640px, 100%)' } : 'auto',
-          maxWidth: editing ? '100%' : `${maxWidthPct}%`,
+          width: 'auto',
+          maxWidth: `${maxWidthPct}%`,
           minWidth: 0,
           position: 'relative',
           // Отодвижение от часов — сдвиг вбок трансформацией, а не зазором.
@@ -973,7 +1515,7 @@ function MessageBubble({
             {senderName}{senderTitle ? ` · ${senderTitle}` : ''}
           </Typography>
         )}
-        {(isOwn || selfCardItem) && isGroupStart && (
+        {!isDeleting && (isOwn || selfCardItem) && isGroupStart && (
           <Box sx={{ display: 'flex', justifyContent: isOwnSide ? 'flex-end' : 'flex-start', mb: 0.4 }}>
             <Typography component="span" sx={{ ...selfPlaqueSx, display: 'inline-flex', alignItems: 'center' }} className={selfPlaqueClass}>
               {isOwn ? 'Вы' : senderName}{senderTitle ? ` · ${senderTitle}` : ''}
@@ -1017,9 +1559,6 @@ function MessageBubble({
             boxShadow: isOwn
               ? bubbleOwnShadow
               : bubbleOtherShadow,
-            borderRadius: isOwnSide
-              ? `var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) 4px var(--vera-bubble-radius, 16px)`
-              : `var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) 4px`,
             maxWidth: '100%', boxSizing: 'border-box',
             border: `1px solid ${isOwn ? accent + '28' : theme.border}`,
             backdropFilter: bubbleNeedsBackdropBlur ? 'blur(18px)' : 'none',
@@ -1031,13 +1570,21 @@ function MessageBubble({
             // Кастомный «пузырь» от авторов — перекрывает базовый стиль (только для своих).
             // Стиль пузырей из магазина — между темой и кастомом авторов.
             ...(bubbleEnabled ? (isOwnSide ? equippedBubbleSx : mirrorBubble(equippedBubbleSx)) : {}),
+            // Скругление — строго ПОСЛЕ скина: у скинов магазина и кастомов
+            // авторов свой фиксированный borderRadius, и раньше он перебивал
+            // ползунок «Скругление сообщений». Шорткат идёт последним, поэтому
+            // перекрывает и угловые borderTopLeftRadius и т.п. из скина.
+            borderRadius: isOwnSide
+              ? `var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) 4px var(--vera-bubble-radius, 16px)`
+              : `var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) var(--vera-bubble-radius, 16px) 4px`,
             paddingLeft: bubbleEnabled && !channelPost ? '14px' : 0,
             paddingRight: bubbleEnabled && !channelPost ? '14px' : 0,
             paddingTop: bubbleEnabled && !channelPost ? `${clampBubble('padding', bubblePadding)}px` : 0,
             paddingBottom: bubbleEnabled && !channelPost ? `${clampBubble('padding', bubblePadding)}px` : 0,
             minWidth: 0, overflowWrap: 'anywhere',
             '& > *': { maxWidth: '100%', minWidth: 0, boxSizing: 'border-box' },
-            ...(!bubbleEnabled ? { background: 'transparent', backgroundImage: 'none', border: 'none', boxShadow: 'none', backdropFilter: 'none', color: theme.text, animation: 'none', '&::before': { display: 'none' }, '&::after': { display: 'none' } } : {}),
+            ...(!bubbleEnabled || isRoundNote ? { background: 'transparent', backgroundImage: 'none', border: 'none', boxShadow: 'none', backdropFilter: 'none', color: theme.text, animation: 'none', '&::before': { display: 'none' }, '&::after': { display: 'none' } } : {}),
+            ...(isRoundNote ? { padding: 0, transform: 'none', contentVisibility: 'visible' } : {}),
           }}
         >
           <Box sx={channelPost ? {
@@ -1062,32 +1609,11 @@ function MessageBubble({
             </Box>
           )}
 
-          {editing ? (
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <textarea
-                autoFocus
-                value={editText}
-                onChange={(e) => setEditText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveEdit(); }
-                  if (e.key === 'Escape') setEditing(false);
-                }}
-                style={{
-                  width: '100%', minHeight: 96, boxSizing: 'border-box', resize: 'vertical',
-                  background: 'rgba(0,0,0,0.15)', color: bubbleTextColor,
-                  border: `1px solid ${theme.accent}66`, borderRadius: 8,
-                  padding: '8px 10px', fontSize, lineHeight: 1.5, fontFamily,
-                }}
-              />
-              <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
-                <Button size="small" onClick={() => setEditing(false)} sx={{ color: bubbleTextColor, textTransform: 'none', fontSize: 12, opacity: 0.8 }}>Отмена</Button>
-                <Button size="small" onClick={handleSaveEdit} sx={{ bgcolor: theme.accent, color: '#fff', textTransform: 'none', fontSize: 12, borderRadius: 2 }}>Сохранить</Button>
-              </Box>
-            </Box>
-          ) : (
-            <Box sx={message.content && !attachment && !message.replyToId && !message.isEdited ? { display: 'flex', alignItems: 'center', gap: 1 } : {}}>
+          <Box data-vera-meta-pos={metaPos} sx={metaInline && message.content && !attachment && !message.replyToId && !message.isEdited
+            ? { display: 'flex', flexDirection: metaPos === 'inlineLeft' ? 'row-reverse' : 'row', alignItems: 'center', gap: 1 }
+            : {}}>
               {message.content && (
-                <Typography sx={{ flex: 1, minWidth: 0, fontSize: bubbleTextSize || fontSize, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', fontFamily }}>
+                <Typography ref={textRef} sx={{ flex: 1, minWidth: 0, textAlign: wallTextAlign, fontSize: bubbleTextSize || fontSize, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', fontFamily }}>
                   {contentParts.map((part, i) => part.type === 'emoji'
                     ? <span key={i} style={{ fontSize: emojiSize, lineHeight: 1.2 }}>{part.value}</span>
                     : part.type === 'link'
@@ -1129,15 +1655,50 @@ function MessageBubble({
                 </Box>;
               })()}
 
+              {isPhotoAlbum ? (
+                /* VK-альбом: сетка-коллаж вместо карусели (листание — в лайтбоксе). */
+                <Box sx={{
+                  mt: 0.75, display: 'grid', width: 360, maxWidth: '100%', gap: 0.5,
+                  gridTemplateColumns: albumTiles.length >= 5 ? 'repeat(3, 1fr)' : 'repeat(2, 1fr)',
+                  // Из 3 фото первое кадрируется вертикально на две строки слева.
+                  gridTemplateRows: albumTiles.length === 3 ? 'repeat(2, auto)' : undefined,
+                }}>
+                  {albumTiles.map((url, i) => (
+                    <Box key={`${url}#${i}`} sx={albumTiles.length === 3 && i === 0 ? { gridRow: 'span 2', position: 'relative' } : { position: 'relative' }}>
+                      <ImageViewer
+                        src={url}
+                        border={theme.border}
+                        tile
+                        fill={albumTiles.length === 3 && i === 0}
+                        gallery={albumUrls}
+                        index={i}
+                        onContextMenu={openImageMenu}
+                      />
+                      {i === albumTiles.length - 1 && albumUrls.length > albumTiles.length && (
+                        <Box sx={{
+                          position: 'absolute', inset: 0, zIndex: 1, borderRadius: 2,
+                          bgcolor: 'rgba(0,0,0,0.55)', color: '#fff', pointerEvents: 'none',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: 22, fontWeight: 700,
+                        }}>
+                          +{albumUrls.length - albumTiles.length}
+                        </Box>
+                      )}
+                    </Box>
+                  ))}
+                </Box>
+              ) : (
+                <>
               {(message.attachments?.length || 0) > 1 && <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                 <IconButton aria-label="Предыдущее вложение" onClick={e => { e.stopPropagation(); const el = attachmentsRef.current; el?.scrollBy({ left: -el.clientWidth, behavior: 'smooth' }); }} sx={{ color: 'inherit' }}>←</IconButton>
                 <IconButton aria-label="Следующее вложение" onClick={e => { e.stopPropagation(); const el = attachmentsRef.current; el?.scrollBy({ left: el.clientWidth, behavior: 'smooth' }); }} sx={{ color: 'inherit' }}>→</IconButton>
               </Box>}
-              <Box ref={attachmentsRef} tabIndex={message.attachments?.length ? 0 : undefined} role="region" aria-label="Вложения поста" sx={{ display: 'flex', width: message.attachments?.length ? 360 : undefined, maxWidth: '100%', overflowX: 'auto', scrollSnapType: 'x mandatory', gap: 1 }}>
+              <Box ref={attachmentsRef} tabIndex={message.attachments?.length ? 0 : undefined} role="region" aria-label="Вложения поста" sx={{ display: 'flex', width: message.attachments?.length && !isRoundNote ? 360 : undefined, maxWidth: '100%', overflowX: 'auto', scrollSnapType: 'x mandatory', gap: 1 }}>
               {(message.attachments || []).map((attachment, index, attachments) => {
                 const attachmentUrl = resolveFileUrl(attachment.fileUrl);
                 const isAudio = attachment.mimeType?.startsWith('audio/') || (attachments.length === 1 && message.type === 'voice');
-                const isVideo = attachment.mimeType?.startsWith('video/') || (attachments.length === 1 && message.type === 'video');
+                // Старые кружки сохранены с mimeType text/plain — узнаём их по имени файла.
+                const isVideo = attachment.mimeType?.startsWith('video/') || (attachments.length === 1 && message.type === 'video') || /^video-note\.(webm|mp4)$/.test(attachment.fileName || '');
                 const isImage = attachment.mimeType?.startsWith('image/') || (attachments.length === 1 && message.type === 'photo');
                 const isDocument = !isAudio && !isVideo && !isImage;
                 return <Box key={attachment.id || index} sx={{ flex: '0 0 100%', minWidth: 0, scrollSnapAlign: 'start' }}>
@@ -1148,12 +1709,12 @@ function MessageBubble({
 
               {isVideo && attachment && (
                 /^video-note\.(webm|mp4)$/.test(attachment.fileName || '') ?
-                  <video src={attachmentUrl} controls playsInline preload="metadata" style={{ width: 240, maxWidth: '100%', aspectRatio: '1', borderRadius: '50%', objectFit: 'cover' }} /> :
+                  <RoundVideoNote src={attachmentUrl} accent={theme.accent} /> :
                   <VideoPlayer src={attachmentUrl} />
               )}
 
               {isImage && attachment && (
-                <ImageViewer src={attachmentUrl} border={theme.border} />
+                <ImageViewer src={attachmentUrl} border={theme.border} onContextMenu={openImageMenu} />
               )}
 
               {isDocument && attachment && (
@@ -1162,6 +1723,8 @@ function MessageBubble({
                     <PlaylistMessageCard payload={parsePlaylistPayload(attachment)} />
                   ) : attachment.mimeType === 'application/x-vera-group-invite' ? (
                     <GroupInviteCard attachment={attachment} />
+                  ) : attachment.mimeType === 'application/x-vera-warship' ? (
+                    <WarshipGameCard attachment={attachment} messageId={message.id} />
                   ) : (
                     <DocumentPreview url={attachmentUrl} fileName={attachment.fileName} mimeType={attachment.mimeType} accent={theme.accent} />
                   )}
@@ -1170,6 +1733,8 @@ function MessageBubble({
                 </Box>;
               })}
               </Box>
+                </>
+              )}
 
               {message.isEdited && (
                 <Typography sx={{ fontSize: 11, color: messageTimeText, opacity: editedTextOpacity, mt: 0.3, fontStyle: 'italic', fontFamily }}>
@@ -1177,7 +1742,13 @@ function MessageBubble({
                 </Typography>
               )}
 
-              <Box sx={{ display: 'flex', alignItems: 'center', flexShrink: 0, gap: 1, mt: message.content && !attachment && !message.replyToId && !message.isEdited ? 0 : 0.75, justifyContent: 'flex-end' }}>
+              <Box sx={{
+                display: 'flex', alignItems: 'center', flexShrink: 0, gap: 1,
+                // Галочки ставим со стороны края пузыря: у «слева» они идут перед временем.
+                flexDirection: metaRight ? 'row' : 'row-reverse',
+                mt: metaInline && message.content && !attachment && !message.replyToId && !message.isEdited ? 0 : metaInline ? 0.75 : 0.25,
+                justifyContent: metaRight ? 'flex-end' : 'flex-start',
+              }}>
                 <Typography sx={{ fontSize: 11, color: messageTimeText, opacity: messageTimeOpacity, fontFamily }}>
                   {formatTime(message.createdAt)}
                 </Typography>
@@ -1213,7 +1784,6 @@ function MessageBubble({
                 })()}
               </Box>
             </Box>
-          )}
           </Box>
           {channelPost && <ChannelComments post={message} />}
         </Box>
@@ -1233,7 +1803,7 @@ function MessageBubble({
                   '&:hover': { bgcolor: theme.bgHover },
                 }}
               >
-                <span>{r.emoji}</span>
+                <ReactionGlyph value={r.emoji} />
                 <span style={{ fontSize: 12, color: theme.textSec }}>{r.count}</span>
               </Box>
             ))}
@@ -1324,9 +1894,13 @@ function MessageBubble({
           <Tooltip title={message.isPinned ? 'Открепить' : 'Закрепить'}>
             <IconButton size="small" onClick={handleTogglePin} sx={{ color: message.isPinned ? theme.accent : theme.textSec, flexShrink: 0, ...membranePressSx }}><PushPin sx={{ fontSize: 16 }} /></IconButton>
           </Tooltip>
-          {canEdit && !editing && (
+          {/* На таче нет ПКМ — выделение запускается из панели долгого тапа. */}
+          <Tooltip title="Выделить">
+            <IconButton size="small" onClick={() => { hoverNone(); useMessageSelectionStore.getState().start(message.chatId, message.id); }} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><CheckCircleOutline sx={{ fontSize: 16 }} /></IconButton>
+          </Tooltip>
+          {canEdit && (
             <Tooltip title="Редактировать">
-              <IconButton size="small" onClick={() => { setEditText(message.content || ''); setEditing(true); }} sx={{ color: theme.textSec, ...membranePressSx }}><Edit sx={{ fontSize: 16 }} /></IconButton>
+              <IconButton size="small" onClick={() => onEdit?.(message)} sx={{ color: theme.textSec, ...membranePressSx }}><Edit sx={{ fontSize: 16 }} /></IconButton>
             </Tooltip>
           )}
           {canDelete && (
@@ -1338,13 +1912,17 @@ function MessageBubble({
         )}
       </Box>
 
-      {/* Попап выбора реакции */}
+      {/* Попап выбора реакции: открывается НАД строкой панели, начинаясь от
+          правого края кнопки-триггера. Панель и триггер остаются видимыми
+          СЛЕВА от эмодзи (раньше попап падал под кнопкой и перекрывал
+          панель с сообщениями снизу). MUI сам прижимает попап к краю
+          экрана, если справа не хватает места. */}
       <Popover
         open={Boolean(reactionAnchor)}
         anchorEl={reactionAnchor}
         onClose={() => setReactionAnchor(null)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-        transformOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
         PaperProps={{
           sx: {
             bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
@@ -1353,9 +1931,11 @@ function MessageBubble({
         }}
       >
         <Box sx={{ display: 'flex', gap: 0.25, flexWrap: 'wrap', maxWidth: 260 }}>
-          {REACTION_EMOJIS.map((emoji) => (
+          {reactionSlots.map((emoji) => (
             <Box
               key={emoji}
+              role="button"
+              aria-label={`Поставить реакцию ${reactionLabel(emoji)}`}
               onClick={() => handleAddReaction(emoji)}
               sx={{
                 fontSize: emojiSize, cursor: 'pointer', p: 0.5, borderRadius: 1.5,
@@ -1363,7 +1943,7 @@ function MessageBubble({
                 '&:hover': { transform: 'scale(1.3)', bgcolor: theme.bgHover },
               }}
             >
-              {emoji}
+              <ReactionGlyph value={emoji} />
             </Box>
           ))}
         </Box>
@@ -1374,13 +1954,72 @@ function MessageBubble({
           x={contextMenu.x}
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
+          header={
+            // Быстрые реакции прямо в ПКМ-меню: те же 10 слотов, что и в попапе «Реакция».
+            <Box role="group" aria-label="Реакции" data-vera-context-reactions
+              sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.25, px: 0.5, py: 0.25, maxWidth: 260 }}>
+              {reactionSlots.map((emoji) => (
+                <Box
+                  key={emoji}
+                  component="button"
+                  type="button"
+                  aria-label={`Поставить реакцию ${reactionLabel(emoji)}`}
+                  title={reactionLabel(emoji)}
+                  onClick={() => { handleAddReaction(emoji); setContextMenu(null); }}
+                  sx={{
+                    fontSize: emojiSize, lineHeight: 1, cursor: 'pointer', p: 0.5, borderRadius: 1.5,
+                    border: 0, bgcolor: 'transparent', color: 'inherit',
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    transition: 'transform 0.1s',
+                    '&:hover': { transform: 'scale(1.3)', bgcolor: theme.bgHover },
+                    '&:focus-visible': { outline: `2px solid ${theme.accent}`, outlineOffset: 1 },
+                  }}
+                >
+                  <ReactionGlyph value={emoji} />
+                </Box>
+              ))}
+            </Box>
+          }
           items={[
             ...(!channelPost ? [{ key: 'reply', label: 'Ответить', icon: <Reply />, onClick: () => onReply(message) }] : []),
             { key: 'forward', label: 'Переслать', icon: <Forward />, onClick: () => onForward(message) },
             { key: 'copy', label: 'Копировать', icon: <ContentCopy />, onClick: () => navigator.clipboard.writeText(message.content || '') },
             { key: 'pin', label: message.isPinned ? 'Открепить' : 'Закрепить', icon: <PushPin />, onClick: () => handleTogglePin() },
-            ...(canEdit ? [{ key: 'edit', label: 'Редактировать', icon: <Edit />, onClick: () => { setEditText(message.content || ''); setEditing(true); } }] : []),
+            { key: 'select', label: 'Выделить', icon: <CheckCircleOutline />, onClick: () => { hoverNone(); useMessageSelectionStore.getState().start(message.chatId, message.id); } },
+            ...(canEdit ? [{ key: 'edit', label: 'Редактировать', icon: <Edit />, onClick: () => onEdit?.(message) }] : []),
             ...(canDelete ? [{ key: 'delete', label: 'Удалить', icon: <Delete />, danger: true, divider: true, onClick: handleDelete }] : []),
+          ]}
+        />
+      )}
+
+      {imageMenu && (
+        <ContextMenu
+          x={imageMenu.x}
+          y={imageMenu.y}
+          zIndex={14000}
+          onClose={() => setImageMenu(null)}
+          title="Изображение"
+          items={[
+            {
+              key: 'copy-image',
+              label: 'Копировать изображение',
+              icon: <ContentCopy />,
+              onClick: () => {
+                void copyImageToClipboard(imageMenu.src).then((ok) => {
+                  if (!ok) void navigator.clipboard?.writeText(imageMenu.src);
+                });
+              },
+            },
+            {
+              key: 'copy-link',
+              label: 'Копировать ссылку',
+              icon: <OpenInNew />,
+              onClick: () => navigator.clipboard.writeText(imageMenu.src),
+            },
+            { key: 'open', label: 'Открыть в новой вкладке', icon: <OpenInNew />, onClick: () => window.open(imageMenu.src, '_blank', 'noopener,noreferrer') },
+            { key: 'save', label: 'Сохранить', icon: <Download />, onClick: () => downloadImage(imageMenu.src) },
+            ...(!channelPost ? [{ key: 'reply', label: 'Ответить', icon: <Reply />, divider: true, onClick: () => onReply(message) }] : []),
+            { key: 'forward', label: 'Переслать', icon: <Forward />, divider: !!channelPost, onClick: () => onForward(message) },
           ]}
         />
       )}
@@ -1404,6 +2043,8 @@ export default memo(
     prev.bubblePadding === next.bubblePadding &&
     prev.messageTimeColor === next.messageTimeColor &&
     prev.messageAlign === next.messageAlign
+    && prev.bubbleWallAlign === next.bubbleWallAlign
+    && prev.bubbleMetaPos === next.bubbleMetaPos
     && prev.isGroupStart === next.isGroupStart
     && prev.isGroupEnd === next.isGroupEnd
 );

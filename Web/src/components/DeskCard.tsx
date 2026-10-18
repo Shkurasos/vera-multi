@@ -5,9 +5,9 @@
  * мышью, умеет быть началом нити и получает подсветку в режиме связывания.
  */
 import React, { useRef, useState } from 'react';
-import { Box, Typography, IconButton, Menu, MenuItem } from '@mui/material';
-import { Close, Link as LinkIcon, MoreVert } from '@mui/icons-material';
-import type { DeskItem } from '../utils/deskBoard';
+import { Box, Typography, IconButton, Menu, MenuItem, Dialog, DialogTitle, DialogContent, DialogActions, Button, TextField } from '@mui/material';
+import { Close, Link as LinkIcon, MoreVert, AccessTime } from '@mui/icons-material';
+import { parseDateTimeLocal, toDateTimeLocal, type DeskItem } from '../utils/deskBoard';
 
 interface Props {
   item: DeskItem;
@@ -30,15 +30,33 @@ interface Props {
   onDelete: () => void;
   onStartLink: () => void;
   onCancelLink: () => void;
+  /** Поставить будильник (ms) или снять (null). */
+  onSetAlarm: (at: number | null) => void;
 }
 
 const CARD_SHADOW = '0 14px 32px rgba(0,0,0,0.45), 0 3px 8px rgba(0,0,0,0.3)';
 
 export default function DeskCard({
-  item, photoUrl, selected, linking, readOnly, toBoardPoint, onMove, onDragEnd, onSelect, onEdit, onScale, onRotate, onDelete, onStartLink, onCancelLink,
+  item, photoUrl, selected, linking, readOnly, toBoardPoint, onMove, onDragEnd, onSelect, onEdit, onScale, onRotate, onDelete, onStartLink, onCancelLink, onSetAlarm,
 }: Props) {
   const [dragging, setDragging] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
+  const [alarmOpen, setAlarmOpen] = useState(false);
+  const [alarmValue, setAlarmValue] = useState('');
+  const [alarmError, setAlarmError] = useState('');
+  const openAlarm = () => {
+    // По умолчанию — через 10 минут: пустое поле заставляло бы листать календарь.
+    setAlarmValue(toDateTimeLocal(item.alarmAt ?? Date.now() + 10 * 60 * 1000));
+    setAlarmError('');
+    setAlarmOpen(true);
+  };
+  const saveAlarm = () => {
+    const at = parseDateTimeLocal(alarmValue);
+    if (at === null) { setAlarmError('Укажите дату и время'); return; }
+    if (at <= Date.now()) { setAlarmError('Время уже прошло'); return; }
+    onSetAlarm(at);
+    setAlarmOpen(false);
+  };
   const runMenuAction = (action: () => void) => {
     setMenuAnchor(null);
     action();
@@ -203,6 +221,23 @@ export default function DeskCard({
         }} />
       )}
 
+      {/* Значок будильника: видно, что на карточке стоит напоминание и когда. */}
+      {typeof item.alarmAt === 'number' && (
+        <Box
+          role="img"
+          aria-label={`Будильник: ${new Date(item.alarmAt).toLocaleString()}`}
+          title={`Будильник: ${new Date(item.alarmAt).toLocaleString()}`}
+          sx={{
+            position: 'absolute', bottom: -10, left: -10, display: 'flex', alignItems: 'center', gap: '3px',
+            px: '6px', height: 22, borderRadius: 11, bgcolor: 'rgba(20,20,20,0.85)', color: '#ffd166',
+            fontSize: 11, boxShadow: '0 2px 6px rgba(0,0,0,0.4)', pointerEvents: 'none',
+          }}
+        >
+          <AccessTime sx={{ fontSize: 14 }} />
+          {new Date(item.alarmAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </Box>
+      )}
+
       {/* Кнопки в углу. Зрителю не показываем: он всё равно не может ни
           связать, ни убрать карточку, а серые кнопки только обещали бы
           возможность, которой нет. */}
@@ -248,7 +283,43 @@ export default function DeskCard({
             <MenuItem onClick={() => runMenuAction(() => onRotate(5))}>Повернуть вправо</MenuItem>
             <MenuItem onClick={() => runMenuAction(() => onScale(0.9))}>Уменьшить</MenuItem>
             <MenuItem onClick={() => runMenuAction(() => onScale(1.1))}>Увеличить</MenuItem>
+            <MenuItem onClick={() => runMenuAction(openAlarm)}>
+              {typeof item.alarmAt === 'number' ? 'Изменить будильник' : 'Будильник'}
+            </MenuItem>
+            {typeof item.alarmAt === 'number' && (
+              <MenuItem onClick={() => runMenuAction(() => onSetAlarm(null))}>Убрать будильник</MenuItem>
+            )}
           </Menu>
+          <Dialog
+            open={alarmOpen}
+            onClose={() => setAlarmOpen(false)}
+            maxWidth="xs"
+            fullWidth
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            <DialogTitle sx={{ fontSize: 16 }}>Будильник</DialogTitle>
+            <DialogContent>
+              <TextField
+                autoFocus fullWidth type="datetime-local" label="Когда зазвонить"
+                value={alarmValue}
+                onChange={(e) => { setAlarmValue(e.target.value); setAlarmError(''); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveAlarm(); } }}
+                error={!!alarmError}
+                helperText={alarmError || ' '}
+                InputLabelProps={{ shrink: true }}
+                sx={{ mt: 1 }}
+              />
+            </DialogContent>
+            <DialogActions>
+              {typeof item.alarmAt === 'number' && (
+                <Button color="error" onClick={() => { onSetAlarm(null); setAlarmOpen(false); }}>Убрать</Button>
+              )}
+              <Button onClick={() => setAlarmOpen(false)}>Отмена</Button>
+              <Button variant="contained" onClick={saveAlarm}>Поставить</Button>
+            </DialogActions>
+          </Dialog>
         </Box>
       )}
     </Box>

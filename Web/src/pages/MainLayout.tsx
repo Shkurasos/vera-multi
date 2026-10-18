@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
-import { Box, Button, IconButton, Typography, useMediaQuery } from '@mui/material';
+import { Box, Typography, useMediaQuery } from '@mui/material';
 import { useChatStore } from '../store/chatStore';
 import { useThemeStore } from '../store/themeStore';
 import { useMusicStore } from '../store/musicStore';
@@ -14,6 +14,8 @@ import ChatWallpaper from '../components/ChatWallpaper';
 import { useActiveWallpaperSpec, isLightColor } from '../hooks/useActiveWallpaper';
 import { usePetStore } from '../store/petStore';
 import PetArtwork from '../components/PetArtwork';
+import useMaxPetSize from '../hooks/useMaxPetSize';
+import usePetInteraction, { getPetDock } from '../hooks/usePetInteraction';
 
 // �������� ������ ������ � ���������������� � MusicPlayer.tsx
 const PLAYER_EXPANDED = 60;
@@ -25,12 +27,6 @@ const PLAYER_SIDE_COLLAPSED = 44;
 // viewport-ориентированное, поэтому работает одинаково на любых мониторах
 // (включая мультимониторные рабочие области; на мобильных учитываем
 // visualViewport, на десктопе — window-метрики, в т.ч. весь размер окна).
-function getMaxPetSize(): number {
-  if (typeof window === 'undefined') return 120;
-  const vw = window.visualViewport?.width ?? window.innerWidth;
-  const vh = window.visualViewport?.height ?? window.innerHeight;
-  return Math.max(48, Math.min(vw, vh) / 5);
-}
 
 export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTMLDivElement | null) => void }) {
   // �������� ���������: ����� �����/������ ������ �� ������ ��������������
@@ -44,7 +40,6 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
   // �������������� ������ ��������, ��� ��� 60+ ���������� � �������.
   const density = useUserSettingsStore((s) => s.layout.density);
   const radius = useUserSettingsStore((s) => s.layout.radius);
-  const bubbleRadius = useUserSettingsStore((s) => s.layout.bubbleRadius);
   const mobileNavPos = useUserSettingsStore((s) => s.layout.mobileNavPos);
   const playerPos = useUserSettingsStore((s) => s.layout.playerPos);
   const playerWidth = useUserSettingsStore((s) => s.layout.playerWidth);
@@ -56,101 +51,106 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
   const updatePetSettings = usePetStore((s) => s.updateSettings);
   // Максимальный размер питомца зависит от размера монитора (1/5 экрана,
   // viewport-ориентированно, с учётом мультимониторных рабочих областей).
-  const [maxPetSize, setMaxPetSize] = useState<number>(getMaxPetSize);
+  const maxPetSize = useMaxPetSize();
   // Размер питомца ограничен 1/5 экрана (viewport-ориентированно, мультимониторно).
   const petSize = equippedPet ? Math.min(equippedPet.settings.size, maxPetSize) : 0;
   const [petPosition, setPetPosition] = useState<{ x: number; y: number } | null>(null);
-  // Питомец живёт на экране: сам не пропадает, его можно только убрать (×)
-  // и вернуть чипом внизу. Скрытие локальное — настройки и экипировка не меняются.
-  const [petHidden, setPetHidden] = useState(false);
+  const [petReaction, setPetReaction] = useState(0);
+  const petOverlayRef = useRef<HTMLDivElement | null>(null);
+  const petBodyRef = useRef<HTMLDivElement | null>(null);
+  const petDock = getPetDock(petPosition || equippedPet?.settings || { x: 50, y: 50 });
+  const togglePlay = useMusicStore((s) => s.togglePlay);
+  const nextTrack = useMusicStore((s) => s.next);
+  const prevTrack = useMusicStore((s) => s.prev);
+  const applyPetPosition = useCallback((position: { x: number; y: number }) => {
+    const dock = getPetDock(position);
+    const overlay = petOverlayRef.current;
+    const body = petBodyRef.current;
+    if (overlay) {
+      overlay.style.left = `${position.x}%`;
+      overlay.style.top = `${position.y}%`;
+      overlay.style.transform = dock === 'top'
+        ? 'translate(-50%, -25%)'
+        : dock === 'bottom' ? 'translate(-50%, -75%)' : 'translate(-50%, -50%)';
+    }
+    if (body) body.style.transform = `rotate(${dock === 'left' ? 45 : dock === 'right' ? -45 : 0}deg)`;
+  }, []);
+  const petInteraction = usePetInteraction({
+    position: petPosition || equippedPet?.settings || { x: 50, y: 50 },
+    size: petSize,
+    onMove: applyPetPosition,
+    onSave: (position) => {
+      setPetPosition(position);
+      void updatePetSettings(position).catch(console.error);
+    },
+    onTap: () => {
+      setPetReaction((value) => value + 1);
+      togglePlay();
+    },
+    // Двойной тап: правая половина — следующий трек, левая — предыдущий.
+    // Первый тап уже переключил play/pause: next()/prev() сами ставят
+    // isPlaying: true, а если переключать некуда — возвращаем состояние,
+    // которое было до первого тапа.
+    onDoubleTap: (side) => {
+      setPetReaction((value) => value + 1);
+      const music = useMusicStore.getState();
+      if (!music.currentTrack || !music.queue.length) { togglePlay(); return; }
+      if (side === 'left') {
+        // prev() после 3 секунд лишь перематывает в начало — сбрасываем
+        // прогресс, чтобы двойной тап всегда уходил на предыдущий трек.
+        music.setProgress(0);
+        prevTrack();
+      } else nextTrack();
+    },
+  });
 
   useEffect(() => { loadChats(); }, []);
   useEffect(() => {
     setPetPosition(equippedPet ? { x: equippedPet.settings.x, y: equippedPet.settings.y } : null);
-  }, [equippedPet?.id, equippedPet?.settings.x, equippedPet?.settings.y]);
-  // Смена/снятие питомца сбрасывает скрытие — новый питомец появляется сразу.
-  useEffect(() => { setPetHidden(false); }, [equippedPet?.id]);
-
-  // Размер питомца пересчитывается при изменении окна (переход между
-  // мониторами, изменение разрешения, появление/скрытие панели задач и т.п.).
-  useEffect(() => {
-    const onResize = () => setMaxPetSize(getMaxPetSize());
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
+    if (equippedPet) applyPetPosition(equippedPet.settings);
+  }, [equippedPet?.id, equippedPet?.settings.x, equippedPet?.settings.y, applyPetPosition]);
 
   const petOverlay = equippedPet ? (
-    petHidden ? (
-      <Button
-        size="small"
-        onClick={() => setPetHidden(false)}
-        sx={{
-          position: 'fixed', right: 12, bottom: 12, zIndex: 31,
-          color: theme.text, bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
-          borderRadius: 999, px: 1.5, textTransform: 'none', fontSize: 12, lineHeight: 1.6,
-          boxShadow: '0 6px 18px rgba(0,0,0,.28)',
-          '&:hover': { bgcolor: theme.bgHover },
-        }}
-      >
-        Вернуть питомца
-      </Button>
-    ) : (
     <Box
-      onPointerDown={(event) => {
-        const startX = event.clientX;
-        const startY = event.clientY;
-        const initial = petPosition || equippedPet.settings;
-        let nextPosition = initial;
-        const move = (moveEvent: PointerEvent) => {
-          const dx = ((moveEvent.clientX - startX) / Math.max(window.innerWidth, 1)) * 100;
-          const dy = ((moveEvent.clientY - startY) / Math.max(window.innerHeight, 1)) * 100;
-          // Чтобы питомец всегда оставался виден на экране любого монитора,
-          // при перетаскивании не выходим за границы viewport.
-          const half = (petSize / 2) / Math.max(window.innerWidth, 1) * 100;
-          nextPosition = {
-            x: Math.max(half, Math.min(100 - half, initial.x + dx)),
-            y: Math.max(half, Math.min(100 - half, initial.y + dy)),
-          };
-          setPetPosition(nextPosition);
-        };
-        const stop = () => {
-          window.removeEventListener('pointermove', move);
-          window.removeEventListener('pointerup', stop);
-          if (nextPosition.x !== initial.x || nextPosition.y !== initial.y) void updatePetSettings(nextPosition);
-        };
-        window.addEventListener('pointermove', move);
-        window.addEventListener('pointerup', stop, { once: true });
-      }}
+      {...petInteraction}
+      ref={petOverlayRef}
+      role="button"
+      tabIndex={0}
+      aria-label="Питомец: нажмите — пауза/play, двойное нажатие справа — следующий трек, слева — предыдущий; можно перетащить"
       sx={{
         position: 'fixed',
         left: `${petPosition?.x ?? equippedPet.settings.x}%`,
         top: `${petPosition?.y ?? equippedPet.settings.y}%`,
-        transform: 'translate(-50%, -50%)',
+        transform: petDock === 'top' ? 'translate(-50%, -25%)' : petDock === 'bottom' ? 'translate(-50%, -75%)' : 'translate(-50%, -50%)',
+        width: petSize,
+        height: petSize,
+        overflow: 'visible',
         zIndex: 30,
         cursor: 'grab',
         touchAction: 'none',
         userSelect: 'none',
+        // Не даём браузеру рисовать белую рамку фокуса вокруг питомца:
+        // он фокусируется по клику/Tab, а после нажатия любой клавиши
+        // :focus-visible подсвечивает его квадратом — жалоба: «около него
+        // появляется квадратная белая рамка».
+        outline: 'none',
+        '&:focus, &:focus-visible': { outline: 'none' },
       }}
       >
-      <Box sx={{ position: 'relative', width: petSize, height: petSize }}>
-        <PetArtwork petId={equippedPet.id} size={petSize} />
-        <IconButton
-          size="small"
-          aria-label="Скрыть питомца"
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={() => setPetHidden(true)}
-          sx={{ position: 'absolute', top: 0, right: 0, color: theme.text, bgcolor: theme.bgHeader, width: 20, height: 20, fontSize: 14 }}
-        >
-          ×
-        </IconButton>
+      <Box ref={petBodyRef} sx={{
+        position: 'relative', width: petSize, height: petSize, overflow: 'visible',
+        transform: `rotate(${petDock === 'left' ? 45 : petDock === 'right' ? -45 : 0}deg)`,
+        transition: 'transform 180ms ease-out',
+        '@media (prefers-reduced-motion: reduce)': { transition: 'none' },
+      }}>
+        <PetArtwork key={equippedPet.id} petId={equippedPet.id} size={petSize} reaction={petReaction} />
       </Box>
-      {equippedPet.settings.name && (
-        <Typography sx={{ color: theme.text, textAlign: 'center', fontSize: 11, fontFamily: equippedPet.settings.font }}>
+      {equippedPet.settings.name && !petDock && (
+        <Typography sx={{ position: 'absolute', top: '100%', width: '100%', color: theme.text, textAlign: 'center', fontSize: 11, fontFamily: equippedPet.settings.font }}>
           {equippedPet.settings.name}
         </Typography>
       )}
     </Box>
-    )
   ) : null;
 
   // ��������� ��������� � ������ ��� CSS-���������� ��� ����� ����������.
@@ -159,9 +159,8 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
     const root = document.documentElement;
     root.style.setProperty('--vera-density', String(densityGap));
     root.style.setProperty('--vera-radius', `${radius}px`);
-    root.style.setProperty('--vera-bubble-radius', `${bubbleRadius}px`);
     root.style.setProperty('--vera-nav-pos', mobileNavPos);
-  }, [density, radius, bubbleRadius, mobileNavPos]);
+  }, [density, radius, mobileNavPos]);
 
   const onChatList = location.pathname === '/';
   const [viewport, setViewport] = useState<{ height: number; top: number } | null>(null);

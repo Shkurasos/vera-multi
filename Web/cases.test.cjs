@@ -87,7 +87,8 @@ test('every server reward has matching client pieces, rarity and weight', () => 
     }
   }
   for (const definition of require('./src/store/cases.json')) {
-    const packRewards = definition.rewards.filter(reward => !reward.key.startsWith('pet-'));
+    // Скины реакций (rx-…) проверяются в reactionSkins.test.cjs.
+    const packRewards = definition.rewards.filter(reward => !reward.key.startsWith('pet-') && !reward.key.startsWith('rx-'));
     const petRewards = definition.rewards.filter(reward => reward.key.startsWith('pet-'));
     const pool = casePacks(definition.id);
     assert.equal(pool.length, packRewards.length, definition.id);
@@ -96,8 +97,8 @@ test('every server reward has matching client pieces, rarity and weight', () => 
       assert.ok(pool.some(pack => pack.id === drawPack(0, definition.id).id));
       assert.ok(pool.some(pack => pack.id === drawPack(0.999999, definition.id).id));
     } else {
-      // Кейс только с питомцами (например, case-pets) — паков в нём нет.
-      assert.ok(petRewards.length > 0, definition.id);
+      // Кейс только с питомцами (case-pets) или только со скинами реакций — паков в нём нет.
+      assert.ok(petRewards.length > 0 || definition.rewards.every(r => r.key.startsWith('rx-')), definition.id);
     }
     for (const reward of packRewards) {
       assert.ok(!seenPacks.has(reward.key));

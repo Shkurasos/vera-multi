@@ -13,6 +13,18 @@ import {
 } from './ThemeSettingsPanels';
 import { autoBubbleGradient, regenerateAutoGradient, bubbleBackground } from '../utils/bubbleGradient';
 
+// ─── Последняя вкладка редактора ──────────────────────────────────────────────
+type EditorTab = 'theme' | 'community' | 'wallpaper' | 'sound' | 'ui' | 'anim' | 'look' | 'layout';
+const EDITOR_TABS: readonly EditorTab[] = ['theme', 'community', 'wallpaper', 'sound', 'ui', 'anim', 'look', 'layout'];
+const LAST_TAB_KEY = 'vera-theme-editor-tab';
+function readLastEditorTab(): EditorTab {
+  try {
+    const saved = localStorage.getItem(LAST_TAB_KEY);
+    if (saved && (EDITOR_TABS as readonly string[]).includes(saved)) return saved as EditorTab;
+  } catch {}
+  return 'theme';
+}
+
 // ─── SVG паттерны ─────────────────────────────────────────────────────────────
 function svgUrl(content: string) {
   return 'url("data:image/svg+xml,' + encodeURIComponent(content) + '")';
@@ -73,32 +85,46 @@ interface ColorFieldProps {
   onChange: (v: string) => void;
 }
 
-function ColorField({ label, value, onChange }: ColorFieldProps) {
+/** Строка настройки в духе CS2: название слева, элемент управления справа. */
+function settingRowStyle(border: string): React.CSSProperties {
+  return {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    gap: 16, padding: '12px 2px', borderBottom: '1px solid ' + border,
+  };
+}
+
+function ColorField({ label, value, onChange, bare }: ColorFieldProps) {
+  const theme = useThemeStore((s) => s.theme);
   const safeColor = value && value.match(/^#[0-9a-fA-F]{3,8}$/) ? value : '#888888';
+  const rowStyle: React.CSSProperties = bare
+    ? { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, padding: '6px 0 0' }
+    : settingRowStyle(theme.border);
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-      <input
-        type="color"
-        value={safeColor}
-        onChange={e => onChange(e.target.value)}
-        style={{ width: 32, height: 26, padding: 0, border: 'none', borderRadius: 4, cursor: 'pointer', background: 'none', flexShrink: 0 }}
-      />
-      <span style={{ fontSize: 12, flex: 1, whiteSpace: 'nowrap' }}>{label}</span>
-      <input
-        type="text"
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        style={{
-          width: 100, fontSize: 11, padding: '2px 6px', borderRadius: 4,
-          border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.07)',
-          color: 'inherit', fontFamily: 'monospace',
-        }}
-      />
+    <div style={rowStyle}>
+      {!bare && <span style={{ fontSize: 14.5, opacity: 0.92, minWidth: 0 }}>{label}</span>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+        <input
+          type="color"
+          value={safeColor}
+          onChange={e => onChange(e.target.value)}
+          style={{ width: 36, height: 28, padding: 0, border: '1px solid ' + theme.border, borderRadius: 5, cursor: 'pointer', background: 'none' }}
+        />
+        <input
+          type="text"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          style={{
+            width: 104, fontSize: 12.5, fontWeight: 700, textAlign: 'center', padding: '5px 8px', borderRadius: 5,
+            border: '1px solid ' + theme.border, background: theme.bgInput,
+            color: theme.text, fontFamily: 'monospace', letterSpacing: '0.04em', textTransform: 'uppercase', boxSizing: 'border-box',
+          }}
+        />
+      </div>
     </div>
   );
 }
 
-interface ColorFieldProps { label: string; value: string; onChange: (v: string) => void }
+interface ColorFieldProps { label: string; value: string; onChange: (v: string) => void; bare?: boolean }
 
 /**
  * Цвет пузыря вместе с галочкой «градиент».
@@ -124,15 +150,16 @@ function BubbleColorField({
   // Считаем, что градиент нам по силам, ровно если из цвета выйдет не пустота.
   const canGradient = autoBubbleGradient(color) !== color;
   const toggleGradient = () => onGradient(on ? '' : autoBubbleGradient(color));
+  const theme = useThemeStore((s) => s.theme);
 
   return (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-        <span style={{ fontSize: 12, flex: 1 }}>{label}</span>
+    <div style={{ padding: '10px 2px 12px', borderBottom: '1px solid ' + theme.border }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 14.5, opacity: 0.92, flex: 1, minWidth: 120 }}>{label}</span>
         <label
           style={{
             display: 'flex', alignItems: 'center', gap: 5, cursor: canGradient ? 'pointer' : 'default',
-            fontSize: 11, opacity: canGradient ? 0.9 : 0.4, userSelect: 'none', flexShrink: 0,
+            fontSize: 12, opacity: canGradient ? 0.9 : 0.4, userSelect: 'none', flexShrink: 0,
           }}
           title={canGradient ? 'Градиент вместо сплошного цвета' : 'Этот цвет нельзя превратить в градиент'}
         >
@@ -148,6 +175,7 @@ function BubbleColorField({
       </div>
       <ColorField
         label=""
+        bare
         value={on ? autoBubbleGradient(color) : color}
         onChange={v => {
           // Галочка снята — поле правит сплошной цвет. Стоит — градиент
@@ -157,7 +185,7 @@ function BubbleColorField({
         }}
       />
       {on && (
-        <div style={{ fontSize: 11, opacity: 0.55, marginTop: 2 }}>
+        <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4 }}>
           Галочка снята — снова сплошной цвет. Свой CSS можно вписать в поле ниже.
         </div>
       )}
@@ -304,10 +332,19 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
-  // Вкладки редактора: первая — сама тема, остальные — настройки, которые
-  // живут в теме (обои, звук, иконки, анимации, внешний вид, макет).
-  // В режиме темы чата (isChat) эти настройки не относятся к чату — вкладок нет.
-  const [tab, setTab] = useState<'theme' | 'community' | 'wallpaper' | 'sound' | 'ui' | 'anim' | 'look' | 'layout'>('theme');
+  // Вкладки редактора: первая — сама тема, остальные — настройки (обои, звук,
+  // иконки, анимации, внешний вид, макет). В режиме чата доступна только вкладка
+  // «Тема» — палитра и фон чата. Остальные настройки (обои, звук, шрифт)
+  // настраиваются через меню чата отдельно (они в per-chat сторах).
+  // Последняя открытая вкладка запоминается (только для темы приложения),
+  // чтобы редактор открывался там, где его закрыли.
+  const [tab, setTabState] = useState<EditorTab>(() => (isChat ? 'theme' : readLastEditorTab()));
+  const setTab = useCallback((next: EditorTab) => {
+    setTabState(next);
+    if (!isChat) {
+      try { localStorage.setItem(LAST_TAB_KEY, next); } catch {}
+    }
+  }, [isChat]);
 
   const handleAiGenerate = async () => {
     const desc = aiPrompt.trim();
@@ -461,10 +498,10 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
     borderTop: '1px solid ' + theme.border,
     background: 'rgba(0,0,0,0.18)',
   };
+  // Заголовок секции — как «Video» в настройках CS2: спокойный текст
+  // над группой строк, без рамок и заглавных букв.
   const sectionLabel: React.CSSProperties = {
-    fontSize: 11, opacity: 0.55, textTransform: 'uppercase',
-    letterSpacing: '0.06em', marginBottom: 10, marginTop: 24, fontWeight: 700,
-    paddingBottom: 7, borderBottom: '1px solid ' + theme.border,
+    fontSize: 13.5, color: theme.textSec, marginBottom: 2, marginTop: 26, fontWeight: 500,
   };
   const inputStyle: React.CSSProperties = {
     width: '100%', padding: '5px 9px', borderRadius: 7,
@@ -485,7 +522,7 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
     color: theme.text, boxSizing: 'border-box',
   };
   const badgeDot: React.CSSProperties = {
-    width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+    width: 8, height: 8, borderRadius: 2, flexShrink: 0,
   };
   // В режиме чата в сторе лежит тема приложения, а не чата — показывать её
   // как «сейчас стоит» было бы враньём, поэтому там только имя черновика.
@@ -499,42 +536,43 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
     ['theme', 'Тема'], ['community', 'Community Themes'], ['wallpaper', 'Обои'], ['sound', 'Звук'],
     ['ui', 'Иконки и стиль'], ['anim', 'Анимации'], ['look', 'Внешний вид'], ['layout', 'Макет'],
   ];
-  // Разделы — вертикальным списком слева, содержимое — справа. Горизонтальная
-  // полоса из семи кнопок в 86vh выглядела сплошной кашей: в ней не найти
-  // нужный раздел, а где ты сейчас — тоже не видно.
-  const editorLayout: React.CSSProperties = { display: 'flex', gap: 18, alignItems: 'flex-start' };
-  const navRail: React.CSSProperties = {
-    width: 188, flexShrink: 0, alignSelf: 'stretch', display: 'flex', flexDirection: 'column',
-    gap: 2, paddingRight: 16, borderRight: '1px solid ' + theme.border,
-  };
-  const navItem: React.CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '9px 10px',
-    borderRadius: 9, border: 'none', background: 'transparent', color: theme.textSec,
-    fontSize: 13.5, textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
-  };
-  const editorContent: React.CSSProperties = { flex: 1, minWidth: 0 };
+  // Разделы — горизонтальной полосой сверху, как в настройках CS2: заглавные
+  // буквы, активный раздел в акцентном прямоугольнике, разделители «|».
+  // Так весь список настроек всегда на виду и не нужно метаться между
+  // левой колонкой и содержимым.
+  // Контент — колонкой по центру, с ограничением по ширине: на широком
+  // экране строки растягивались бы в бесконечность, а в CS2 список настроек
+  // занимает аккуратную среднюю полосу.
+  const editorContent: React.CSSProperties = { flex: 1, minWidth: 0, width: '100%', maxWidth: 1080, margin: '0 auto' };
   const nav = (
-    <nav style={navRail}>
-      {(!isChat ? TABS : ([['theme', 'Тема']] as [typeof tab, string][])).map(([id, label]) => (
-        <button
-          key={id}
-          onClick={() => setTab(id)}
-          style={{
-            ...navItem,
-            ...(tab === id ? { background: theme.accent + '1F', color: theme.accent, fontWeight: 600 } : {}),
-          }}
-        >
-          <span style={{
-            width: 3, height: 14, borderRadius: 2, flexShrink: 0,
-            background: tab === id ? theme.accent : 'transparent',
-          }} />
-          {label}
-        </button>
-      ))}
+    <nav style={{
+      flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center',
+      gap: 4, padding: '10px 16px 8px', borderBottom: '1px solid ' + theme.border,
+      background: 'rgba(0,0,0,0.18)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
+        {(!isChat ? TABS : ([['theme', 'Тема']] as [typeof tab, string][])).map(([id, label], i) => (
+          <React.Fragment key={id}>
+            {i > 0 && <span aria-hidden style={{ color: theme.textSec, opacity: 0.35, margin: '0 10px', fontSize: 12, userSelect: 'none' }}>|</span>}
+            <button
+              onClick={() => setTab(id)}
+              style={{
+                border: 'none', cursor: 'pointer', padding: '8px 14px', borderRadius: 6,
+                background: tab === id ? theme.accent : 'transparent',
+                color: tab === id ? '#fff' : theme.textSec,
+                fontSize: 12.5, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
+                fontFamily: 'inherit', whiteSpace: 'nowrap', lineHeight: 1.2,
+                transition: 'background .15s, color .15s',
+              }}
+              onMouseEnter={e => { if (tab !== id) e.currentTarget.style.color = theme.text; }}
+              onMouseLeave={e => { if (tab !== id) e.currentTarget.style.color = theme.textSec; }}
+            >{label}</button>
+          </React.Fragment>
+        ))}
+      </div>
       {!isChat && (
-        <div style={{ fontSize: 11, lineHeight: 1.45, opacity: 0.5, marginTop: 'auto', paddingTop: 16, paddingRight: 2 }}>
-          Обои, звук, иконки, анимации, внешний вид и макет — настройки этой
-          темы. У каждой темы они свои.
+        <div style={{ fontSize: 11, lineHeight: 1.4, opacity: 0.5, textAlign: 'center', maxWidth: 720 }}>
+          Обои, звук, иконки, анимации, внешний вид и макет — настройки этой темы. У каждой темы свои.
         </div>
       )}
     </nav>
@@ -546,7 +584,7 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
         {/* Шапка */}
         <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 20px', borderBottom: '1px solid ' + theme.border }}>
           <div style={{ minWidth: 0 }}>
-            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>🎨 Редактор темы</h2>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{isChat ? '🎨 Оформление чата' : '🎨 Редактор темы'}</h2>
             {/* Какая тема стоит и какая настраивается — видно в ЛЮБОМ разделе,
                 а не только на вкладке «Тема». Иначе в «Обоях» или «Звуке» было
                 невозможно понять, к какой теме относится правка. */}
@@ -587,9 +625,9 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
           </div>
         </div>
 
+        {nav}
+
         <div style={plateBody}>
-         <div style={editorLayout}>
-         {nav}
          <div style={editorContent}>
          {tab === 'theme' && (
          <>
@@ -608,7 +646,7 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
                      borderRadius: 8, padding: '3px 10px', fontSize: 13,
                    }}
                  >
-                   <div style={{ width: 10, height: 10, borderRadius: '50%', background: ct.accent, marginRight: 2, flexShrink: 0 }} />
+                   <div style={{ width: 10, height: 10, borderRadius: 3, background: ct.accent, marginRight: 2, flexShrink: 0 }} />
                    <span style={{ cursor: 'pointer' }} onClick={() => { setTheme(ct.id); handleLoad(ct); }}>{ct.name}</span>
                    <button onClick={() => handleLoad(ct)} title="Редактировать" style={{ background: 'none', border: 'none', color: theme.accent, cursor: 'pointer', fontSize: 12, padding: '0 2px', lineHeight: 1 }}>✏</button>
                    <button onClick={() => handleDelete(ct.id)} title="Удалить" style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: 12, padding: '0 2px', lineHeight: 1 }}>✕</button>
@@ -636,7 +674,7 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
                    color: theme.text, cursor: 'pointer',
                  }}
                >
-                 <span style={{ width: 10, height: 10, borderRadius: '50%', background: bt.accent }} />
+                 <span style={{ width: 10, height: 10, borderRadius: 3, background: bt.accent }} />
                  {bt.name}
                </button>
              ))}
@@ -723,8 +761,9 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
         </details>
         )}
 
-        {/* Основная сетка */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18, alignItems: 'start' }}>
+        {/* Основная сетка: одная колонка строк во всю ширину — как в CS2:
+            слева название настройки, справа её значение или контрол. */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}>
 
           {/* Левая колонка */}
           <div>
@@ -813,38 +852,45 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
           {/* Правая колонка */}
           <div>
             <div style={sectionLabel}>Паттерн фона чата</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
-              {PATTERN_LIST.filter(p => p.id !== 'none').map(p => (
-                <label
-                  key={p.id}
-                  onClick={() => togglePattern(p.id)}
-                  style={{
-                    ...patternBtnBase,
-                    background: patternIds.includes(p.id) ? theme.accent : theme.bgHover,
-                    color: patternIds.includes(p.id) ? '#fff' : theme.text,
-                    borderColor: patternIds.includes(p.id) ? theme.accent : theme.border,
-                  }}
-                ><input type="checkbox" checked={patternIds.includes(p.id)} readOnly /> {p.label}</label>
-              ))}
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', padding: '12px 2px', borderBottom: '1px solid ' + theme.border }}>
+              <span style={{ fontSize: 14.5, opacity: 0.92, paddingTop: 5 }}>Рисунки</span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, justifyContent: 'flex-end', maxWidth: 420 }}>
+                {PATTERN_LIST.filter(p => p.id !== 'none').map(p => (
+                  <label
+                    key={p.id}
+                    onClick={() => togglePattern(p.id)}
+                    style={{
+                      ...patternBtnBase,
+                      background: patternIds.includes(p.id) ? theme.accent : theme.bgHover,
+                      color: patternIds.includes(p.id) ? '#fff' : theme.text,
+                      borderColor: patternIds.includes(p.id) ? theme.accent : theme.border,
+                    }}
+                  ><input type="checkbox" checked={patternIds.includes(p.id)} readOnly /> {p.label}</label>
+                ))}
+              </div>
             </div>
-            <Button size="small" variant="outlined" onClick={() => setDraft(d => ({ ...d, chatPattern: randomMixedPattern(patternIds, patternColor) || undefined }))} sx={{ textTransform: 'none', color: theme.accent }}>🎲 Перемешать рисунки</Button>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 16, padding: '12px 2px', borderBottom: '1px solid ' + theme.border }}>
+              <Button size="small" variant="outlined" onClick={() => setDraft(d => ({ ...d, chatPattern: randomMixedPattern(patternIds, patternColor) || undefined }))} sx={{ textTransform: 'none', color: theme.accent }}>🎲 Перемешать рисунки</Button>
+            </div>
 
             {patternId !== 'none' && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                <span style={{ fontSize: 12 }}>Цвет паттерна</span>
-                <input
-                  type="color"
-                  value={patternColor}
-                  onChange={e => { setPatternColor(e.target.value); setDraft(d => ({ ...d, chatPattern: randomMixedPattern(patternIds, e.target.value) || undefined })); }}
-                  style={{ width: 34, height: 26, padding: 0, border: 'none', borderRadius: 4, cursor: 'pointer' }}
-                />
-                <span style={{ fontSize: 11, fontFamily: 'monospace', opacity: 0.7 }}>{patternColor}</span>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '12px 2px', borderBottom: '1px solid ' + theme.border }}>
+                <span style={{ fontSize: 14.5, opacity: 0.92 }}>Цвет паттерна</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <input
+                    type="color"
+                    value={patternColor}
+                    onChange={e => { setPatternColor(e.target.value); setDraft(d => ({ ...d, chatPattern: randomMixedPattern(patternIds, e.target.value) || undefined })); }}
+                    style={{ width: 36, height: 28, padding: 0, border: '1px solid ' + theme.border, borderRadius: 5, cursor: 'pointer', background: 'none' }}
+                  />
+                  <span style={{ fontSize: 12.5, fontFamily: 'monospace', opacity: 0.7, fontWeight: 700, textTransform: 'uppercase' }}>{patternColor}</span>
+                </div>
               </div>
             )}
 
-            <div style={{ marginBottom: 12, marginTop: 10 }}>
-              <div style={{ ...sectionLabel, marginBottom: 6 }}>Размер паттерна</div>
-              <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', padding: '12px 2px', borderBottom: '1px solid ' + theme.border }}>
+              <span style={{ fontSize: 14.5, opacity: 0.92 }}>Размер паттерна</span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
                 <TextField
                   size="small"
                   type="number"
@@ -864,75 +910,83 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
                   sx={{ width: 120 }}
                 />
               </div>
-              <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4 }}>
-                Для нескольких рисунков размеры распределяются между этими значениями
-              </div>
+            </div>
+            <div style={{ fontSize: 11, opacity: 0.55, marginTop: 6, marginLeft: 2 }}>
+              Для нескольких рисунков размеры распределяются между этими значениями
             </div>
 
-            <div style={{ marginBottom: 12, marginTop: 10 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+            <div style={{ padding: '12px 2px', borderBottom: '1px solid ' + theme.border, marginTop: 8 }}>
+              <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, cursor: 'pointer' }}>
+                <span style={{ fontSize: 14.5, opacity: 0.92 }}>Отключить фоновые пузыри (blobs)</span>
                 <input
                   type="checkbox"
                   checked={draft.disableBackgroundBlobs || false}
                   onChange={e => setDraft(d => ({ ...d, disableBackgroundBlobs: e.target.checked }))}
-                  style={{ width: 16, height: 16, cursor: 'pointer' }}
+                  style={{ width: 17, height: 17, cursor: 'pointer', flexShrink: 0, accentColor: theme.accent }}
                 />
-                <span style={{ color: theme.text }}>Отключить фоновые пузыри (blobs)</span>
               </label>
-              <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4, marginLeft: 24 }}>
+              <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4 }}>
                 Убирает размытые светящиеся пузыри на заднем плане чата
               </div>
             </div>
 
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+            <div style={{ padding: '12px 2px', borderBottom: '1px solid ' + theme.border }}>
+              <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, cursor: 'pointer' }}>
+                <span style={{ fontSize: 14.5, opacity: 0.92 }}>Отключить фоновое свечение</span>
                 <input
                   type="checkbox"
                   checked={draft.disableBackgroundGlow || false}
                   onChange={e => setDraft(d => ({ ...d, disableBackgroundGlow: e.target.checked }))}
-                  style={{ width: 16, height: 16, cursor: 'pointer' }}
+                  style={{ width: 17, height: 17, cursor: 'pointer', flexShrink: 0, accentColor: theme.accent }}
                 />
-                <span style={{ color: theme.text }}>Отключить фоновое свечение</span>
               </label>
-              <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4, marginLeft: 24 }}>
+              <div style={{ fontSize: 11, opacity: 0.55, marginTop: 4 }}>
                 Убирает мягкое мятное свечение за всеми слоями
               </div>
             </div>
 
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, marginBottom: 8, color: theme.text }}>Фоновое свечение</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <span style={{ fontSize: 12 }}>Цвет</span>
+            <div style={sectionLabel}>Фоновое свечение</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '12px 2px', borderBottom: '1px solid ' + theme.border }}>
+              <span style={{ fontSize: 14.5, opacity: 0.92 }}>Цвет</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <input
                   type="color"
                   value={draft.backgroundGlowColor || '#8FE3CF'}
                   onChange={e => setDraft(d => ({ ...d, backgroundGlowColor: e.target.value }))}
-                  style={{ width: 34, height: 26, padding: 0, border: 'none', borderRadius: 4, cursor: 'pointer' }}
+                  style={{ width: 36, height: 28, padding: 0, border: '1px solid ' + theme.border, borderRadius: 5, cursor: 'pointer', background: 'none' }}
                 />
-                <span style={{ fontSize: 11, fontFamily: 'monospace', opacity: 0.7 }}>{draft.backgroundGlowColor || '#8FE3CF'}</span>
+                <span style={{ fontSize: 12.5, fontFamily: 'monospace', opacity: 0.7, fontWeight: 700, textTransform: 'uppercase' }}>{draft.backgroundGlowColor || '#8FE3CF'}</span>
               </div>
-              <div style={{ fontSize: 12, marginBottom: 6, color: theme.textSec }}>
-                Интенсивность: {Math.round((draft.backgroundGlowIntensity ?? 0.18) * 100)}%
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '12px 2px', borderBottom: '1px solid ' + theme.border }}>
+              <span style={{ fontSize: 14.5, opacity: 0.92 }}>Интенсивность</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={Math.round((draft.backgroundGlowIntensity ?? 0.18) * 100)}
+                  onChange={e => setDraft(d => ({ ...d, backgroundGlowIntensity: parseInt(e.target.value, 10) / 100 }))}
+                  style={{ width: 200, cursor: 'pointer', accentColor: theme.accent }}
+                />
+                <span style={{
+                  fontSize: 13, fontWeight: 600, minWidth: 52, textAlign: 'center',
+                  border: '1px solid ' + theme.border, borderRadius: 5, padding: '4px 6px', background: theme.bgInput,
+                }}>
+                  {Math.round((draft.backgroundGlowIntensity ?? 0.18) * 100)}%
+                </span>
               </div>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={Math.round((draft.backgroundGlowIntensity ?? 0.18) * 100)}
-                onChange={e => setDraft(d => ({ ...d, backgroundGlowIntensity: parseInt(e.target.value, 10) / 100 }))}
-                style={{ width: '100%', cursor: 'pointer' }}
-              />
             </div>
 
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, marginBottom: 8, color: theme.text }}>Отделка поверхностей (Finish)</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '12px 2px', borderBottom: '1px solid ' + theme.border, marginTop: 8 }}>
+              <span style={{ fontSize: 14.5, opacity: 0.92 }}>Отделка поверхностей (Finish)</span>
               <select
                 value={draft.finish || 'solid'}
                 onChange={e => setDraft(d => ({ ...d, finish: e.target.value as any }))}
                 style={{
-                  width: '100%', padding: '6px 10px', borderRadius: 6, fontSize: 13,
+                  padding: '7px 10px', borderRadius: 6, fontSize: 13, minWidth: 210, flexShrink: 0,
                   border: `1px solid ${theme.border}`, background: theme.bgInput, color: theme.text,
-                  cursor: 'pointer', marginBottom: 10,
+                  cursor: 'pointer', fontFamily: 'inherit', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 600,
                 }}
               >
                 <option value="solid">Обычная (Solid)</option>
@@ -940,22 +994,28 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
                 <option value="matte">Матовая (Matte)</option>
                 <option value="metal">Металлик (Metal)</option>
               </select>
-              {draft.finish && draft.finish !== 'solid' && (
-                <div style={{ marginTop: 8 }}>
-                  <div style={{ fontSize: 12, marginBottom: 6, color: theme.textSec }}>
-                    Интенсивность: {Math.round((draft.finishAmount ?? 0.5) * 100)}%
-                  </div>
+            </div>
+            {draft.finish && draft.finish !== 'solid' && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '12px 2px', borderBottom: '1px solid ' + theme.border }}>
+                <span style={{ fontSize: 14.5, opacity: 0.92 }}>Интенсивность</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
                   <input
                     type="range"
                     min="0"
                     max="100"
                     value={Math.round((draft.finishAmount ?? 0.5) * 100)}
                     onChange={e => setDraft(d => ({ ...d, finishAmount: parseInt(e.target.value) / 100 }))}
-                    style={{ width: '100%', cursor: 'pointer' }}
+                    style={{ width: 200, cursor: 'pointer', accentColor: theme.accent }}
                   />
+                  <span style={{
+                    fontSize: 13, fontWeight: 600, minWidth: 52, textAlign: 'center',
+                    border: '1px solid ' + theme.border, borderRadius: 5, padding: '4px 6px', background: theme.bgInput,
+                  }}>
+                    {Math.round((draft.finishAmount ?? 0.5) * 100)}%
+                  </span>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
             <div style={sectionLabel}>Превью чата</div>
             <div style={{
@@ -1044,7 +1104,6 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
           </ThemeSettingsLayer>
         )}
          </div>
-         </div>
         </div>
 
         {/* Кнопки */}
@@ -1055,20 +1114,25 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
           <button
             onClick={() => setDraft(d => ({ ...d, id: makeId(), name: d.name + ' (копия)' }))}
             style={{
-              padding: '8px 16px', borderRadius: 8,
+              padding: '9px 18px', borderRadius: 6,
               border: '1px solid ' + theme.border,
               background: 'transparent', color: theme.text,
-              cursor: 'pointer', fontSize: 13,
+              cursor: 'pointer', fontSize: 12, fontWeight: 700,
+              letterSpacing: '0.06em', textTransform: 'uppercase', fontFamily: 'inherit',
+              transition: 'border-color .15s',
             }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = theme.textSec; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = theme.border; }}
           >
             Сохранить как копию
           </button>
           <button
             onClick={handleSave}
             style={{
-              padding: '8px 20px', borderRadius: 8, border: 'none',
+              padding: '9px 22px', borderRadius: 6, border: 'none',
               background: theme.accent, color: '#fff',
-              cursor: 'pointer', fontSize: 13, fontWeight: 600,
+              cursor: 'pointer', fontSize: 12, fontWeight: 700,
+              letterSpacing: '0.06em', textTransform: 'uppercase', fontFamily: 'inherit',
             }}
           >
             💾 Сохранить и применить

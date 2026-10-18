@@ -134,7 +134,7 @@ export default function UserProfileModal({ user, open, onClose }: Props) {
           bgcolor: 'rgba(0,0,0,0.35)', '&:hover': { bgcolor: 'rgba(0,0,0,0.55)' },
         }}><Close /></IconButton>
       </Box>
-      {/* Питомец профиля «выглядывает» из-под шапки справа (декор, без кликов). */}
+      {/* Питомец выглядывает из-за правого края с наклоном к профилю на 45°. */}
       {(() => {
         const peek = isMe ? myPet : (remotePet?.id ? remotePet : null);
         if (!peek) return null;
@@ -146,12 +146,16 @@ export default function UserProfileModal({ user, open, onClose }: Props) {
               position: 'absolute',
               right: -Math.round(peekSize * 0.35),
               top: '46%',
+              transform: 'translateY(-50%)',
               zIndex: 1,
               pointerEvents: 'none',
               animation: 'veraPetPeekIn .7s ease both, veraPetPeekSway 4s ease-in-out .7s infinite',
+              '@media (prefers-reduced-motion: reduce)': { animation: 'none' },
             }}
           >
-            <PetArtwork petId={peek.id} size={peekSize} />
+            <Box sx={{ transform: 'rotate(-45deg)', transformOrigin: 'center' }}>
+              <PetArtwork petId={peek.id} size={peekSize} />
+            </Box>
           </Box>
         );
       })()}

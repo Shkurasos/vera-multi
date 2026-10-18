@@ -64,6 +64,11 @@ export interface DeskItem {
    * пересобирать дерево на каждое движение мыши.
    */
   folderId?: string;
+  /**
+   * Будильник карточки: момент (ms since epoch), когда доска зазвенит.
+   * Нет поля — будильник не стоит. Хранится в самой доске, поэтому общий.
+   */
+  alarmAt?: number;
   createdAt: number;
 }
 
@@ -139,6 +144,48 @@ export function emptyBoard(): DeskBoard {
  */
 export function isDeskName(name?: string | null): boolean {
   return /^\s*\|/.test(name || '');
+}
+
+/** Вид «особого» чата: доска улик или совместный холст. */
+export type ChatBoardKind = 'desk' | 'whiteboard';
+
+/** Команда в начале названия, которая задаёт вид чата при создании. */
+export const BOARD_COMMANDS: Record<ChatBoardKind, string> = { desk: '/desk', whiteboard: '/canvas' };
+
+/**
+ * Разобрать команду в начале названия: «/desk Дело» — доска, «/canvas Рисунки» — холст.
+ *
+ * Команда нужна только в момент создания. Дальше вид хранится отдельно
+ * (chat.kind), а в названии команды нет, поэтому переименование не может
+ * превратить обычный чат в доску или обратно. «/холст» и «/deskx» — не команды.
+ */
+export function splitBoardPrefix(raw?: string | null): { kind: ChatBoardKind | null; name: string } {
+  const text = String(raw || '').trim();
+  const command = /^\/(desk|canvas)(?=\s|$)/i.exec(text);
+  if (!command) return { kind: null, name: text };
+  const kind: ChatBoardKind = command[1].toLowerCase() === 'desk' ? 'desk' : 'whiteboard';
+  return { kind, name: text.slice(command[0].length).trim() };
+}
+
+/** Вид чата, который получится из названия в диалоге создания. */
+export function creationKind(raw?: string | null): 'channel' | ChatBoardKind | null {
+  if (String(raw || '').trim().startsWith('!')) return 'channel';
+  return splitBoardPrefix(raw).kind;
+}
+
+/** Убрать из нового названия команды вида: переименование вид не меняет. */
+export function stripKindCommand(raw?: string | null): string {
+  return splitBoardPrefix(String(raw || '').trim().replace(/^!+/, '')).name;
+}
+
+/** Чат — доска улик. Смотрим на сохранённый вид, а не на название. */
+export function isDeskChat(chat?: { kind?: string | null } | null): boolean {
+  return chat?.kind === 'desk';
+}
+
+/** Чат — совместный холст. Смотрим на сохранённый вид, а не на название. */
+export function isWhiteboardChat(chat?: { kind?: string | null } | null): boolean {
+  return chat?.kind === 'whiteboard';
 }
 
 /**
@@ -442,4 +489,58 @@ export function moveFolder(board: DeskBoard, folderId: string, x: number, y: num
 /** Карточки папки — нужно, чтобы отрисовать их поверх неё. */
 export function itemsOfFolder(board: DeskBoard, folderId: string): DeskItem[] {
   return board.items.filter((i) => i.folderId === folderId);
+}
+
+// ── Будильник карточки ───────────────────────────────────────────────────────
+
+/**
+ * Поставить (at — число) или снять (null) будильник карточки.
+ * Папкам будильник не ставится: у них нет содержимого, о котором напоминать.
+ */
+export function setItemAlarm(board: DeskBoard, id: string, at: number | null): DeskBoard {
+  const item = board.items.find((i) => i.id === id);
+  if (!item || item.kind === 'folder') return board;
+  const valid = at !== null && Number.isFinite(at) && at > 0;
+  return {
+    ...board,
+    items: board.items.map((i) => {
+      if (i.id !== id) return i;
+      const { alarmAt: _old, ...rest } = i;
+      return valid ? { ...rest, alarmAt: Math.round(at as number) } : rest;
+    }),
+  };
+}
+
+/**
+ * Ключ конкретного срабатывания. Включает время: если будильник переставили,
+ * это уже новое срабатывание, и старая отметка «выключено» к нему не относится.
+ */
+export function alarmKey(item: Pick<DeskItem, 'id' | 'alarmAt'>): string {
+  return `${item.id}@${item.alarmAt}`;
+}
+
+/** Карточки, чей будильник уже должен звенеть и ещё не выключен. */
+export function dueAlarms(board: DeskBoard, now: number, dismissed: ReadonlySet<string> = new Set()): DeskItem[] {
+  return board.items
+    .filter((i) => i.kind !== 'folder' && typeof i.alarmAt === 'number' && i.alarmAt <= now && !dismissed.has(alarmKey(i)))
+    .sort((a, b) => (a.alarmAt as number) - (b.alarmAt as number));
+}
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** Время в формате поля <input type="datetime-local"> (локальная зона). */
+export function toDateTimeLocal(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/** Разбор значения datetime-local. Пустое или битое — null. */
+export function parseDateTimeLocal(value: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(String(value || '').trim());
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s] = m.map(Number) as unknown as number[];
+  const date = new Date(y, mo - 1, d, h, mi, s || 0, 0);
+  // Отсекаем «31 февраля»: Date молча переносит его на март.
+  if (date.getMonth() !== mo - 1 || date.getDate() !== d) return null;
+  return date.getTime();
 }

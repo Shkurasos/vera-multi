@@ -1,0 +1,351 @@
+{
+  "stock": [
+    "👍",
+    "❤️",
+    "🔥",
+    "😂",
+    "😮",
+    "😢",
+    "😡",
+    "🎉",
+    "👎",
+    "⭐"
+  ],
+  "packs": [
+    {
+      "id": "neon",
+      "name": "Неон",
+      "color": "#00e5ff",
+      "reactions": [
+        {
+          "id": "rx-neon-like",
+          "glyph": "👍",
+          "name": "Лайк · Неон",
+          "rarity": "common"
+        },
+        {
+          "id": "rx-neon-heart",
+          "glyph": "❤️",
+          "name": "Сердце · Неон",
+          "rarity": "common"
+        },
+        {
+          "id": "rx-neon-fire",
+          "glyph": "🔥",
+          "name": "Огонь · Неон",
+          "rarity": "rare"
+        },
+        {
+          "id": "rx-neon-laugh",
+          "glyph": "😂",
+          "name": "Смех · Неон",
+          "rarity": "common"
+        },
+        {
+          "id": "rx-neon-wow",
+          "glyph": "😮",
+          "name": "Удивление · Неон",
+          "rarity": "uncommon"
+        },
+        {
+          "id": "rx-neon-sad",
+          "glyph": "😢",
+          "name": "Слеза · Неон",
+          "rarity": "uncommon"
+        },
+        {
+          "id": "rx-neon-angry",
+          "glyph": "😡",
+          "name": "Гнев · Неон",
+          "rarity": "rare"
+        },
+        {
+          "id": "rx-neon-party",
+          "glyph": "🎉",
+          "name": "Праздник · Неон",
+          "rarity": "epic"
+        },
+        {
+          "id": "rx-neon-dislike",
+          "glyph": "👎",
+          "name": "Дизлайк · Неон",
+          "rarity": "uncommon"
+        },
+        {
+          "id": "rx-neon-star",
+          "glyph": "⭐",
+          "name": "Звезда · Неон",
+          "rarity": "legendary"
+        }
+      ]
+    },
+    {
+      "id": "gold",
+      "name": "Золото",
+      "color": "#ffc94d",
+      "reactions": [
+        {
+          "id": "rx-gold-like",
+          "glyph": "👍",
+          "name": "Лайк · Золото",
+          "rarity": "common"
+        },
+        {
+          "id": "rx-gold-heart",
+          "glyph": "❤️",
+          "name": "Сердце · Золото",
+          "rarity": "common"
+        },
+        {
+          "id": "rx-gold-fire",
+          "glyph": "🔥",
+          "name": "Огонь · Золото",
+          "rarity": "rare"
+        },
+        {
+          "id": "rx-gold-laugh",
+          "glyph": "😂",
+          "name": "Смех · Золото",
+          "rarity": "common"
+        },
+        {
+          "id": "rx-gold-wow",
+          "glyph": "😮",
+          "name": "Удивление · Золото",
+          "rarity": "uncommon"
+        },
+        {
+          "id": "rx-gold-sad",
+          "glyph": "😢",
+          "name": "Слеза · Золото",
+          "rarity": "uncommon"
+        },
+        {
+          "id": "rx-gold-angry",
+          "glyph": "😡",
+          "name": "Гнев · Золото",
+          "rarity": "rare"
+        },
+        {
+          "id": "rx-gold-party",
+          "glyph": "🎉",
+          "name": "Праздник · Золото",
+          "rarity": "epic"
+        },
+        {
+          "id": "rx-gold-dislike",
+          "glyph": "👎",
+          "name": "Дизлайк · Золото",
+          "rarity": "uncommon"
+        },
+        {
+          "id": "rx-gold-star",
+          "glyph": "⭐",
+          "name": "Звезда · Золото",
+          "rarity": "legendary"
+        }
+      ]
+    },
+    {
+      "id": "pixel",
+      "name": "Пиксели",
+      "color": "#7ee022",
+      "reactions": [
+        {
+          "id": "rx-pixel-like",
+          "glyph": "👍",
+          "name": "Лайк · Пиксели",
+          "rarity": "common"
+        },
+        {
+          "id": "rx-pixel-heart",
+          "glyph": "❤️",
+          "name": "Сердце · Пиксели",
+          "rarity": "common"
+        },
+        {
+          "id": "rx-pixel-fire",
+          "glyph": "🔥",
+          "name": "Огонь · Пиксели",
+          "rarity": "rare"
+        },
+        {
+          "id": "rx-pixel-laugh",
+          "glyph": "😂",
+          "name": "Смех · Пиксели",
+          "rarity": "common"
+        },
+        {
+          "id": "rx-pixel-wow",
+          "glyph": "😮",
+          "name": "Удивление · Пиксели",
+          "rarity": "uncommon"
+        },
+        {
+          "id": "rx-pixel-sad",
+          "glyph": "😢",
+          "name": "Слеза · Пиксели",
+          "rarity": "uncommon"
+        },
+        {
+          "id": "rx-pixel-angry",
+          "glyph": "😡",
+          "name": "Гнев · Пиксели",
+          "rarity": "rare"
+        },
+        {
+          "id": "rx-pixel-party",
+          "glyph": "🎉",
+          "name": "Праздник · Пиксели",
+          "rarity": "epic"
+        },
+        {
+          "id": "rx-pixel-dislike",
+          "glyph": "👎",
+          "name": "Дизлайк · Пиксели",
+          "rarity": "uncommon"
+        },
+        {
+          "id": "rx-pixel-star",
+          "glyph": "⭐",
+          "name": "Звезда · Пиксели",
+          "rarity": "legendary"
+        }
+      ]
+    },
+    {
+      "id": "cosmos",
+      "name": "Космос",
+      "color": "#9b6bff",
+      "reactions": [
+        {
+          "id": "rx-cosmos-like",
+          "glyph": "👍",
+          "name": "Лайк · Космос",
+          "rarity": "common"
+        },
+        {
+          "id": "rx-cosmos-heart",
+          "glyph": "❤️",
+          "name": "Сердце · Космос",
+          "rarity": "common"
+        },
+        {
+          "id": "rx-cosmos-fire",
+          "glyph": "🔥",
+          "name": "Огонь · Космос",
+          "rarity": "rare"
+        },
+        {
+          "id": "rx-cosmos-laugh",
+          "glyph": "😂",
+          "name": "Смех · Космос",
+          "rarity": "common"
+        },
+        {
+          "id": "rx-cosmos-wow",
+          "glyph": "😮",
+          "name": "Удивление · Космос",
+          "rarity": "uncommon"
+        },
+        {
+          "id": "rx-cosmos-sad",
+          "glyph": "😢",
+          "name": "Слеза · Космос",
+          "rarity": "uncommon"
+        },
+        {
+          "id": "rx-cosmos-angry",
+          "glyph": "😡",
+          "name": "Гнев · Космос",
+          "rarity": "rare"
+        },
+        {
+          "id": "rx-cosmos-party",
+          "glyph": "🎉",
+          "name": "Праздник · Космос",
+          "rarity": "epic"
+        },
+        {
+          "id": "rx-cosmos-dislike",
+          "glyph": "👎",
+          "name": "Дизлайк · Космос",
+          "rarity": "uncommon"
+        },
+        {
+          "id": "rx-cosmos-star",
+          "glyph": "⭐",
+          "name": "Звезда · Космос",
+          "rarity": "legendary"
+        }
+      ]
+    },
+    {
+      "id": "candy",
+      "name": "Сладости",
+      "color": "#ff7ab8",
+      "reactions": [
+        {
+          "id": "rx-candy-like",
+          "glyph": "👍",
+          "name": "Лайк · Сладости",
+          "rarity": "common"
+        },
+        {
+          "id": "rx-candy-heart",
+          "glyph": "❤️",
+          "name": "Сердце · Сладости",
+          "rarity": "common"
+        },
+        {
+          "id": "rx-candy-fire",
+          "glyph": "🔥",
+          "name": "Огонь · Сладости",
+          "rarity": "rare"
+        },
+        {
+          "id": "rx-candy-laugh",
+          "glyph": "😂",
+          "name": "Смех · Сладости",
+          "rarity": "common"
+        },
+        {
+          "id": "rx-candy-wow",
+          "glyph": "😮",
+          "name": "Удивление · Сладости",
+          "rarity": "uncommon"
+        },
+        {
+          "id": "rx-candy-sad",
+          "glyph": "😢",
+          "name": "Слеза · Сладости",
+          "rarity": "uncommon"
+        },
+        {
+          "id": "rx-candy-angry",
+          "glyph": "😡",
+          "name": "Гнев · Сладости",
+          "rarity": "rare"
+        },
+        {
+          "id": "rx-candy-party",
+          "glyph": "🎉",
+          "name": "Праздник · Сладости",
+          "rarity": "epic"
+        },
+        {
+          "id": "rx-candy-dislike",
+          "glyph": "👎",
+          "name": "Дизлайк · Сладости",
+          "rarity": "uncommon"
+        },
+        {
+          "id": "rx-candy-star",
+          "glyph": "⭐",
+          "name": "Звезда · Сладости",
+          "rarity": "legendary"
+        }
+      ]
+    }
+  ]
+}

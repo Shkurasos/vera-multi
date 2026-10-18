@@ -1,12 +1,13 @@
 import { create } from 'zustand';
-import { clampBubble } from '../utils/bubbleSettings';
+import { clampBubble, normalizeMetaPos } from '../utils/bubbleSettings';
+import type { BubbleMetaPos } from '../utils/bubbleSettings';
 import { persist } from 'zustand/middleware';
 import { Message } from '../types';
 import { enableStoreSync } from '../services/storeSyncSimple';
 
 interface ChatPrefsState {
   clearBubbleSettings: (chatId: string) => void;
-  bubbleSettings: Record<string, { enabled?: boolean; maxWidth?: number; textSize?: number; padding?: number }>;
+  bubbleSettings: Record<string, { enabled?: boolean; maxWidth?: number; textSize?: number; padding?: number; wallAlign?: boolean; metaPos?: BubbleMetaPos }>;
   // Arrays for JSON serialization
   pinnedIds: string[];
   archivedIds: string[];
@@ -93,6 +94,7 @@ export const useChatPrefsStore = create<ChatPrefsState>()(
           ...(settings.maxWidth !== undefined ? { maxWidth: clampBubble('maxWidth', settings.maxWidth) } : {}),
           ...(settings.textSize !== undefined ? { textSize: clampBubble('textSize', settings.textSize) } : {}),
           ...(settings.padding !== undefined ? { padding: clampBubble('padding', settings.padding) } : {}),
+          ...(settings.metaPos !== undefined ? { metaPos: normalizeMetaPos(settings.metaPos) } : {}),
         } },
       })),
     }),

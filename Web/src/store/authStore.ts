@@ -9,6 +9,7 @@ import { hydrateSettingsFromServer, startSettingsAutoSync } from './userSettings
 import { initStoreSyncOnLogin, disableAllStoreSync } from '../services/storeSyncSimple';
 import { prepareSettingsForAccount, disableSettingsSync } from './userSettingsStore';
 import { usePetStore } from './petStore';
+import { useReactionSkinStore } from './reactionSkinStore';
 
 async function hydrateAccount(user: User): Promise<void> {
   const changed = localStorage.getItem('vera_sync_active_account') !== user.id;
@@ -24,6 +25,9 @@ async function hydrateAccount(user: User): Promise<void> {
   prepareSettingsForAccount(user.id, changed);
   await hydrateSettingsFromServer();
   void usePetStore.getState().load().catch(() => undefined);
+  // Слоты реакций — сразу после входа/F5: иначе до открытия инвентаря
+  // (он делал load кейсов со слотами) пикер и профиль показывали сток.
+  void useReactionSkinStore.getState().load().catch(() => undefined);
   startSettingsAutoSync(user.id);
 }
 

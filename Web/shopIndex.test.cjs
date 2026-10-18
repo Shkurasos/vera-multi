@@ -4,30 +4,93 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
+const { create } = require('zustand');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, p), 'utf8');
 
 const shopSource = read('src/store/shopStore.ts');
 const bubble = read('src/components/MessageBubble.tsx');
 
-// Каталог вытаскиваем без исполнения стора: нужен только статический массив.
-const catalogSrc = shopSource.slice(
-  shopSource.indexOf('export const SHOP_CATALOG'),
-  shopSource.indexOf('const SHOP_ITEM_INDEX'),
-);
-const ctx = vm.createContext({ exports: {} });
-vm.runInNewContext(
-  // const в vm не попадает на контекст — отдаём значение явно через exports.
-  ts.transpileModule(`${catalogSrc.replace('export const', 'const')}\nexports.SHOP_CATALOG = SHOP_CATALOG;`, {
-    compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.None },
-  }).outputText,
-  ctx,
-);
-const catalog = ctx.exports.SHOP_CATALOG;
+// Execute the real catalog generation and lookup. Rebuilding a test-only index
+// from the static array hid missing generated skins in the production index.
+const cache = new Map();
+let updateProfile;
+function load(file) {
+  if (cache.has(file)) return cache.get(file);
+  const exports = {};
+  cache.set(file, exports);
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, 'utf8'), {
+    compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, esModuleInterop: true },
+  }).outputText, {
+    exports, console,
+    require: name => {
+      if (name === 'zustand') return { create };
+      if (name === 'zustand/middleware') return { persist: fn => fn };
+      if (!name.startsWith('.')) return require(name);
+      if (name.endsWith('/services/api')) return { usersApi: { update: data => updateProfile(data) } };
+      if (name.endsWith('storeSyncSimple')) return { enableStoreSync() {} };
+      if (name.endsWith('authStore')) return { useAuthStore: { getState: () => ({ user: null }) } };
+      return load(path.resolve(path.dirname(file), `${name}.ts`));
+    },
+  });
+  return exports;
+}
+const { SHOP_CATALOG: catalog, findShopItem, useShopStore, selectShopItem } = load(path.join(__dirname, 'src/store/shopStore.ts'));
 
-// Тот же индекс, что и в сторе, но собранный здесь — чтобы проверить его глазами.
-const index = new Map(catalog.map(i => [`${i.applyKey}|${i.id}`, i]));
-const findShopItem = (key, id) => (id ? index.get(`${key}|${id}`) : undefined);
+test('all collectible skins are recognized by the server and survive profile save/reload', () => {
+  const server = read('../Server/server.js');
+  const validationStart = server.indexOf('const RARITY_IDS =');
+  const validationEnd = server.indexOf('// Питомцы хранятся отдельно', validationStart);
+  assert.ok(validationStart >= 0 && validationEnd > validationStart);
+  const isKnownSkinId = vm.runInNewContext(
+    `${server.slice(validationStart, validationEnd)}\nisKnownSkinId;`,
+  );
+  const routeStart = server.indexOf("app.patch('/api/users/me',");
+  const routeEnd = server.indexOf('// GET /api/users/:id/customization', routeStart);
+  assert.ok(routeStart >= 0 && routeEnd > routeStart);
+  let handler;
+  let saved;
+  const db = { users: [{ id: 'skin-test' }] };
+  vm.runInNewContext(server.slice(routeStart, routeEnd), {
+    app: { patch: (_path, _auth, callback) => { handler = callback; } },
+    authMiddleware() {}, db,
+    saveDb: () => { saved = JSON.stringify(db); },
+    withDevFlag: (_req, user) => user,
+    publishEquipment() {},
+  });
+  updateProfile = body => {
+    let response;
+    handler({ userId: 'skin-test', body }, {
+      status: code => { throw new Error(`Profile update rejected: ${code}`); },
+      json: data => { response = data; },
+    });
+    return Promise.resolve({ data: response });
+  };
+  const slots = { avatarRing: 'activeRing', selfCard: 'activeSelfCard', bubbleStyle: 'activeBubble' };
+  for (const item of catalog) {
+    const slot = slots[item.applyKey];
+    if (!slot) continue;
+    if (!item.stock) assert.equal(isKnownSkinId(item.id), true, item.id);
+    useShopStore.getState().resetForAccount();
+    if (!item.stock) {
+      saved = undefined;
+      selectShopItem(item.id);
+      assert.equal(saved, undefined, `unowned ${item.id}`);
+    }
+    useShopStore.getState().mergeOwned([item.id]);
+    selectShopItem(item.id);
+    const expected = item.stock ? '' : item.id;
+    assert.equal(JSON.parse(saved).users[0][slot], expected, item.id);
+    db.users = JSON.parse(saved).users;
+    useShopStore.getState().resetForAccount();
+    useShopStore.getState().hydrateEquipment(db.users[0]);
+    useShopStore.getState().mergeOwned([item.id]);
+    assert.equal(useShopStore.getState()[slot], expected, item.id);
+    if (expected) assert.equal(findShopItem(item.applyKey, expected), item);
+    selectShopItem(item.id);
+    assert.equal(JSON.parse(saved).users[0][slot], '', `clear ${item.id}`);
+  }
+});
 
 // ── Индекс даёт тот же ответ, что и перебор каталога ────────────────────────
 
@@ -45,6 +108,16 @@ test('неизвестный предмет не находится, как и �
   assert.equal(findShopItem('avatarRing', ''), undefined);
   assert.equal(findShopItem('avatarRing', undefined), undefined);
   assert.equal(findShopItem('avatarRing', null), undefined);
+});
+
+test('скины редкостей и тематических паков находятся во всех трёх слотах', () => {
+  for (const [key, ids] of [
+    ['avatarRing', ['ring-r-legendary', 'ring-pack-games-dragon']],
+    ['selfCard', ['selfcard-r-legendary', 'selfcard-pack-games-dragon']],
+    ['bubbleStyle', ['bubble-r-legendary', 'bubble-games-dragon']],
+  ]) {
+    for (const id of ids) assert.equal(findShopItem(key, id)?.id, id);
+  }
 });
 
 test('одинаковые id у РАЗНЫХ applyKey не путаются между собой', () => {

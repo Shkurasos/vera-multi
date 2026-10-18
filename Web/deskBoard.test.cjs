@@ -27,7 +27,7 @@ function load(file) {
 }
 
 const {
-  isDeskName, emptyBoard, addItem, removeItem, addThread, removeThread, updateItem,
+  isDeskName, splitBoardPrefix, creationKind, stripKindCommand, BOARD_COMMANDS, isDeskChat, isWhiteboardChat, emptyBoard, addItem, removeItem, addThread, removeThread, updateItem,
   bringToFront, clampItem, edgePoint, itemCenter, threadPath, findFreeSpot, defaultSize, scaleItem, rotateItem,
   BOARD_W, BOARD_H, THREAD_COLORS,
 } = load('src/utils/deskBoard.ts');
@@ -45,6 +45,32 @@ test('группа с именем, начинающимся на «|», ста�
   assert.ok(isDeskName('|Дело'), 'без пробела');
   assert.ok(isDeskName('  | Ограбление  '), 'пробелы по краям срезаются');
   assert.ok(isDeskName('| Доска улик: 12'), 'с двоеточием и цифрами');
+});
+
+test('символ вида срезается из названия и хранится отдельно', () => {
+  const desk = splitBoardPrefix('/desk Дело');
+  assert.equal(desk.kind, 'desk');
+  assert.equal(desk.name, 'Дело');
+  const wb = splitBoardPrefix('/canvas Рисунки');
+  assert.equal(wb.kind, 'whiteboard');
+  assert.equal(wb.name, 'Рисунки');
+  assert.equal(splitBoardPrefix('/DESK').kind, 'desk', 'регистр не важен');
+  for (const plainName of ['/холст', '/deskx', '| Дело', 'Работа | в отделе']) {
+    const plain = splitBoardPrefix(plainName);
+    assert.equal(plain.kind, null, plainName);
+    assert.equal(plain.name, plainName);
+  }
+  assert.equal(creationKind('!Новости'), 'channel');
+  assert.equal(creationKind('/canvas'), 'whiteboard');
+  assert.equal(creationKind('Обычная'), null);
+  assert.equal(stripKindCommand('/desk Новое'), 'Новое');
+  assert.equal(stripKindCommand('! Канал'), 'Канал');
+  assert.equal(BOARD_COMMANDS.whiteboard, '/canvas');
+  // Вид — по полю, не по названию: «| x» в имени без kind доской не делает.
+  assert.ok(isDeskChat({ kind: 'desk', name: 'Дело' }));
+  assert.ok(!isDeskChat({ name: '| Дело' }));
+  assert.ok(isWhiteboardChat({ kind: 'whiteboard', name: 'Холст' }));
+  assert.ok(!isWhiteboardChat({ name: '/ Холст' }));
 });
 
 test('черта в середине названия — не доска', () => {
@@ -196,11 +222,13 @@ const sidebar = read('src/components/Sidebar.tsx');
 
 test('доска включается для группы, названной с «|»', () => {
   // Правило живёт в одном месте, а не продублировано в JSX.
-  assert.ok(chatWindow.includes('const isDesk = isDeskName(activeChat?.name)'), 'имя читается в чате');
-  assert.ok(chatWindow.includes('isDeskName'), 'функция импортирована');
-  assert.ok(/\{isDesk \? \(/.test(chatWindow), 'доска подменяет ленту сообщений');
-  assert.ok(sidebar.includes('isDeskName(newGroupName)'), 'подсказка в диалоге создания');
-  assert.ok(sidebar.includes('с | — получится доска'), 'пользователь про правило узнаёт');
+  // Вид читается из chat.kind, а не из названия: переименование не меняет вид.
+  assert.ok(chatWindow.includes('const isDesk = isDeskChat(activeChat)'), 'вид читается из chat.kind');
+  assert.ok(chatWindow.includes('const isWhiteboard = isWhiteboardChat(activeChat)'), 'холст тоже по виду');
+  assert.ok(!/isDeskName\(activeChat/.test(chatWindow), 'название больше не решает вид');
+  assert.ok(/[{ ]isDesk \? \(/.test(chatWindow), 'доска подменяет ленту сообщений');
+  assert.ok(sidebar.includes('creationKind(name)'), 'подсказка в диалоге создания');
+  assert.ok(sidebar.includes('с /desk — получится доска'), 'пользователь про правило узнаёт');
 });
 
 test('доска хранится на сервере, а не в браузере', () => {
@@ -328,7 +356,7 @@ test('строка ввода чата на доске не показывает
   // На доске своё поле для карточек, а две строки ввода занимали бы полэкрана.
   const chatWindow = read('src/components/ChatWindow.tsx');
   assert.ok(
-    /display: \(isDesk \|\| iBlockedPeer \|\| peerBlockedMe\) \? 'none' : 'flex'/.test(chatWindow),
+    /display: \(isDesk \|\| iBlockedPeer \|\| peerBlockedMe(?: \|\| selectionOn)?\) \? 'none' : 'flex'/.test(chatWindow),
     'композер чата скрыт, когда isDesk',
   );
 });

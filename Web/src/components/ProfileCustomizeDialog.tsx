@@ -7,6 +7,7 @@ import { Close, RestartAlt, Image as ImageIcon, Inventory2 } from '@mui/icons-ma
 import { useThemeStore } from '../store/themeStore';
 import { ActivityKind, useProfileCustomizationStore } from '../store/profileCustomizationStore';
 import { useShopStore } from '../store/shopStore';
+import ReactionSlotsEditor from './ReactionSlotsEditor';
 
 interface Props { open: boolean; onClose: () => void; }
 
@@ -118,6 +119,9 @@ export default function ProfileCustomizeDialog({ open, onClose }: Props) {
               />
             </Stack>
           </Box>
+
+          {/* Слоты быстрых реакций (скины из кейса «Скины реакций») */}
+          <ReactionSlotsEditor />
 
           {/* Косметика */}
           <Button

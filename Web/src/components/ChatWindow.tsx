@@ -32,19 +32,28 @@ import { useChatSettingsStore, BUILTIN_FONTS } from '../store/chatSettingsStore'
 import { useUserSettingsStore } from '../store/userSettingsStore';
 import { useDraftsStore } from '../store/draftsStore';
 import { useMessageHoverStore } from '../store/messageHoverStore';
+import { useMessageSelectionStore } from '../store/messageSelectionStore';
+import { hasGroupRight } from '../services/groupPermissions';
+import { Delete, Forward } from '@mui/icons-material';
 import { useChatFontStore, STOCK_FONTS } from '../store/chatFontStore';
 import { sendTypingStart, sendTypingStop, getSocket } from '../services/socket';
-import { chatsApi, filesApi, languageApi, messagesApi } from '../services/api';
+import { chatsApi, filesApi, languageApi, messagesApi, warshipsApi } from '../services/api';
 import MessageBubble from './MessageBubble';
 import { externalSiteUrl } from '../utils/externalSite';
 import ExternalSiteDialog from './ExternalSiteDialog';
 import HoldRecorder from './HoldRecorder';
 import BubbleSettingsControls from './BubbleSettingsControls';
+import { normalizeMetaPos } from '../utils/bubbleSettings';
+import type { BubbleMetaPos } from '../utils/bubbleSettings';
 import FontPicker from './FontPicker';
 import { membranePressSx, motion } from '../styles/motion';
+import { frostedPaperSx } from '../styles/frosted';
 import ChatInfoPanel from './ChatInfoPanel';
 import UserProfileModal from './UserProfileModal';
 import { Message, User } from '../types';
+import {
+  compensatedScrollTop, nextRenderLimit, prefetchThresholdPx, shouldPrefetchOlder,
+} from '../utils/messagePagination';
 import ChatThemeDialog from './ChatThemeDialog';
 import { useChatThemeStore } from '../store/chatThemeStore';
 import { useChatBgPrefsStore, useAllStockWallpapers, wallpaperCssClass, isLightWallpaper } from '../store/chatBgPrefsStore';
@@ -59,7 +68,8 @@ import ChatWallpaper, { type WallpaperSpec } from './ChatWallpaper';
 import WallClockOverlay from './WallClockOverlay';
 import DeskBoard from './DeskBoard';
 import Whiteboard from './Whiteboard';
-import { isDeskName } from '../utils/deskBoard';
+import { isDeskChat, isWhiteboardChat } from '../utils/deskBoard';
+import { parseTimeCommand, formatDelay, TIME_USAGE } from '../utils/timeCommand';
 import { useClockLayout } from '../store/wallClockLayout';
 import { playDefaultChime } from '../utils/notificationSound';
 
@@ -167,14 +177,16 @@ function resolveFileUrl(url?: string): string {
 // Стабильный объект по умолчанию: селектор не должен создавать новый
 // объект на каждый вызов, иначе компонент перерисовывается при любом
 // изменении стора (классическая ошибка zustand v4).
-type BubblePrefsShape = { enabled?: boolean; maxWidth?: number; textSize?: number; padding?: number };
+type BubblePrefsShape = { enabled?: boolean; maxWidth?: number; textSize?: number; padding?: number; wallAlign?: boolean; metaPos?: BubbleMetaPos };
 const EMPTY_BUBBLE_PREFS: BubblePrefsShape = {};
 // Стабильный пустой список «печатает…» — чтобы селектор не создавал новый массив.
 const EMPTY_TYPING_LIST: string[] = [];
 // Сколько сообщений держим в DOM. Полная история (архив бывает на тысячи
 // сообщений) остаётся в памяти, но рендерится порциями — иначе браузер
 // захлёбывается на layout/paint и любые hover-эффекты тормозят.
-const RENDER_CHUNK = 200;
+// Окно растёт шагами RENDER_STEP заранее — за PREFETCH_AHEAD_MESSAGES
+// сообщений до верха (см. utils/messagePagination).
+const RENDER_CHUNK = 80;
 
 interface ChatWindowProps {
   onPlayerHost: (node: HTMLDivElement | null) => void;
@@ -191,6 +203,11 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   // заново собирало группы по датам. Массивы отдельных чатов сохраняют identity.
   const chatMessagesForId = useChatStore((s) => s.messages[id || '']);
   const activeChat = useChatStore((s) => s.activeChat);
+  // Сообщения, которые сейчас схлопываются после удаления. Границы групп
+  // считаем мимо них, чтобы плашка «Вы» переходила к следующему сообщению
+  // сразу в момент удаления, а не после паузы анимации (иначе — дёрганое
+  // «исчезла и снова появилась»).
+  const deletingMessageIds = useChatStore((s) => s.deletingMessageIds);
   // Закреплённые могут относиться к activeChat, который на миг расходится с id
   // при переключении чатов, — держим отдельную (обычно пустую) подписку.
   const activeChatFallbackMessages = useChatStore(
@@ -199,6 +216,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const setActiveChat = useChatStore((s) => s.setActiveChat);
   const updateChatList = useChatStore((s) => s.updateChatList);
   const sendMessage = useChatStore((s) => s.sendMessage);
+  const editMessage = useChatStore((s) => s.editMessage);
   const sendMessageWithFile = useChatStore((s) => s.sendMessageWithFile);
   // Печатает ли кто-то именно в этом чате: typing в других чатах больше
   // не перерисовывает открытое окно.
@@ -246,6 +264,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const layoutBubbleTextSize = useUserSettingsStore((s) => s.layout.bubbleTextSize);
   const layoutBubblePadding = useUserSettingsStore((s) => s.layout.bubblePadding);
   const layoutMessageMaxWidth = useUserSettingsStore((s) => s.layout.messageMaxWidth);
+  const layoutBubbleWallAlign = useUserSettingsStore((s) => s.layout.bubbleWallAlign);
+  const layoutBubbleMetaPos = useUserSettingsStore((s) => s.layout.bubbleMetaPos);
   const bubblePrefs: BubblePrefsShape = useChatPrefsStore((s) => s.bubbleSettings[id || ''] || EMPTY_BUBBLE_PREFS);
   const setBubbleSettings = useChatPrefsStore((s) => s.setBubbleSettings);
   // useMemo: объект ниже передаётся в BubbleSettingsControls и в пропсы пузырей;
@@ -255,11 +275,32 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     textSize: bubblePrefs.textSize ?? layoutBubbleTextSize ?? 15,
     padding: bubblePrefs.padding ?? layoutBubblePadding ?? 6,
     maxWidth: bubblePrefs.maxWidth ?? layoutMessageMaxWidth,
-  }), [bubblePrefs, layoutBubbleEnabled, layoutBubbleTextSize, layoutBubblePadding, layoutMessageMaxWidth]);
+    wallAlign: bubblePrefs.wallAlign ?? layoutBubbleWallAlign ?? false,
+    metaPos: normalizeMetaPos(bubblePrefs.metaPos ?? layoutBubbleMetaPos),
+  }), [bubblePrefs, layoutBubbleEnabled, layoutBubbleTextSize, layoutBubblePadding, layoutMessageMaxWidth, layoutBubbleWallAlign, layoutBubbleMetaPos]);
   const [text, setText] = useState('');
+  // Актуальный текст инпута в ref: handleEdit — стабильный колбэк (пузыри
+  // мемоизированы и не переверстываются при смене пропсов), ему нужен свежий
+  // черновик без зависимости от state.
+  const textRef = useRef(text);
+  textRef.current = text;
+  // ── Редактирование сообщения в строке ввода ──
+  // Правка идёт в общем инпуте (а не в пузыре, где текст терялся на фоне темы).
+  // preEditTextRef хранит черновик до правки, чтобы после сохранения/отмены
+  // вернуть его на место. editingRef дублирует editing для стабильного handleEdit.
+  const [editing, setEditing] = useState<Message | null>(null);
+  const editingRef = useRef<Message | null>(null);
+  const preEditTextRef = useRef('');
   const [keepSendButton, setKeepSendButton] = useState(false);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [forwardMsg, setForwardMsg] = useState<Message | null>(null);
+  // Пересылка сразу нескольких выделенных сообщений (режим выделения).
+  const [forwardBatch, setForwardBatch] = useState<Message[] | null>(null);
+  const forwardItems = useMemo(
+    () => forwardBatch || (forwardMsg ? [forwardMsg] : []),
+    [forwardBatch, forwardMsg],
+  );
+  const closeForward = () => { setForwardMsg(null); setForwardBatch(null); };
   const [forwardBusy, setForwardBusy] = useState(false);
   const forwardBusyRef = useRef(false);
   const [forwardError, setForwardError] = useState('');
@@ -406,22 +447,21 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   }, [id, chatMessagesForId, user?.id, markRead]);
 
   // Окно рендера истории: в DOM только последние renderLimit сообщений.
-  // При скролле вверх порция растёт, позиция сохраняется через
-  // keepFromBottomRef (расстояние от низа контента до низа окрана).
+  // При скролле вверх порция растёт заранее, позиция сохраняется якорем
+  // (scrollAnchorRef): первое отрисованное сообщение остаётся на том же
+  // месте экрана, сколько бы контента ни добавилось над ним.
   const [renderLimit, setRenderLimit] = useState(RENDER_CHUNK);
-  const keepFromBottomRef = useRef<number | null>(null);
+  const scrollAnchorRef = useRef<{ id: string; top: number } | null>(null);
   // Метка времени последнего тика часов: ограничивает частоту пересчёта
   // отодвижения при прокрутке.
   const lastClockTickRef = useRef(0);
   const bumpClockLayout = useClockLayout((s) => s.bump);
-  useEffect(() => { setRenderLimit(RENDER_CHUNK); }, [id]);
-  useLayoutEffect(() => {
-    const container = messagesContainerRef.current;
-    if (container && keepFromBottomRef.current != null) {
-      container.scrollTop = container.scrollHeight - keepFromBottomRef.current;
-      keepFromBottomRef.current = null;
-    }
-  }, [renderLimit]);
+  useEffect(() => { setRenderLimit(RENDER_CHUNK); scrollAnchorRef.current = null; }, [id]);
+  const loadOlderMessages = useChatStore((s) => s.loadOlderMessages);
+  const olderStatus = useChatStore((s) => s.olderHistory[id || '']);
+  const olderLoading = !!olderStatus?.loading;
+  // Идёт поиск — лента показывает результаты, а не окно истории: не догружаем.
+  const searchActiveRef = useRef(false);
 
   // Базовый фон ТЕМЫ. Фоны обоев живут в отдельном сторе, который переживает
   // перезагрузку и синхронизацию сам по себе: там может лежать 'none' или id от
@@ -558,13 +598,15 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
 
   useEffect(() => {
     setKeepSendButton(false);
+    // Смена чата закрывает режим правки: черновик нового чата загружается ниже,
+    // а текст старой правки не должен уехать в другой чат.
+    setEditing(null);
+    editingRef.current = null;
     if (id) {
       languageCorrectionRequestRef.current += 1;
       draftRevisionRef.current += 1;
       setLanguageCorrectionBusy(false);
       setLanguageCorrectionExplanation('');
-      // Always load messages for this chat id
-      useChatStore.getState().loadMessages(id);
       const chat = chats.find((c) => c && c.id === id);
       if (chat) {
         setActiveChat(chat);
@@ -628,6 +670,38 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       : chatMessages),
     [chatMessages, renderLimit],
   );
+  const windowedMessagesRef = useRef(windowedMessages);
+  windowedMessagesRef.current = windowedMessages;
+
+  // Снимок якоря ДО prepend: экранная позиция первого отрисованного сообщения.
+  const captureScrollAnchor = useCallback(() => {
+    const container = messagesContainerRef.current;
+    const first = windowedMessagesRef.current[0];
+    if (!container || !first) return;
+    const el = document.getElementById(`msg-${first.id}`);
+    if (!el) return;
+    scrollAnchorRef.current = {
+      id: first.id,
+      top: el.getBoundingClientRect().top - container.getBoundingClientRect().top,
+    };
+  }, []);
+
+  // Компенсация ДО отрисовки кадра — без видимого рывка. Считаем по экранным
+  // координатам: если браузер уже сам подвинул ленту (CSS scroll anchoring),
+  // дельта выйдет нулевой и двойного сдвига не будет.
+  useLayoutEffect(() => {
+    const anchor = scrollAnchorRef.current;
+    const container = messagesContainerRef.current;
+    if (!anchor || !container) return;
+    // Окно ещё не выросло (рендер между setRenderLimit и записью в стор) —
+    // якорь бережём до кадра, где сверху реально добавились сообщения.
+    if (windowedMessages[0]?.id === anchor.id) return;
+    scrollAnchorRef.current = null;
+    const el = document.getElementById(`msg-${anchor.id}`);
+    if (!el) return;
+    const newTop = el.getBoundingClientRect().top - container.getBoundingClientRect().top;
+    container.scrollTop = compensatedScrollTop(container.scrollTop, anchor.top, newTop);
+  }, [windowedMessages]);
 
   // Непрочитанные «снизу» считаем один раз на изменение истории, а не на каждое
   // событие скролла: раньше это был findIndex + slice + filter по всем сообщениям
@@ -649,6 +723,9 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   // при смене чата, чтобы старый локальный триггер не повторял звук.
   useEffect(() => {
     prevMsgCountRef.current = chatMessages.length;
+    prevScrollLenRef.current = chatMessages.length;
+    const lastOnOpen = chatMessages[chatMessages.length - 1];
+    prevLastKeyRef.current = lastOnOpen ? ((lastOnOpen as any).clientTempId || lastOnOpen.id) : '';
   }, [id]);
 
   // ── Скролл ─────────────────────────────────────────────────────────────────
@@ -659,6 +736,107 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const lastChatIdRef = useRef<string | null>(null);
   const restoredRef = useRef<boolean>(false);
   const prevMsgLenRef = useRef<number>(0);
+  // Отдельный счётчик предыдущей длины ТОЛЬКО для автоскролла (ниже, effect 2).
+  // Нельзя переиспользовать prevMsgLenRef: effect (1) выше перезаписывает его на
+  // каждом изменении длины ещё до запуска effect (2) (useLayoutEffect → useEffect),
+  // из-за чего `curr > prev` было всегда ложным и скролл не срабатывал вовсе.
+  const prevScrollLenRef = useRef<number>(0);
+  // Ключ последнего сообщения на момент прошлого автоскролла: отличает
+  // «пришло новое снизу» от «догрузилась история сверху».
+  const prevLastKeyRef = useRef<string>('');
+
+  // ── Плавная прокрутка вниз ─────────────────────────────────────────────────
+  // Мягкая rAF-твин (~400 мс) на кривой cubic-bezier(.25,.1,.25,1): старт
+  // отзывчивый (склон ≠ 0), но пологий — у ease-out первая дельта была
+  // МАКСИМАЛЬНОЙ, отсюда рывок на старте. smoothScrollActiveRef подавляет
+  // мгновенный «зажим» низа из effect (1), пока твин ещё идёт.
+  // Пока лента летит — накладываем motion blur, пропорциональный скорости кадра
+  // (силен на длинных прокрутках, ≈0 на коротких); гаснет к концу твина и при
+  // любом прерывании. Уважаем prefers-reduced-motion.
+  const scrollAnimRef = useRef<number | null>(null);
+  const smoothScrollActiveRef = useRef(false);
+
+  // Общая отмена твина: гасит кадр, снимает флаг и убирает motion blur.
+  const stopSmoothScroll = useCallback(() => {
+    if (scrollAnimRef.current != null) {
+      cancelAnimationFrame(scrollAnimRef.current);
+      scrollAnimRef.current = null;
+    }
+    smoothScrollActiveRef.current = false;
+    const c = messagesContainerRef.current;
+    if (c && c.style.filter) c.style.filter = '';
+  }, []);
+
+  const smoothScrollToBottom = useCallback((duration = 400) => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    if (scrollAnimRef.current != null) cancelAnimationFrame(scrollAnimRef.current);
+    const start = container.scrollTop;
+    // Настоящий предел прокрутки = scrollHeight − clientHeight (НЕ scrollHeight!):
+    // иначе «уже у низа» давало бы ненулевой delta и ложный blur без движения.
+    const maxScroll = () => container.scrollHeight - container.clientHeight;
+    if (Math.abs(maxScroll() - start) < 1) {
+      container.style.filter = '';
+      return; // уже у самого низа — анимировать нечего
+    }
+    const reduced = typeof window !== 'undefined' && !!window.matchMedia
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced) container.style.filter = '';
+    const t0 = performance.now();
+    let prev = start;
+    smoothScrollActiveRef.current = true;
+    // Кривая без стартового рывка (решаем Bx(t)=x Ньютоном, возвращаем By(t)).
+    const ease = (x: number): number => {
+      const x1 = 0.25, y1 = 0.1, x2 = 0.25, y2 = 1;
+      const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx;
+      const cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
+      let t = x;
+      for (let i = 0; i < 6; i++) {
+        const s = (3 * ax * t + 2 * bx) * t + cx;
+        if (Math.abs(s) < 1e-6) break;
+        const e = ((ax * t + bx) * t + cx) * t - x;
+        t -= e / s;
+      }
+      t = Math.min(1, Math.max(0, t));
+      return ((ay * t + by) * t + cy) * t;
+    };
+    const step = (now: number) => {
+      // Цель пересчитываем каждый кадр — ловим рост высоты (медиа/шрифты).
+      const bottom = maxScroll();
+      const p = Math.min(1, (now - t0) / duration);
+      container.scrollTop = start + (bottom - start) * ease(p);
+      if (!reduced) {
+        // Blur ∝ |реальная дельта кадра| (берём фактический scrollTop, чтобы
+        // не размывать, когда браузер зажал прокрутку). Порог отсекает дрожь.
+        const delta = Math.abs(container.scrollTop - prev);
+        prev = container.scrollTop;
+        const blur = Math.min(4, delta * 0.06);
+        container.style.filter = blur > 0.2 ? `blur(${blur.toFixed(2)}px)` : '';
+      }
+      if (p < 1 && messagesContainerRef.current === container) {
+        scrollAnimRef.current = requestAnimationFrame(step);
+      } else {
+        scrollAnimRef.current = null;
+        smoothScrollActiveRef.current = false;
+        container.style.filter = '';
+      }
+    };
+    scrollAnimRef.current = requestAnimationFrame(step);
+  }, []);
+
+  // Пользователь сам крутит ленту во время твина — отменяем прокрутку и гасим
+  // motion blur, чтобы анимация не спорила с его жестом.
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    container.addEventListener('wheel', stopSmoothScroll, { passive: true });
+    container.addEventListener('touchstart', stopSmoothScroll, { passive: true });
+    return () => {
+      container.removeEventListener('wheel', stopSmoothScroll);
+      container.removeEventListener('touchstart', stopSmoothScroll);
+      stopSmoothScroll(); // смена чата/размонтирование — гасим твин + blur
+    };
+  }, [id, stopSmoothScroll]);
 
   // (1) Открытие чата — ВСЕГДА показываем последнее сообщение (низ).
   // Jump to bottom + УДЕРЖИВАЕМ низ, пока медиа/шрифты догружаются и меняют
@@ -676,15 +854,26 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     }
 
     const pinToBottom = () => {
+      // Пока идёт плавный твин вниз — не перехватываем позицию мгновенно,
+      // иначе effect (1) рывком отменял бы анимацию из effect (2).
+      if (smoothScrollActiveRef.current) return;
       try { messagesEndRef.current?.scrollIntoView({ block: 'end' }); } catch {}
       container.scrollTop = container.scrollHeight;
     };
 
-    pinToBottom();
-    atBottomRef.current = true;
+    // Жёсткий прыжок вниз — ТОЛЬКО при открытии чата. Эффект перезапускается
+    // и на каждое изменение длины ленты, а длина меняется и при УДАЛЕНИИ
+    // сообщения: раньше лента сама дёргалась к низу, хотя пользователь сидел
+    // в истории. Удержание низа при догрузке медиа остаётся, но только пока
+    // пользователь не ушёл вверх (atBottomRef).
+    const openedNow = !restoredRef.current;
+    if (openedNow) {
+      pinToBottom();
+      atBottomRef.current = true;
+      setShowScrollButton(false);
+    }
     restoredRef.current = true;
     prevMsgLenRef.current = chatMessages.length;
-    setShowScrollButton(false);
 
     // 1) rAF-цикл — пока layout устаканивается (до ~1.5 сек).
     let raf = 0;
@@ -702,9 +891,10 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     const timer = setInterval(() => {
       if (!atBottomRef.current) { clearInterval(timer); return; }
       const bottom = container.scrollHeight - container.clientHeight;
-      // Первые 5 тиков жмём безусловно (гарантированная фиксация низа),
-      // дальше — только если контент реально вырос ниже текущей позиции.
-      if (ticks <= 4 || container.scrollTop < bottom - 2) pinToBottom();
+      // Безусловная фиксация низа в первые 5 тиков — только при открытии
+      // чата; при перезапусках из-за новой длины (в т.ч. удалении) пиним
+      // лишь если контент вырос ниже текущей позиции.
+      if ((openedNow && ticks <= 4) || container.scrollTop < bottom - 2) pinToBottom();
       if (++ticks >= 120) clearInterval(timer); // ≈6 сек максимум
     }, 50);
 
@@ -750,20 +940,73 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     return () => { cleanup(); clearTimeout(stopTimer); };
   }, [id, chatMessages.length]);
 
-  // (2) Новые сообщения — автоскролл ТОЛЬКО если были внизу.
+  // (2) Новые сообщения — автоскролл. Своё сообщение докатываем до низа
+  // ВСЕГДА. Чужое — только если пользователь находится не дальше одного
+  // экрана от низа (иначе не дёргаем чтение истории).
+  //
+  // У каждого эффекта свой счётчик предыдущей длины: здесь читается
+  // prevScrollLenRef, а не prevMsgLenRef (его effect (1) выше перезаписывает
+  // до запуска этого эффекта, из-за чего скролл не срабатывал вовсе).
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container || !restoredRef.current) return;
-    const prev = prevMsgLenRef.current;
     const curr = chatMessages.length;
-    if (curr > prev && atBottomRef.current) {
-      // Плавно докатываемся до низа при новом сообщении.
-      requestAnimationFrame(() => {
-        container.scrollTop = container.scrollHeight;
-      });
+    if (curr === 0) { prevScrollLenRef.current = 0; return; }
+    const prev = prevScrollLenRef.current;
+    prevScrollLenRef.current = curr;
+    const lastMsg = chatMessages[curr - 1];
+    // Длина выросла из-за догрузки истории СВЕРХУ — последнее сообщение то же,
+    // прокручивать вниз нельзя (иначе подгрузка старых кидала бы к низу).
+    const lastKey = lastMsg ? ((lastMsg as any).clientTempId || lastMsg.id) : '';
+    const prevLastKey = prevLastKeyRef.current;
+    prevLastKeyRef.current = lastKey;
+    if (curr <= prev) return;
+    if (prevLastKey && prevLastKey === lastKey) return;
+    const mine = !!lastMsg && lastMsg.senderId === user?.id;
+    // Насколько низ (где лежит новое сообщение) удалён от нижнего края viewport'а.
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    // Чужое сообщение прокручивает вниз только если оно ближе одного экрана.
+    const withinOneScreen = distanceFromBottom <= container.clientHeight;
+    if (mine || withinOneScreen) {
+      // Уже у самого низа — прокручивать нечего; иначе — плавно вниз.
+      if (distanceFromBottom > 2) smoothScrollToBottom();
     }
-    prevMsgLenRef.current = curr;
-  }, [chatMessages.length]);
+  }, [chatMessages.length, user?.id]);
+
+  // Догрузка истории вверх. Когда до верха остаётся меньше ~25 сообщений:
+  //   1) в памяти есть неотрисованные — расширяем окно рендера;
+  //   2) отрисовано всё — просим у сервера страницу старее.
+  // Позиция держится якорем (captureScrollAnchor + useLayoutEffect выше),
+  // поэтому новые сообщения появляются над экраном без рывка.
+  const maybePrefetchOlder = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (!container || !id || searchActiveRef.current) return;
+    const { scrollTop, scrollHeight } = container;
+    const rendered = windowedMessagesRef.current.length;
+    if (!rendered) return;
+    if (!shouldPrefetchOlder(scrollTop, prefetchThresholdPx(scrollHeight, rendered))) return;
+    const total = chatMessages.length;
+    if (total > renderLimit) {
+      captureScrollAnchor();
+      setRenderLimit((n) => nextRenderLimit(n, total));
+      return;
+    }
+    if (olderStatus?.loading || olderStatus?.hasMore === false) return;
+    void loadOlderMessages(id, (added) => {
+      // Синхронно перед записью в стор: якорь снимается по ещё старому DOM,
+      // окно расширяется ровно на пришедшую страницу.
+      captureScrollAnchor();
+      setRenderLimit((n) => n + added);
+    });
+  }, [id, chatMessages.length, renderLimit, olderStatus, loadOlderMessages, captureScrollAnchor]);
+
+  // При открытии чата и после каждой догрузки: если контента выше экрана
+  // всё ещё меньше порога (короткие сообщения, высокий экран) — догружаем
+  // следующую порцию, не дожидаясь скролла. Ограничено порогом и hasMore.
+  useEffect(() => {
+    const raf = requestAnimationFrame(maybePrefetchOlder);
+    return () => cancelAnimationFrame(raf);
+  }, [maybePrefetchOlder, windowedMessages]);
 
   // (3) Отслеживание позиции + кнопка «вниз» + непрочитанные.
   useEffect(() => {
@@ -781,19 +1024,13 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       // появились в экране. Тик не на каждый кадр, а раз в ~120 мс: плавность
       // обеспечивает transition, а замеры на каждом кадре тормозят ленту.
       const now = Date.now();
-      if (now - lastClockTickRef.current > 120) {
+      if (now - lastClockTickRef.current > 120 && useClockLayout.getState().rect) {
         lastClockTickRef.current = now;
         bumpClockLayout();
       }
 
-      // Догрузка окна вверх: пользователь у верхней кромки — показываем ещё порцию
-      // истории, сохраняя текущую позицию (контент добавляется выше окна).
-      // Только для реально прокручиваемого контента, иначе окно раздулось бы до
-      // всей истории, когда сообщения ещё помещаются в экран.
-      if (scrollTop < 80 && chatMessages.length > renderLimit && scrollHeight > clientHeight + 200) {
-        keepFromBottomRef.current = container.scrollHeight - container.scrollTop;
-        setRenderLimit((n) => Math.min(chatMessages.length, n + RENDER_CHUNK));
-      }
+      // Догрузка вверх — заранее, за ~25 сообщений до верха (см. maybePrefetchOlder).
+      maybePrefetchOlder();
 
       // Значение берём из memo выше — на скролле никаких проходов по истории.
       setUnreadAtBottom(distanceFromBottom > 200 ? unreadMessageCount : 0);
@@ -801,15 +1038,35 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
 
     container.addEventListener('scroll', handleScroll, { passive: true });
     return () => container.removeEventListener('scroll', handleScroll);
-  }, [chatMessages, user?.id, renderLimit, unreadMessageCount]);
+  }, [chatMessages, user?.id, renderLimit, unreadMessageCount, maybePrefetchOlder]);
 
   // Память позиции не храним — чат всегда открывается на последнем сообщении.
 
-  const scrollToBottom = () => {
+  // Колесо над «хромом» чата (строка ввода, индикатор набора, пустая полоса
+  // обоев между лентой и вводом) должно прокручивать ленту сообщений. Визуально
+  // обои продолжаются до строки ввода, но курсор в этой полосе попадал не в
+  // скролл-контейнер — и колесо «умирало» (жалоба: «чуть выше строки ввода
+  // прокрутка не работает, хотя обои не закончились»). Пересылаем deltaY в
+  // ленту; сами ленту не трогаем — там всё скроллится штатно.
+  const forwardWheelToMessages = (e: React.WheelEvent) => {
     const container = messagesContainerRef.current;
-    if (container) {
-      container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
-    }
+    if (!container) return;
+    const target = e.target as Element;
+    if (container.contains(target)) return;
+    // Синтетические события React всплывают и из порталов (Dialog, Menu,
+    // Popover рендерятся в document.body, но в дереве React лежат внутри
+    // колонки). Без этой проверки колесо в «Настройках отображения» крутило
+    // ленту под диалогом. Пересылаем только то, что реально над колонкой в DOM.
+    if (!e.currentTarget.contains(target)) return;
+    // Не перехватываем настоящие поля ввода и вложенные скролл-области.
+    if (target.closest?.('input, textarea, select, [contenteditable="true"], [data-no-wheel-forward]')) return;
+    // deltaY бывает в пикселях/страницах/строках (deltaMode 0/1/2) — приводим к px.
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? container.clientHeight : 1;
+    container.scrollTop += e.deltaY * unit;
+  };
+
+  const scrollToBottom = () => {
+    smoothScrollToBottom();
     atBottomRef.current = true;
     setShowScrollButton(false);
     setUnreadAtBottom(0);
@@ -851,7 +1108,68 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
 
   const handleSend = async () => {
     if (blockReadOnly || uploading) return;
+    // ── Режим правки: Enter/кнопка сохраняют изменение вместо отправки ──
+    const target = editingRef.current;
+    if (target) {
+      const trimmed = text.trim();
+      if (!trimmed && !target.attachments?.length) {
+        setToast({ message: 'Сообщение не может быть пустым', severity: 'warning' });
+        return;
+      }
+      if (trimmed !== (target.content || '')) {
+        try {
+          await editMessage(target.id, trimmed);
+        } catch {
+          setToast({ message: 'Не удалось сохранить правку.', severity: 'error' });
+          return; // остаёмся в режиме правки, текст не теряем
+        }
+      }
+      editingRef.current = null;
+      setEditing(null);
+      // Возвращаем черновик, который был до правки.
+      const back = preEditTextRef.current;
+      preEditTextRef.current = '';
+      setText(back);
+      messageInputRef.current?.focus({ preventScroll: true });
+      return;
+    }
     if ((!text.trim() && pendingFiles.length === 0) || !id) return;
+    // ── /time ЧЧ:ММ:СС "текст": отложенная отправка, срок держит сервер ──
+    const timeCommand = parseTimeCommand(text);
+    if (timeCommand) {
+      if ('error' in timeCommand) {
+        setToast({ message: timeCommand.error === TIME_USAGE ? timeCommand.error : `${timeCommand.error}. ${TIME_USAGE}`, severity: 'warning' });
+        return; // текст остаётся в поле — можно поправить
+      }
+      if (pendingFiles.length) {
+        setToast({ message: 'Вложения в отложенном сообщении не поддерживаются — уберите файлы', severity: 'warning' });
+        return;
+      }
+      try {
+        await messagesApi.schedule(id, timeCommand.text, timeCommand.delayMs);
+        setText(''); clearDraft(id);
+        setToast({ message: `Сообщение отправится через ${formatDelay(timeCommand.delayMs)}`, severity: 'success' });
+      } catch (e: any) {
+        setToast({ message: e?.response?.data?.message || 'Не удалось запланировать сообщение', severity: 'error' });
+      }
+      return;
+    }
+    // ── /warship: создать сессию морского боя в этом чате ──
+    const trimmed = text.trim();
+    if (/^\/warship(\s|$)/i.test(trimmed)) {
+      let inviteeId: string | null = null;
+      if (activeChat?.type === 'private' || activeChat?.type === 'direct') {
+        const partner = getPartnerUser();
+        if (partner) inviteeId = partner.id;
+      }
+      try {
+        await warshipsApi.create(id, inviteeId);
+        setText(''); clearDraft(id);
+      } catch (e: any) {
+        setToast({ message: e?.response?.data?.message || 'Не удалось создать сессию морского боя', severity: 'error' });
+      }
+      return;
+    }
     draftRevisionRef.current += 1;
     languageCorrectionRequestRef.current += 1;
     languageCorrectionAbortRef.current?.abort();
@@ -896,22 +1214,29 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     if (id) clearDraft(id); // Очищаем черновик после отправки
     if (typingTimer.current) clearTimeout(typingTimer.current);
     try { sendTypingStop(id); } catch {}
-    if (msg) {
-      await sendMessage(id, msg, activeChat?.type === 'channel' ? undefined : replyTo?.id);
-    }
+    // Текст и вложения — одно сообщение (подпись к альбому, как в ВК),
+    // а не два: сначала текст, потом файлы.
     if (pendingFiles.length > 0) {
-      await uploadAndSendFiles(pendingFiles);
+      await uploadAndSendFiles(pendingFiles, msg);
     } else {
+      if (msg) {
+        await sendMessage(id, msg, activeChat?.type === 'channel' ? undefined : replyTo?.id);
+      }
       setReplyTo(null);
     }
 
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Escape в режиме правки — отмена и возврат черновика (как раньше в пузыре).
+    if (e.key === 'Escape' && editingRef.current) { e.preventDefault(); cancelEdit(); return; }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
   const handleTyping = (value: string) => {
+    // Во время правки не пишем черновик и не шлём typing: поле занято текстом
+    // сообщения, а не новым набором. Черновик вернётся при отмене/сохранении.
+    if (editingRef.current) { setText(value); return; }
     draftRevisionRef.current += 1;
     setLanguageCorrectionExplanation('');
     setText(value);
@@ -933,6 +1258,9 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   };
 
   const correctDraft = async () => {
+    // Во время правки корректор не работает: черновик в сторе намеренно не
+    // обновляется (см. handleTyping), результат всё равно был бы отброшен.
+    if (editingRef.current) return;
     if (!id || !languageCorrectionEnabled || blockReadOnly || uploading || languageCorrectionBusy || languageCorrectionAbortRef.current) return;
     const sourceText = text;
     if (!sourceText.trim()) return;
@@ -1015,12 +1343,15 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     }
   };
 
-  // Загрузить массив File[] и отправить
-  const uploadAndSendFiles = async (files: File[]) => {
+  // Загрузить массив File[] и отправить ОДНИМ сообщением-«альбомом» (как в ВК).
+  const uploadAndSendFiles = async (files: File[], caption = '') => {
     if (blockReadOnly || !files.length || !id) return;
     setUploading(true); setUploadProgress(0);
-    let sentCount = 0;
+    let allUploaded = false;
     try {
+      // Сначала грузим все файлы и только потом отправляем одно сообщение:
+      // фото не должны размазываться по отдельным сообщениям.
+      const uploaded: any[] = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         setUploadProgress(Math.round((i / files.length) * 100));
@@ -1031,23 +1362,38 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
         });
         const attachment: any = toMessageAttachment(upload.data, file);
         if (!attachment.fileUrl) throw new Error('Upload response does not contain a file URL');
-        const mime = attachment.mimeType || '';
-        let msgType = 'document';
-        if (mime.startsWith('image/')) msgType = 'photo';
-        else if (mime.startsWith('video/')) msgType = 'video';
-        else if (mime.startsWith('audio/')) msgType = 'audio';
-        await sendMessageWithFile(id, attachment, activeChat?.type === 'channel' ? undefined : replyTo?.id, msgType);
-        sentCount++;
+        uploaded.push(attachment);
       }
+      setUploadProgress(100);
+      // Тип сообщения — по содержимому: альбом из фото получает type 'photo',
+      // чтобы клиенты рисовали его сеткой, а не списком файлов.
+      let msgType = 'document';
+      if (uploaded.every(a => (a.mimeType || '').startsWith('image/'))) msgType = 'photo';
+      else if (uploaded.every(a => (a.mimeType || '').startsWith('video/'))) msgType = 'video';
+      else if (uploaded.every(a => (a.mimeType || '').startsWith('audio/'))) msgType = 'audio';
+      await sendMessageWithFile(id, uploaded, activeChat?.type === 'channel' ? undefined : replyTo?.id, msgType, caption);
+      allUploaded = true;
       setReplyTo(null);
     } catch (err) {
       console.error('uploadAndSendFiles error:', err);
-      setToast({ message: 'Ошибка загрузки файла. Проверьте подключение к серверу.', severity: 'error' });
+      setToast({
+        message: caption
+          ? 'Ошибка загрузки файла. Текст и файлы остались в поле — попробуйте ещё раз.'
+          : 'Ошибка загрузки файла. Проверьте подключение к серверу.',
+        severity: 'error',
+      });
+      // Текст и файлы не теряем: возвращаем подпись в поле ввода.
+      if (caption && !textRef.current) {
+        setText(caption);
+        if (id) setDraft(id, caption);
+      }
     } finally {
       setUploading(false); setUploadProgress(0);
-      pendingPreviews.slice(0, sentCount).forEach(url => { if (url) URL.revokeObjectURL(url); });
-      setPendingFiles(current => current.slice(sentCount));
-      setPendingPreviews(current => current.slice(sentCount));
+      if (allUploaded) {
+        pendingPreviews.slice(0, files.length).forEach(url => { if (url) URL.revokeObjectURL(url); });
+        setPendingFiles(current => current.slice(files.length));
+        setPendingPreviews(current => current.slice(files.length));
+      }
     }
   };
 
@@ -1119,6 +1465,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const localSearchResults = searchQuery.trim()
     ? chatMessages.filter(m => m.content?.toLowerCase().includes(searchQuery.trim().toLowerCase()))
     : chatMessages;
+  searchActiveRef.current = !!(showSearch && searchQuery.trim());
   const visibleMessages = showSearch && searchQuery.trim()
     ? (serverSearchResults.length ? serverSearchResults.slice().reverse() : localSearchResults)
     : windowedMessages;
@@ -1157,6 +1504,87 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     if (activeChat?.type !== 'channel') setReplyTo(m);
   }, [activeChat?.type]);
   const handleForward = useCallback((m: Message) => { setForwardError(''); setForwardMsg(m); }, []);
+
+  // ── Режим выделения (как в Telegram) ──
+  // Окно чата подписано только на «чат режима» и счётчик: сами галочки читает
+  // каждый пузырь своим селектором, так что выделение не перерисовывает ленту.
+  const selectionChatId = useMessageSelectionStore((s) => s.chatId);
+  const selectionCount = useMessageSelectionStore((s) => s.count);
+  const selectionOn = !!id && selectionChatId === id;
+  const [selectionBusy, setSelectionBusy] = useState(false);
+  // Смена чата или уход со страницы — выходим из режима.
+  useEffect(() => () => useMessageSelectionStore.getState().clear(), [id]);
+  useEffect(() => {
+    if (!selectionOn) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') useMessageSelectionStore.getState().clear(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectionOn]);
+  // Выделенные сообщения в порядке ленты (а не в порядке кликов).
+  const getSelectedMessages = useCallback((): Message[] => {
+    const ids = useMessageSelectionStore.getState().ids;
+    return chatMessages.filter((m) => ids[m.id]);
+  }, [chatMessages]);
+  const myMember = activeChat?.members?.find((m) => m.userId === user?.id);
+  // Те же права, что и у пункта «Удалить» в пузыре: своё сообщение (кроме
+  // каналов) или право deleteMessages у админа.
+  const canDeleteMessage = useCallback((m: Message) => (
+    activeChat?.type !== 'channel' && m.senderId === user?.id
+  ) || hasGroupRight(myMember, 'deleteMessages'),
+  [activeChat?.type, user?.id, myMember]);
+  const handleForwardSelected = () => {
+    const list = getSelectedMessages().filter((m) => !m.isDeleted);
+    if (!list.length) return;
+    setForwardError('');
+    setForwardBatch(list);
+  };
+  const handleDeleteSelected = async () => {
+    const list = getSelectedMessages().filter(canDeleteMessage);
+    if (!list.length || selectionBusy) return;
+    setSelectionBusy(true);
+    try {
+      const del = useChatStore.getState().deleteMessage;
+      // Параллельно: каждое удаление — независимый запрос со своей анимацией.
+      const results = await Promise.allSettled(list.map((m) => del(m.id, m.chatId)));
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      useMessageSelectionStore.getState().clear();
+      setToast(failed
+        ? { message: `Не удалось удалить сообщений: ${failed}`, severity: 'error' }
+        : { message: list.length > 1 ? `Удалено сообщений: ${list.length}` : 'Сообщение удалено', severity: 'success' });
+    } finally {
+      setSelectionBusy(false);
+    }
+  };
+  // Кнопку «Удалить» показываем, только если можно удалить ВСЁ выделенное —
+  // иначе пользователь не поймёт, почему часть сообщений осталась.
+  const selectionDeletable = selectionOn && selectionCount > 0 && getSelectedMessages().every(canDeleteMessage);
+  // Правка перенесена из пузыря в строку ввода: текст подставляется в инпут,
+  // пузырь остаётся неизменным (в нём на некоторых темах правка была не видна).
+  // Колбэк стабильный — свежий черновик берём из textRef, а не из замыкания.
+  const handleEdit = useCallback((m: Message) => {
+    preEditTextRef.current = textRef.current;
+    editingRef.current = m;
+    setEditing(m);
+    setReplyTo(null);
+    setText(m.content || '');
+    // Фокус — после перерисовки, чтобы курсор оказался в конце подставленного текста.
+    requestAnimationFrame(() => {
+      const el = messageInputRef.current;
+      el?.focus({ preventScroll: true });
+      const len = (el as HTMLInputElement | HTMLTextAreaElement | null)?.value?.length ?? 0;
+      try { (el as HTMLTextAreaElement | null)?.setSelectionRange?.(len, len); } catch {}
+    });
+  }, []);
+  // Отмена правки: возвращаем черновик, который был в инпуте до неё. Черновик
+  // в draftsStore во время правки не трогали (см. guard в handleTyping).
+  const cancelEdit = useCallback(() => {
+    editingRef.current = null;
+    setEditing(null);
+    const back = preEditTextRef.current;
+    preEditTextRef.current = '';
+    setText(back);
+    messageInputRef.current?.focus({ preventScroll: true });
+  }, []);
   const handleSetProfileUser = useCallback((u: User) => setProfileUser(u), []);
   const handleScrollToMessage = useCallback((msgId: string) => {
     const jump = () => {
@@ -1200,7 +1628,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const resetChatTheme = () => {
     if (!id || !canResetChatTheme) return;
     removeChatTheme(id);
-    setToast({ message: 'Персональная тема чата сброшена', severity: 'info' });
+    setToast({ message: 'Оформление чата сброшено', severity: 'info' });
   };
   const smartWpActiveId = useShopStore((s) => s.activeWallpaper);
   const smartWpOwned = useShopStore((s) => s.owned);
@@ -1262,10 +1690,11 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     }
   };
 
-  // Группа, название которой начинается с «|», — не переписка, а доска.
-  // Считаем здесь, а не внутри JSX: имя может меняться на лету.
-  const isDesk = isDeskName(activeChat?.name);
-  const isWhiteboard = /^\s*\//.test(activeChat?.name || '');
+  // Группа, созданная с «|», — не переписка, а доска; с «/» — холст.
+  // Вид хранится в chat.kind: символ в название не попадает, и
+  // переименование не превращает чат в доску или обратно.
+  const isDesk = isDeskChat(activeChat);
+  const isWhiteboard = isWhiteboardChat(activeChat);
 
   if (!activeChat) {
     // If there's a chat id in URL — we're loading, not waiting for selection
@@ -1358,6 +1787,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
+        onWheel={forwardWheelToMessages}
         onPointerDown={(e) => {
           const target = e.target as Element;
           if (!target.closest('[data-chat-composer]')) {
@@ -1611,7 +2041,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={() => setAnchorEl(null)}
             PaperProps={{
               sx: {
-                bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
+                // Всё, что за меню «три точки», размывается.
+                ...frostedPaperSx(theme.bgHeader, theme.border),
                 borderRadius: 2.5, minWidth: 220,
                 boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
                 py: 0.5,
@@ -1664,7 +2095,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
                 '&:hover': { bgcolor: theme.bgHover },
               }}>
               <Palette sx={{ fontSize: 18, color: theme.textSec }} />
-              Персональная тема чата
+              Оформление чата
             </MenuItem>
             {/* Два действия в одну строку: предложить настройки / сбросить тему.
                 minWidth держит меню достаточно широким, иначе flex-кнопки
@@ -1686,7 +2117,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
                 disabled={!canResetChatTheme}
                 title={canResetChatTheme
                   ? `Вернуть общую тему «${baseTheme.name}»`
-                  : 'У этого чата нет персональной темы'}
+                  : 'У этого чата нет своего оформления'}
                 sx={menuActionSx}
               >
                 <RestartAlt sx={{ fontSize: 16, color: theme.textSec }} />
@@ -1964,7 +2395,13 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
         {activeChat && currentPinned && (
           <Box sx={{
             px: 2.5, py: 0.75,
-            bgcolor: theme.accent + '12',
+            // Тон акцента + нейтральный скрим: подложка не сливается с обоями
+            // даже на светлых картинках.
+            background: `linear-gradient(${theme.accent}12, ${theme.accent}12), ${theme.bgHeader}CC`,
+            // Обои под плашкой размываем — иначе текст фонового рисунка
+            // конкурирует с подписью закрепления (та же механика, что у шапки).
+            backdropFilter: 'blur(22px) saturate(140%)',
+            WebkitBackdropFilter: 'blur(22px) saturate(140%)',
             borderBottom: `1px solid ${theme.accent}30`,
             display: 'flex', alignItems: 'center', gap: 1,
             width: '100%', minWidth: 0, maxWidth: '100%',
@@ -2076,6 +2513,20 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           onClick={clearHover}
           onContextMenu={clearHover}
         >
+          {/* Индикатор догрузки старых сообщений. Нулевая высота + sticky:
+              появление/исчезновение не сдвигает ленту. */}
+          {olderLoading && !searchQuery.trim() && (
+            <Box
+              role="status"
+              aria-label="Загрузка старых сообщений"
+              sx={{
+                position: 'sticky', top: 8, height: 0, zIndex: 3,
+                display: 'flex', justifyContent: 'center', overflow: 'visible', pointerEvents: 'none',
+              }}
+            >
+              <CircularProgress size={20} sx={{ color: theme.accent }} />
+            </Box>
+          )}
           {chatMessages.length === 0 && !searchQuery.trim() && (
             <Box display="flex" justifyContent="center" mt={6}>
               <Typography sx={{ fontSize: 15, color: theme.textSec }}>Нет сообщений. Напишите первым!</Typography>
@@ -2100,17 +2551,26 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
                 </Typography>
               </Box>
               {msgs.map((msg, index) => {
-                const previous = msgs[index - 1];
-                const next = msgs[index + 1];
+                // Соседей, которые прямо сейчас схлопываются после удаления,
+                // при расчёте границ пропускаем: плашка «Вы» переходит к
+                // следующему сообщению сразу, в момент удаления, а не после
+                // паузы анимации (иначе она исчезает и снова появляется).
+                let p = index - 1;
+                while (p >= 0 && deletingMessageIds.has(msgs[p].id)) p -= 1;
+                const previous = p >= 0 ? msgs[p] : undefined;
+                let n = index + 1;
+                while (n < msgs.length && deletingMessageIds.has(msgs[n].id)) n += 1;
+                const next = n < msgs.length ? msgs[n] : undefined;
                 const isGroupStart = !previous || previous.senderId !== msg.senderId;
                 const isGroupEnd = !next || next.senderId !== msg.senderId;
                 return (
                                 <MessageBubble
-                  key={msg.id}
+                  key={(msg as any).clientTempId || msg.id}
                   message={msg}
                   isOwn={activeChat.type !== 'channel' && msg.senderId === user?.id}
                   onReply={handleReply}
                   onForward={handleForward}
+                  onEdit={handleEdit}
                   onAvatarClick={handleSetProfileUser}
                   onScrollToMessage={handleScrollToMessage}
                   accent={theme.accent}
@@ -2127,6 +2587,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
                   bubbleEnabled={effectiveBubble.enabled}
                   bubbleTextSize={effectiveBubble.textSize}
                   bubblePadding={effectiveBubble.padding}
+                  bubbleWallAlign={effectiveBubble.wallAlign}
+                  bubbleMetaPos={effectiveBubble.metaPos}
                   isGroupStart={isGroupStart}
                   isGroupEnd={isGroupEnd}
                 />
@@ -2207,6 +2669,29 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           </Box>
         )}
 
+        {/* ── Edit bar: правка сообщения идёт в строке ввода ниже ── */}
+        {editing && (
+          <Box sx={{
+            px: 2.5, py: 1,
+            bgcolor: theme.accent + '15',
+            borderTop: `2px solid ${theme.accent}`,
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            flexShrink: 0,
+          }}>
+            <Box minWidth={0} flex={1}>
+              <Typography sx={{ fontSize: 13, color: theme.accent, fontWeight: 600 }}>
+                Редактирование сообщения
+              </Typography>
+              <Typography sx={{ fontSize: 14, color: theme.textSec }} noWrap>
+                {editing.content || 'Вложение'}
+              </Typography>
+            </Box>
+            <IconButton size="small" aria-label="Отменить редактирование" onClick={cancelEdit} sx={{ color: theme.textSec, ml: 1 }}>
+              ✕
+            </IconButton>
+          </Box>
+        )}
+
         {/* ── Reply bar ── */}
         {replyTo && (
           <Box sx={{
@@ -2283,7 +2768,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
               <Button
                 variant="contained"
                 size="small"
-                onClick={() => activeChat?.type === 'channel' ? handleSend() : uploadAndSendFiles(pendingFiles)}
+                onClick={() => handleSend()}
                 disabled={uploading}
                 sx={{ bgcolor: theme.accent, color: '#fff', textTransform: 'none', borderRadius: 2, '&:hover': { bgcolor: theme.accent + 'CC' } }}
               >
@@ -2377,11 +2862,57 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           </Box>
         )}
 
+        {/* ── Панель режима выделения: заменяет строку ввода ── */}
+        {selectionOn && (
+          <Box
+            role="toolbar"
+            aria-label="Действия с выделенными сообщениями"
+            sx={{
+              display: 'flex', alignItems: 'center', gap: 1,
+              px: { xs: 1, md: 2 }, py: 1,
+              pb: { xs: 'calc(0.5rem + env(safe-area-inset-bottom))', md: 1 },
+              bgcolor: theme.bgHeader,
+              backdropFilter: 'blur(22px)',
+              borderTop: chatInputPos === 'top' ? 'none' : `1px solid ${theme.border}`,
+              borderBottom: chatInputPos === 'top' ? `1px solid ${theme.border}` : 'none',
+              flexShrink: 0, position: 'relative', zIndex: 2,
+              order: { xs: 4, md: chatInputPos === 'top' ? 1 : 4 },
+            }}
+          >
+            <Tooltip title="Отменить выделение (Esc)">
+              <IconButton aria-label="Отменить выделение" onClick={() => useMessageSelectionStore.getState().clear()} sx={{ color: theme.textSec }}>
+                <Close />
+              </IconButton>
+            </Tooltip>
+            <Typography sx={{ color: theme.text, fontWeight: 600, fontSize: 15, flex: 1 }} aria-live="polite">
+              Выбрано: {selectionCount}
+            </Typography>
+            <Button
+              startIcon={<Forward />}
+              disabled={!selectionCount || selectionBusy}
+              onClick={handleForwardSelected}
+              sx={{ textTransform: 'none', color: theme.accent }}
+            >
+              Переслать
+            </Button>
+            {selectionDeletable && (
+              <Button
+                startIcon={selectionBusy ? <CircularProgress size={16} color="inherit" /> : <Delete />}
+                disabled={selectionBusy}
+                onClick={() => { void handleDeleteSelected(); }}
+                sx={{ textTransform: 'none', color: '#f44336' }}
+              >
+                Удалить
+              </Button>
+            )}
+          </Box>
+        )}
+
         {/* ── Input ── */}
         <Box data-chat-composer sx={{
           // На доске строка ввода чата не нужна: там есть своё поле для карточек,
           // а две строки ввода друг над другом занимали бы полэкрана и путались.
-          display: (isDesk || iBlockedPeer || peerBlockedMe) ? 'none' : 'flex', alignItems: 'flex-end', gap: 0.85,
+          display: (isDesk || iBlockedPeer || peerBlockedMe || selectionOn) ? 'none' : 'flex', alignItems: 'flex-end', gap: 0.85,
           px: { xs: 0.65, md: 1.6 }, py: { xs: 0.55, md: 1.25 },
           pb: { xs: 'calc(0.55rem + env(safe-area-inset-bottom))', md: 1.25 },
           bgcolor: theme.bgHeader,
@@ -2504,7 +3035,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
               fullWidth multiline maxRows={6}
               key="message-composer-input"
               disabled={blockReadOnly}
-              placeholder={peerBlockedMe ? "Вас заблокировал этот пользователь" : channelReadOnly ? "Комментарии доступны под публикациями" : activeChat.type === "channel" ? "Публикация от имени канала..." : "Сообщение..."}
+              placeholder={editing ? "Редактирование сообщения (Enter — сохранить, Esc — отменить)" : peerBlockedMe ? "Вас заблокировал этот пользователь" : channelReadOnly ? "Комментарии доступны под публикациями" : activeChat.type === "channel" ? "Публикация от имени канала..." : "Сообщение..."}
               value={text}
               inputRef={messageInputRef}
               onFocus={() => setKeepSendButton(true)}
@@ -2530,7 +3061,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
               }}
             />
 
-          {(text.trim() || pendingFiles.length > 0 || keepSendButton) ? (
+          {((editing && (text.trim() || !!editing.attachments?.length)) || text.trim() || pendingFiles.length > 0 || keepSendButton) ? (
             <Tooltip title="Отправить (Enter)">
               <IconButton
                 onPointerDown={(e) => {
@@ -2556,7 +3087,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
                 '&:active::after': { opacity: 1, transform: 'scale(1)' },
                 '&:hover': { bgcolor: theme.accent + 'CC' },
                 ...membranePressSx,
-              }} disabled={blockReadOnly || uploading || (!text.trim() && pendingFiles.length === 0)}>
+              }} disabled={blockReadOnly || uploading || (!text.trim() && pendingFiles.length === 0 && !(editing && editing.attachments?.length))}>
                 <SendIcon sx={{ fontSize: 22 }} />
               </IconButton>
             </Tooltip>
@@ -2657,24 +3188,24 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
 
       {/* ── Диалог пересылки сообщения ── */}
       <Dialog
-        open={!!forwardMsg}
-        onClose={() => { if (!forwardBusy) setForwardMsg(null); }}
+        open={forwardItems.length > 0}
+        onClose={() => { if (!forwardBusy) closeForward(); }}
         PaperProps={{ sx: { bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`, borderRadius: 3, minWidth: 360, maxWidth: 480 } }}
       >
         <DialogTitle sx={{ color: theme.text, fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          Переслать сообщение
-          <IconButton size="small" disabled={forwardBusy} onClick={() => setForwardMsg(null)} sx={{ color: theme.textSec }}>
+          {forwardItems.length > 1 ? `Переслать сообщения (${forwardItems.length})` : 'Переслать сообщение'}
+          <IconButton size="small" disabled={forwardBusy} onClick={closeForward} sx={{ color: theme.textSec }}>
             <Close sx={{ fontSize: 18 }} />
           </IconButton>
         </DialogTitle>
         <DialogContent sx={{ pt: 0 }}>
-          {forwardMsg && (
+          {forwardItems.length === 1 && (
             <Box sx={{ bgcolor: theme.bgChat, borderRadius: 2, p: 1.5, mb: 2, border: `1px solid ${theme.border}` }}>
               <Typography sx={{ fontSize: 13, color: theme.accent, fontWeight: 600, mb: 0.3 }}>
-                {forwardMsg.sender?.firstName || forwardMsg.sender?.username}
+                {forwardItems[0].sender?.firstName || forwardItems[0].sender?.username}
               </Typography>
               <Typography sx={{ fontSize: 14, color: theme.textSec }} noWrap>
-                {forwardMsg.content || '📎 Вложение'}
+                {forwardItems[0].content || '📎 Вложение'}
               </Typography>
             </Box>
           )}
@@ -2693,13 +3224,20 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
                 <Box
                   key={c.id}
                   onClick={async () => {
-                    if (!forwardMsg || forwardBusyRef.current) return;
+                    if (!forwardItems.length || forwardBusyRef.current) return;
                     forwardBusyRef.current = true;
                     setForwardBusy(true); setForwardError('');
                     try {
-                      await useChatStore.getState().forwardMessage(c.id, forwardMsg);
-                      setForwardMsg(null);
-                      setToast({ message: 'Сообщение переслано', severity: 'success' });
+                      // По одному и по порядку ленты — так в целевом чате
+                      // сообщения окажутся в той же последовательности.
+                      const forwardable = forwardItems.filter((m) => !m.isDeleted);
+                      for (const m of forwardable) {
+                        await useChatStore.getState().forwardMessage(c.id, m);
+                      }
+                      const many = forwardable.length > 1;
+                      closeForward();
+                      useMessageSelectionStore.getState().clear();
+                      setToast({ message: many ? `Переслано сообщений: ${forwardable.length}` : 'Сообщение переслано', severity: 'success' });
                     } catch (error: any) {
                       setForwardError(error?.response?.data?.message || error?.message || 'Не удалось переслать сообщение');
                     } finally {

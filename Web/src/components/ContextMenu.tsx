@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Box, Typography } from '@mui/material';
 import { useThemeStore } from '../store/themeStore';
+import { UI_SURFACE_RADIUS, UI_INNER_RADIUS } from '../store/uiPrefsStore';
 
 export interface ContextMenuItem {
   key: string;
@@ -20,6 +21,10 @@ interface Props {
   items: ContextMenuItem[];
   onClose: () => void;
   title?: string;
+  /** Меню поверх лайтбокса (zIndex 13000) — например, ПКМ по картинке. */
+  zIndex?: number;
+  /** Произвольная строка над пунктами (например, быстрые реакции сообщения). */
+  header?: React.ReactNode;
 }
 
 /**
@@ -31,7 +36,7 @@ interface Props {
  * — авто-позиционирование, чтобы не вылезать за экран,
  * — закрытие по клику снаружи и по Escape.
  */
-export default function ContextMenu({ x, y, items, onClose, title }: Props) {
+export default function ContextMenu({ x, y, items, onClose, title, zIndex = 2000, header }: Props) {
   const { theme } = useThemeStore();
   const [pos, setPos] = useState({ x, y });
   const [ready, setReady] = useState(false);
@@ -64,10 +69,11 @@ export default function ContextMenu({ x, y, items, onClose, title }: Props) {
     <Box
       onClick={onClose}
       onContextMenu={(e) => { e.preventDefault(); onClose(); }}
-      sx={{ position: 'fixed', inset: 0, zIndex: 2000 }}>
+      sx={{ position: 'fixed', inset: 0, zIndex }}>
       <Box
         ref={ref}
         onClick={(e) => e.stopPropagation()}
+        data-vera-context-menu="true"
         sx={{
           position: 'fixed',
           left: pos.x,
@@ -80,7 +86,8 @@ export default function ContextMenu({ x, y, items, onClose, title }: Props) {
           backdropFilter: 'blur(14px) saturate(140%)',
           WebkitBackdropFilter: 'blur(14px) saturate(140%)',
           border: `1px solid ${theme.border}`,
-          borderRadius: 3,
+          // Углы — из ползунка «Скругление углов интерфейса».
+          borderRadius: UI_SURFACE_RADIUS,
           boxShadow: '0 20px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.04) inset',
           p: 0.75,
           opacity: ready ? 1 : 0,
@@ -95,6 +102,12 @@ export default function ContextMenu({ x, y, items, onClose, title }: Props) {
             color: theme.textSec, px: 1.5, py: 0.75,
           }}>{title}</Typography>
         )}
+        {header && (
+          <>
+            {header}
+            {items.length > 0 && <Box sx={{ height: 1, bgcolor: theme.border, my: 0.5, mx: 0.5, opacity: 0.6 }} />}
+          </>
+        )}
         {items.map((it) => (
           <React.Fragment key={it.key}>
             {it.divider && (
@@ -105,7 +118,8 @@ export default function ContextMenu({ x, y, items, onClose, title }: Props) {
               sx={{
                 display: 'flex', alignItems: 'center', gap: 1.25,
                 px: 1.25, py: 1,
-                borderRadius: 2,
+                // Пункт внутри плашки с отступом 6px — углы идут параллельно.
+                borderRadius: UI_INNER_RADIUS,
                 cursor: it.disabled ? 'not-allowed' : 'pointer',
                 color: it.disabled ? theme.textSec : (it.danger ? '#ff6b6b' : theme.text),
                 opacity: it.disabled ? 0.5 : 1,

@@ -14,10 +14,11 @@ function setup(type = 'direct') {
       chatMembers: ['source', 'target'].map(chatId => ({ chatId, userId: 'alice', role: 'member' })),
     },
     uuidv4: () => `message-${++sequence}`, MESSAGE_MAX_LEN: 10000, EDIT_WINDOW_MS: 172800000,
-    authMiddleware() {}, io: { to: () => ({ emit() {} }) },
+    authMiddleware() {}, io: { to: () => ({ emit() {} }) }, reactionSkins: require('./reaction-skins'),
     saveDb() { disk = JSON.stringify(context.db); },
     app: Object.fromEntries(['post', 'get', 'put'].map(method => [method, (url, auth, fn) => { routes[method + ' ' + url] = fn; }])),
   };
+  require('./privacy-test-context')(context);
   for (const [start, end] of [
     ['function messageSender(', '// POST /api/messages/:chatId  (base route)'],
     ['function getPinnedMessage(', '// Общий обработчик отправки сообщения'],
@@ -169,6 +170,22 @@ for (const type of ['direct', 'group']) {
     assert.deepEqual(ids(list.data.filter(m => m.isPinned).map(m => m.id)), [first.id, second.id]);
   });
 }
+
+test('reaction skins: only owned skins can be added, removal always works', () => {
+  const { send, routes, response, context } = setup('group');
+  const msg = send('source', { text: 'hi' }).data;
+  const react = (emoji) => { const res = response(); routes['post /api/messages/:chatId/reaction']({ params: { chatId: 'source' }, userId: 'alice', body: { messageId: msg.id, emoji } }, res); return res; };
+  assert.equal(react('rx-gold-star').code, 403, 'чужой скин поставить нельзя');
+  assert.equal(react('rx-unknown').code, 403);
+  assert.equal(react('').code, 400);
+  context.db.users[0].reactionSkins = { 'rx-gold-star': 1 };
+  assert.equal(react('rx-gold-star').code, 200);
+  assert.equal(context.db.messages[0].reactions[0].emoji, 'rx-gold-star');
+  // Скин продан — но снять свою реакцию всё ещё можно.
+  context.db.users[0].reactionSkins = {};
+  assert.equal(react('rx-gold-star').code, 200);
+  assert.equal((context.db.messages[0].reactions || []).filter(r => r.emoji === 'rx-gold-star' && r.count > 0).length, 0);
+});
 
 test('deleted pinned message leaves the list on the next sync', () => {
   const { send, context, routes, response } = setup('group');

@@ -49,7 +49,7 @@ function ThemeCard({ t, active, onApply, onEdit, onDelete, onCopyLink }: {
       <Box sx={{ p: 1.5 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <Box sx={{
-            width: 14, height: 14, borderRadius: '50%',
+            width: 14, height: 14, borderRadius: '4px',
             background: t.accent, flexShrink: 0,
             boxShadow: `0 0 10px ${t.accent}`,
           }} />

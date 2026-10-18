@@ -20,6 +20,8 @@ import {
   countInFolder, foldersOf, type DeskItem, type DeskBoard,
 } from '../utils/deskBoard';
 import { useDeskBoard } from '../hooks/useDeskBoard';
+import { useDeskAlarms, alarmLabel } from '../hooks/useDeskAlarms';
+import { requestNotificationPermission } from '../services/notifications';
 import { usersApi } from '../services/api';
 import DeskCard from './DeskCard';
 
@@ -44,6 +46,9 @@ const DESK_EMOJIS = [
 
 export default function DeskBoard({ chatId, chatName }: Props) {
   const bus = useDeskBoard(chatId);
+  const alarms = useDeskAlarms(bus.board, {
+    chatId, chatName, canEdit: bus.rights.canEdit, clearAlarm: (id) => bus.setAlarm(id, null),
+  });
   const fileRef = useRef<HTMLInputElement | null>(null);
   const editFileRef = useRef<HTMLInputElement | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -242,6 +247,12 @@ export default function DeskBoard({ chatId, chatName }: Props) {
               onDelete={() => bus.drop(item.id)}
               onStartLink={() => startLink(item.id)}
               onCancelLink={() => setLinkFrom(null)}
+              onSetAlarm={(at) => {
+                bus.setAlarm(item.id, at);
+                // Разрешение на уведомления просим по жесту пользователя —
+                // иначе браузер молча откажет.
+                if (at !== null) void requestNotificationPermission().catch(() => {});
+              }}
             />
           ))}
           {bus.ready && bus.board.items.length === 0 && !bus.error && <EmptyHint canEdit={bus.rights.canEdit} />}
@@ -299,6 +310,23 @@ export default function DeskBoard({ chatId, chatName }: Props) {
       />
 
       <AccessDialog open={accessOpen} onClose={() => setAccessOpen(false)} bus={bus} />
+
+      <Dialog open={!!alarms.ringing} onClose={alarms.dismiss} maxWidth="xs" fullWidth aria-labelledby="desk-alarm-title">
+        <DialogTitle id="desk-alarm-title" sx={{ fontSize: 16 }}>⏰ Будильник</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {alarms.ringing ? alarmLabel(alarms.ringing) : ''}
+          </Typography>
+          {typeof alarms.ringing?.alarmAt === 'number' && (
+            <Typography sx={{ fontSize: 12, opacity: 0.7, mt: 1 }}>
+              {new Date(alarms.ringing.alarmAt).toLocaleString()}
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button variant="contained" color="error" autoFocus onClick={alarms.dismiss}>Выключить</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
@@ -494,6 +522,7 @@ function DeskCardWithPhoto(props: {
   onDelete: () => void;
   onStartLink: () => void;
   onCancelLink: () => void;
+  onSetAlarm: (at: number | null) => void;
 }) {
   const { item } = props;
   // Фото доски лежат на сервере в /uploads/proto, поэтому это обычная

@@ -22,6 +22,11 @@ import { GROUP_RIGHTS, GroupRight, hasGroupRight } from '../services/groupPermis
 import { SHOP_CATALOG, useShopStore } from '../store/shopStore';
 import { useChatSkinStore } from '../store/chatSkinStore';
 import type { ChatSkinSlot } from '../store/chatSkinStore';
+import { frostedPaperSx } from '../styles/frosted';
+import {
+  CHAT_AVATAR_PRESETS, ChatAvatarPreset, presetBackground, renderChatAvatarPreset,
+} from '../services/chatAvatarPresets';
+import { BOARD_COMMANDS, stripKindCommand } from '../utils/deskBoard';
 
 /** Слоты «моих скинов» для инфопанели: store-ключ, applyKey каталога, подпись. */
 const CHAT_SKIN_SLOTS = [
@@ -60,6 +65,14 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
   const setChatSkin = useChatSkinStore((s) => s.setChatSkin);
   const clearChatSkins = useChatSkinStore((s) => s.clearChatSkins);
   const ownedSkins = useShopStore((s) => s.owned);
+  // Выпадающий список скинов: под названиями всё размывается (как у меню «три точки»).
+  const skinSelectProps = {
+    MenuProps: {
+      PaperProps: {
+        sx: { ...frostedPaperSx(theme.bgHeader, theme.border), color: theme.text, borderRadius: 2.5, boxShadow: '0 8px 32px rgba(0,0,0,0.4)' },
+      },
+    },
+  };
   const navigate = useNavigate();
   const savedWidth = useUserSettingsStore(s => s.layout.chatInfoWidth);
   const setLayout = useUserSettingsStore(s => s.setLayout);
@@ -105,6 +118,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
   }, [chat.id]);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
 
   // Add member dialog
   const [addMemberOpen, setAddMemberOpen] = useState(false);
@@ -311,11 +325,17 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
     if (!newName.trim() || !canEdit) return;
     setSaving(true);
     try {
+      // Вид чата (доска/холст/канал) задаётся при создании и переименованием
+      // не меняется: команды вида из нового названия срезаем.
+      const cleanName = stripKindCommand(newName);
+      if (!cleanName) return;
       if (isPeerAvailable()) {
-        await peer.updateChat(chat.id, { title: newName.trim() });
+        // P2P хранит вид в самом title — дописываем команду обратно.
+        const marker = chat.kind ? BOARD_COMMANDS[chat.kind] + ' ' : '';
+        await peer.updateChat(chat.id, { title: marker + cleanName });
         await loadChats();
       } else {
-        const res = await chatsApi.update(chat.id, { name: newName.trim() });
+        const res = await chatsApi.update(chat.id, { name: cleanName });
         updateChatList(res.data);
       }
       setEditingName(false);
@@ -341,7 +361,19 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
 
   async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file || !canEdit) return;
+    e.target.value = '';
+    if (file) await applyAvatarFile(file);
+  }
+
+  /** Встроенное фото: рисуем пресет в PNG и сохраняем тем же путём, что и загрузку. */
+  async function pickAvatarPreset(preset: ChatAvatarPreset) {
+    setAvatarPickerOpen(false);
+    try { await applyAvatarFile(await renderChatAvatarPreset(preset)); }
+    catch (e) { console.error(e); }
+  }
+
+  async function applyAvatarFile(file: File) {
+    if (!canEdit) return;
     setUploadingAvatar(true);
     try {
       if (isPeerAvailable()) {
@@ -522,13 +554,16 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
                   border: `3px solid ${theme.accent}`,
                   boxShadow: `0 0 20px ${theme.accent}40`,
                 }}
-                onClick={() => canEdit && avatarInputRef.current?.click()}
+                onClick={() => canEdit && setAvatarPickerOpen(true)}
               >
                 {getInitials(displayName)}
               </Avatar>
             )}
             {canEdit && (
-              <Box onClick={() => avatarInputRef.current?.click()} sx={{
+              <Box component="button" type="button" aria-label="Изменить фото чата"
+                disabled={uploadingAvatar}
+                onClick={() => setAvatarPickerOpen(true)} sx={{
+                border: 0, p: 0,
                 position: 'absolute', bottom: 0, right: 0,
                 width: 26, height: 26, borderRadius: '50%',
                 bgcolor: theme.accent,
@@ -596,6 +631,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
             ['activeSelfCard', 'selfCard', 'Плашка сообщений'],
             ['activeBubble', 'bubbleStyle', 'Пузырь сообщений'],
           ] as const).map(([key, applyKey, label]) => <TextField key={key} select fullWidth margin="dense" label={label}
+            SelectProps={skinSelectProps}
             disabled={channelSkins?.chatId !== chat.id}
             value={channelSkins?.chatId === chat.id && channelSkins.ids.includes(chat[key] || '') ? chat[key] : ''} onChange={async e => {
               setSkinError('');
@@ -617,6 +653,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
           {CHAT_SKIN_SLOTS.map(([slot, applyKey, label]) => {
             const value = !chatSkins || !(slot in chatSkins) ? 'profile' : chatSkins[slot] === '' ? 'none' : chatSkins[slot];
             return <TextField key={slot} select fullWidth margin="dense" label={label}
+              SelectProps={skinSelectProps}
               value={value}
               onChange={async e => {
                 const v = e.target.value;
@@ -959,6 +996,8 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
                 onClick={async () => {
                   try {
                     await chatsApi.leaveChat(chat.id);
+                    // Чистим архив, иначе loadChats вернёт покинутый чат из IndexedDB.
+                    await useChatStore.getState().forgetChat(chat.id);
                     await loadChats();
                     onClose();
                     navigate('/');
@@ -988,6 +1027,42 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
           <MenuItem sx={{ color: 'error.main' }} onClick={() => { openAdmin(selectedMember); setMemberMenu(null); }}>Снять администратора…</MenuItem>
         )}
       </Menu>
+
+      {/* Фото чата: готовые варианты или своё */}
+      <Dialog open={avatarPickerOpen} onClose={() => setAvatarPickerOpen(false)} fullWidth maxWidth="xs"
+        aria-labelledby="chat-avatar-picker-title"
+        PaperProps={{ sx: { bgcolor: theme.bgHeader, color: theme.text, borderRadius: 3, border: `1px solid ${theme.border}` } }}>
+        <DialogTitle id="chat-avatar-picker-title" sx={{ fontWeight: 700, fontSize: 17 }}>Фото чата</DialogTitle>
+        <DialogContent sx={{ pt: 0 }}>
+          <Button fullWidth variant="contained" startIcon={<CameraAlt />}
+            onClick={() => { setAvatarPickerOpen(false); avatarInputRef.current?.click(); }}
+            sx={{ mb: 2, textTransform: 'none', bgcolor: theme.accent, '&:hover': { bgcolor: theme.accent + 'cc' } }}>
+            Загрузить своё фото
+          </Button>
+          <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 1 }}>Или выберите готовое</Typography>
+          <Box role="list" sx={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1.25 }}>
+            {CHAT_AVATAR_PRESETS.map(p => (
+              <Box key={p.id} role="listitem" sx={{ display: 'flex', justifyContent: 'center' }}>
+                <Box component="button" type="button" aria-label={p.label} title={p.label}
+                  onClick={() => void pickAvatarPreset(p)}
+                  sx={{
+                    width: 56, height: 56, borderRadius: '50%', border: 0, p: 0, cursor: 'pointer',
+                    background: presetBackground(p), fontSize: 28, lineHeight: 1,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    transition: 'transform .15s',
+                    '&:hover': { transform: 'scale(1.08)' },
+                    '&:focus-visible': { outline: `3px solid ${theme.accent}`, outlineOffset: 2 },
+                  }}>
+                  <span aria-hidden="true">{p.emoji}</span>
+                </Box>
+              </Box>
+            ))}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setAvatarPickerOpen(false)} sx={{ color: theme.textSec }}>Отмена</Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Add member dialog */}
       <Dialog open={!!adminTarget} onClose={() => { if (!adminSaving) setAdminTarget(null); }} fullWidth maxWidth="xs"

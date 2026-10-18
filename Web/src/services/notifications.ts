@@ -50,3 +50,31 @@ export function showMessageNotification(payload: NotificationPayload): void {
   // Авто-закрытие через 5 сек
   setTimeout(() => n.close(), 5000);
 }
+
+/**
+ * Уведомление будильника. В отличие от сообщений показывается и при открытой
+ * вкладке: будильник для того и ставят, чтобы его заметили. Не закрывается само
+ * (requireInteraction), пока пользователь его не выключит.
+ */
+export function showAlarmNotification(payload: NotificationPayload): Notification | null {
+  if (!('Notification' in window)) return null;
+  if (Notification.permission !== 'granted') return null;
+  try {
+    const n = new Notification(payload.title, {
+      body: payload.body,
+      icon: payload.icon || '/vera-icon.png',
+      tag: payload.chatId ? `alarm-${payload.chatId}` : undefined,
+      requireInteraction: true,
+      silent: false,
+    } as NotificationOptions);
+    n.onclick = () => {
+      window.focus();
+      payload.onClick?.();
+      n.close();
+    };
+    return n;
+  } catch {
+    // На части мобильных браузеров конструктор Notification запрещён.
+    return null;
+  }
+}

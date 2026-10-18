@@ -1,12 +1,13 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button,
-  Typography, Box, Slider, IconButton, Tooltip, Stack,
+  Typography, Box, IconButton, Tooltip, Stack,
 } from '@mui/material';
 import { PlayCircleOutline, StopCircle, Delete, Upload, VolumeUp, VolumeOff } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
 import { useChatSoundStore } from '../store/chatSoundStore';
 import { playChimePreview } from '../utils/notificationSound';
+import SliderWithInput from './SliderWithInput';
 
 const MAX_SOUND_SIZE = 1.5 * 1024 * 1024;
 
@@ -71,11 +72,10 @@ export function GlobalSoundSettingsContent() {
       </Typography>
       <Stack direction="row" spacing={1} alignItems="center">
         <VolumeOff sx={{ fontSize: 18, color: theme.textSec }} />
-        <Slider size="small"
-          value={Math.round(globalVolume * 100)}
-          onChange={(_, v) => setGlobalVolume((Array.isArray(v) ? v[0] : v) / 100)}
-          min={0} max={100}
-          sx={{ color: theme.accent }} />
+        <SliderWithInput
+          value={globalVolume} onChange={setGlobalVolume}
+          min={0} max={1} step={0.01} scale={100}
+        />
         <VolumeUp sx={{ fontSize: 18, color: theme.textSec }} />
       </Stack>
 

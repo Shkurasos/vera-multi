@@ -8,6 +8,16 @@ interface Props {
   onError: (message: string) => void;
 }
 
+// Сторона квадратного кадра кружка. 720 — чётко на телефонах, а 60 с при
+// VIDEO_BITRATE укладываются примерно в 30 МБ (лимит загрузки — 100 МБ).
+const ROUND_SIDE = 720;
+const VIDEO_BITRATE = 4_000_000;
+// Просим HD: камеры выдают только свои штатные режимы, и квадрат 480×480 обычно
+// превращался в 640×480 с малой шириной. Квадрат потом вырезается по центру.
+const cameraConstraints = (facingMode: MediaTrackConstraints['facingMode']): MediaTrackConstraints => ({
+  facingMode, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 },
+});
+
 // A stable canvas track allows switching cameras without replacing recorder tracks.
 export default function HoldRecorder({ disabled, onSend, onError }: Props) {
   const [round, setRound] = useState(false);
@@ -69,7 +79,7 @@ export default function HoldRecorder({ disabled, onSend, onError }: Props) {
       s.audio = audio;
       let output = audio;
       if (round) {
-        const camera = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 480 } } });
+        const camera = await navigator.mediaDevices.getUserMedia({ video: cameraConstraints('user') });
         if (session.current !== s) { camera.getTracks().forEach(t => t.stop()); return; }
         s.camera = camera;
         const video = document.createElement('video');
@@ -78,14 +88,17 @@ export default function HoldRecorder({ disabled, onSend, onError }: Props) {
         await video.play();
         if (session.current !== s) return;
         const canvas = document.createElement('canvas');
-        canvas.width = canvas.height = 480;
-        const context = canvas.getContext('2d');
+        canvas.width = canvas.height = ROUND_SIDE;
+        const context = canvas.getContext('2d', { alpha: false });
         if (!context || !canvas.captureStream) throw new Error('unsupported');
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = 'high';
         const draw = () => {
           if (session.current !== s) return;
           if (video.readyState >= 2) {
+            // Центральный квадрат кадра (cover): без чёрных полей в записи.
             const side = Math.min(video.videoWidth, video.videoHeight);
-            context.drawImage(video, (video.videoWidth - side) / 2, (video.videoHeight - side) / 2, side, side, 0, 0, 480, 480);
+            context.drawImage(video, (video.videoWidth - side) / 2, (video.videoHeight - side) / 2, side, side, 0, 0, ROUND_SIDE, ROUND_SIDE);
           }
           s.frame = requestAnimationFrame(draw);
         };
@@ -97,7 +110,12 @@ export default function HoldRecorder({ disabled, onSend, onError }: Props) {
       }
       const candidates = round ? ['video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'] : ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
       const mimeType = candidates.find(type => MediaRecorder.isTypeSupported(type));
-      const recorder = new MediaRecorder(output, mimeType ? { mimeType } : undefined);
+      // Без явного битрейта браузеры жмут поток с canvas очень сильно.
+      const recorder = new MediaRecorder(output, {
+        ...(mimeType ? { mimeType } : {}),
+        audioBitsPerSecond: 128_000,
+        ...(round ? { videoBitsPerSecond: VIDEO_BITRATE } : {}),
+      });
       s.recorder = recorder;
       const chunks: Blob[] = [];
       recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
@@ -134,7 +152,7 @@ export default function HoldRecorder({ disabled, onSend, onError }: Props) {
     try {
       // Mobile devices often cannot open two cameras simultaneously.
       s.camera?.getTracks().forEach(t => t.stop());
-      const camera = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: facing } } });
+      const camera = await navigator.mediaDevices.getUserMedia({ video: cameraConstraints({ exact: facing }) });
       if (session.current !== s) { camera.getTracks().forEach(t => t.stop()); return; }
       s.camera = camera; s.video.srcObject = camera; s.facing = facing;
       await s.video.play();
@@ -145,7 +163,7 @@ export default function HoldRecorder({ disabled, onSend, onError }: Props) {
 
   return <>
     {active && <Box sx={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', zIndex: 1500, bgcolor: '#171923', color: '#fff', p: 2, borderRadius: 3, textAlign: 'center' }}>
-      {round && <video ref={preview} muted autoPlay playsInline style={{ width: 240, height: 240, borderRadius: '50%', objectFit: 'cover', display: 'block' }} />}
+      {round && <video ref={preview} muted autoPlay playsInline style={{ width: 300, height: 300, maxWidth: '80vw', maxHeight: '80vw', borderRadius: '50%', objectFit: 'cover', display: 'block' }} />}
       <Typography role="status">{seconds} с · {locked ? 'Запись закреплена' : 'Отпустите для отправки · Вверх — закрепить'}</Typography>
       {locked && <Button onClick={() => finish()}>Отправить</Button>}
       {round && <Button disabled={switching} onClick={flip}>Перевернуть камеру</Button>}

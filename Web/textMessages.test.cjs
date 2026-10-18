@@ -8,7 +8,21 @@ const ts = require('typescript');
 const source = fs.readFileSync(path.join(__dirname, 'src/store/chatStore.ts'), 'utf8');
 const section = (start, end) => source.slice(source.indexOf(start), source.indexOf(end));
 // Хелперы работы с локальными заглушками (`temp-*`) — их используют edit/pin/replace.
-const helpers = section('/* ---------- Локальные заглушки сообщений', 'interface ChatState');
+// Множество удалённых id (markDeleted/withoutDeleted) живёт ПОСЛЕ интерфейса
+// ChatState — вырезаем его отдельным куском, иначе replaceOrAddMessage падает
+// с ReferenceError прямо в vm-контексте теста.
+const helpers = [
+  section('/* ---------- Локальные заглушки сообщений', 'interface ChatState'),
+  section('const deletedMessageIds', 'function veraAiChat'),
+].join('\n');
+
+function pendingMergeHelper() {
+  const context = vm.createContext({});
+  vm.runInContext(ts.transpileModule(`${helpers}\nglobalThis.keepPendingUntilConfirmed = keepPendingUntilConfirmed;`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2020 },
+  }).outputText, context);
+  return context.keepPendingUntilConfirmed;
+}
 function setup(type, echo) {
   let state = { messages: {}, chats: [{ id: 'chat', type }], activeChat: { id: 'chat' } };
   const calls = [];
@@ -81,4 +95,13 @@ test('action on a left-over temporary copy uses the confirmed message id', async
   await s.actions.editMessage(confirmed.clientTempId, 'Edited');
   await s.actions.pinMessage('chat', confirmed.clientTempId);
   assert.deepEqual(s.calls, [['edit', 'server-id'], ['pin', 'server-id']]);
+});
+
+test('message reload keeps pending copy until the server confirms it', () => {
+  const keepPendingUntilConfirmed = pendingMergeHelper();
+  const pending = { id: 'temp-1', chatId: 'chat', content: 'Hello' };
+  const staleServerRecord = { id: 'server-1', chatId: 'chat', content: 'Hello', clientTempId: 'temp-1' };
+
+  assert.deepEqual(keepPendingUntilConfirmed([pending]), [pending]);
+  assert.deepEqual(keepPendingUntilConfirmed([pending, staleServerRecord]), [staleServerRecord]);
 });

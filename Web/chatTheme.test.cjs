@@ -246,7 +246,7 @@ test('редактор чата не предлагает то, чего в ча
     assert.ok(line.includes('!isChat'), `«${label}» должно быть скрыто в режиме чата`);
   }
   assert.ok(/\{!isChat && \(\s*<>/.test(editorSource), 'блоки сайдбара скрыты в режиме чата');
-  assert.ok(editorSource.includes('!isChat && (\n        <div style={{'), 'ИИ-генерация скрыта в режиме чата');
+  assert.ok(/!isChat && \(\s+<details/.test(editorSource), 'импорт/экспорт темы скрыты в режиме чата');
 });
 
 test('переключатель применения темы попадает в шапку плашки, а не в лишнее окно', () => {

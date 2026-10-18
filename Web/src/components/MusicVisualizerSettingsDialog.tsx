@@ -13,15 +13,22 @@ interface Props {
 }
 
 export default function MusicVisualizerSettingsDialog({ open, title, settings, onChange, onClose, systemAudioReactive, onSystemAudioReactiveChange }: Props) {
+  return <Dialog open={open} onClose={onClose} fullWidth maxWidth="md" scroll="paper" PaperProps={{ sx: { maxHeight: '92vh' } }}>
+    <DialogTitle>{title}</DialogTitle>
+    <DialogContent dividers sx={{ overflowY: 'auto' }}>
+      <MusicVisualizerSettingsControls settings={settings} onChange={onChange} systemAudioReactive={systemAudioReactive} onSystemAudioReactiveChange={onSystemAudioReactiveChange} />
+    </DialogContent>
+    <DialogActions><Button onClick={onClose}>Готово</Button></DialogActions>
+  </Dialog>;
+}
+
+export function MusicVisualizerSettingsControls({ settings, onChange, systemAudioReactive, onSystemAudioReactiveChange }: Pick<Props, 'settings' | 'onChange' | 'systemAudioReactive' | 'onSystemAudioReactiveChange'>) {
   const setTheme = (theme: VisualizerTheme) => {
     const preset = visualizerThemes[theme];
     onChange(theme === 'custom' ? { theme } : { theme, color: preset.color, secondaryColor: preset.secondaryColor });
   };
 
-  return <Dialog open={open} onClose={onClose} fullWidth maxWidth="md" scroll="paper" PaperProps={{ sx: { maxHeight: '92vh' } }}>
-    <DialogTitle>{title}</DialogTitle>
-    <DialogContent dividers sx={{ overflowY: 'auto' }}>
-      <Stack spacing={2.2} sx={{ pt: 1 }}>
+  return <Stack spacing={2.2} sx={{ pt: 1, '& .MuiToggleButtonGroup-root': { flexWrap: 'wrap', gap: 0.5 }, '& .MuiToggleButton-root': { flex: '1 1 auto', border: '1px solid', borderColor: 'divider', borderRadius: '4px !important', m: '0 !important' } }}>
         <Alert severity="info" sx={{ py: 0.5 }}>
           Расширенные настройки теперь сверху: положение, размер зоны, длина волны и размер свечения.
         </Alert>
@@ -53,7 +60,7 @@ export default function MusicVisualizerSettingsDialog({ open, title, settings, o
           <div><Typography variant="caption">Длина волны/полос: {settings.waveLength}%</Typography><Slider min={20} max={220} step={5} value={settings.waveLength} onChange={(_, v) => onChange({ waveLength: v as number })} /></div>
           <div><Typography variant="caption">Размер свечения: {settings.glowSize}%</Typography><Slider min={20} max={220} step={5} value={settings.glowSize} onChange={(_, v) => onChange({ glowSize: v as number })} /></div>
         </Box>
-        <div><Typography variant="caption">Тема подсветки</Typography><ToggleButtonGroup exclusive fullWidth size="small" value={settings.theme} onChange={(_, v: VisualizerTheme | null) => v && setTheme(v)}>{Object.entries(visualizerThemes).map(([key, theme]) => <ToggleButton key={key} value={key}><Box sx={{ width: 14, height: 14, borderRadius: '50%', mr: 0.7, background: `linear-gradient(135deg, ${theme.color}, ${theme.secondaryColor})`, border: '1px solid rgba(255,255,255,.35)' }} />{theme.label}</ToggleButton>)}</ToggleButtonGroup></div>
+        <div><Typography variant="caption">Тема подсветки</Typography><ToggleButtonGroup exclusive fullWidth size="small" value={settings.theme} onChange={(_, v: VisualizerTheme | null) => v && setTheme(v)}>{Object.entries(visualizerThemes).map(([key, theme]) => <ToggleButton key={key} value={key}><Box sx={{ width: 14, height: 14, borderRadius: '4px', mr: 0.7, background: `linear-gradient(135deg, ${theme.color}, ${theme.secondaryColor})`, border: '1px solid rgba(255,255,255,.35)' }} />{theme.label}</ToggleButton>)}</ToggleButtonGroup></div>
         <Stack direction="row" spacing={2}>
           <TextField label="Основной свет" type="color" value={settings.color} onChange={(e) => onChange({ theme: 'custom', color: e.target.value })} fullWidth />
           <TextField label="Второй свет" type="color" value={settings.secondaryColor} onChange={(e) => onChange({ theme: 'custom', secondaryColor: e.target.value })} fullWidth />
@@ -64,8 +71,5 @@ export default function MusicVisualizerSettingsDialog({ open, title, settings, o
         <div><Typography variant="caption">На что реагировать</Typography><ToggleButtonGroup exclusive fullWidth size="small" value={settings.mode} onChange={(_, v: VisualizerReactiveMode | null) => v && onChange({ mode: v })}><ToggleButton value="bass">Басс</ToggleButton><ToggleButton value="beat">Бит</ToggleButton><ToggleButton value="volume">Громкость</ToggleButton><ToggleButton value="spectrum">Спектр</ToggleButton></ToggleButtonGroup></div>
         <div><Typography variant="caption">Где показывать</Typography><ToggleButtonGroup exclusive fullWidth size="small" value={settings.placement} onChange={(_, v: VisualizerPlacement | null) => v && onChange({ placement: v })}><ToggleButton value="bottom">Снизу</ToggleButton><ToggleButton value="top">Сверху</ToggleButton><ToggleButton value="sides">По бокам</ToggleButton><ToggleButton value="full">Фон</ToggleButton><ToggleButton value="player">Плеер</ToggleButton></ToggleButtonGroup></div>
         <div><Typography variant="caption">Режим отображения</Typography><ToggleButtonGroup exclusive fullWidth size="small" value={settings.style} onChange={(_, v: VisualizerStyle | null) => v && onChange({ style: v })}><ToggleButton value="glow">Свечение</ToggleButton><ToggleButton value="bars">Полосы</ToggleButton><ToggleButton value="pulse">Пульс</ToggleButton><ToggleButton value="wave">Волны</ToggleButton></ToggleButtonGroup></div>
-      </Stack>
-    </DialogContent>
-    <DialogActions><Button onClick={onClose}>Готово</Button></DialogActions>
-  </Dialog>;
+      </Stack>;
 }

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button, Typography, Box,
-  Slider, Stack, ToggleButton, ToggleButtonGroup, IconButton, Tooltip, Divider,
+  Stack, ToggleButton, ToggleButtonGroup, IconButton, Tooltip, Divider,
   useMediaQuery,
 } from '@mui/material';
 import { Close, RestartAlt, SwapHoriz, Undo } from '@mui/icons-material';
@@ -10,6 +10,7 @@ import {
   useUserSettingsStore, LayoutSettings,
   SidePos, VertPos, PlayerPos, Density, MessageAlign,
 } from '../store/userSettingsStore';
+import SliderWithInput from './SliderWithInput';
 
 /**
  * Визуальный конструктор макета: схематичное превью,
@@ -259,9 +260,10 @@ export default function LayoutDesignerDialog({ open, onClose }: Props) {
                       alignSelf: isRight ? 'flex-end' : 'flex-start',
                       width: `${wPct}%`, height: 14, opacity: 0.9,
                       bgcolor: m.own ? theme.accent : ((theme as any).bgBubbleOther || theme.bgHover),
+                      // Скругление пузырей задаётся в «Иконки и стиль» (--vera-bubble-radius).
                       borderRadius: isRight
-                        ? `${layout.bubbleRadius}px ${layout.bubbleRadius}px 4px ${layout.bubbleRadius}px`
-                        : `${layout.bubbleRadius}px ${layout.bubbleRadius}px ${layout.bubbleRadius}px 4px`,
+                        ? 'var(--vera-bubble-radius, 14px) var(--vera-bubble-radius, 14px) 4px var(--vera-bubble-radius, 14px)'
+                        : 'var(--vera-bubble-radius, 14px) var(--vera-bubble-radius, 14px) var(--vera-bubble-radius, 14px) 4px',
                     }} />
                   );
                 })}
@@ -315,29 +317,22 @@ export default function LayoutDesignerDialog({ open, onClose }: Props) {
             <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
               Ширина панели чатов — {Math.min(layout.sidebarWidth, sidebarWidthMax)}px
             </Typography>
-            <Slider min={REAL_MIN} max={sidebarWidthMax} step={5} value={Math.min(layout.sidebarWidth, sidebarWidthMax)}
-              onChange={(_, v) => setLayout('sidebarWidth', Array.isArray(v) ? v[0] : v)} />
+            <SliderWithInput min={REAL_MIN} max={sidebarWidthMax} step={5} value={Math.min(layout.sidebarWidth, sidebarWidthMax)}
+              onChange={(v) => setLayout('sidebarWidth', v)} />
           </Box>
           <Box>
             <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
               Скругление углов окна — {layout.radius}px
             </Typography>
-            <Slider min={0} max={28} step={1} value={layout.radius}
-              onChange={(_, v) => setLayout('radius', Array.isArray(v) ? v[0] : v)} />
-          </Box>
-          <Box>
-            <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
-              Скругление пузырьков сообщений — {layout.bubbleRadius}px
-            </Typography>
-            <Slider min={4} max={28} step={1} value={layout.bubbleRadius}
-              onChange={(_, v) => setLayout('bubbleRadius', Array.isArray(v) ? v[0] : v)} />
+            <SliderWithInput min={0} max={28} step={1} value={layout.radius}
+              onChange={(v) => setLayout('radius', v)} />
           </Box>
           <Box>
             <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
               Ширина сообщений — {layout.messageMaxWidth}%
             </Typography>
-            <Slider min={35} max={95} step={5} value={layout.messageMaxWidth}
-              onChange={(_, v) => setLayout('messageMaxWidth', Array.isArray(v) ? v[0] : v)} />
+            <SliderWithInput min={35} max={95} step={5} value={layout.messageMaxWidth}
+              onChange={(v) => setLayout('messageMaxWidth', v)} />
           </Box>
           <Box>
             <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Сторона сообщений</Typography>
@@ -353,8 +348,8 @@ export default function LayoutDesignerDialog({ open, onClose }: Props) {
             <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
               Внешний отступ окна чата — {layout.chatOuterMargin}px
             </Typography>
-            <Slider min={0} max={24} step={1} value={layout.chatOuterMargin}
-              onChange={(_, v) => setLayout('chatOuterMargin', Array.isArray(v) ? v[0] : v)} />
+            <SliderWithInput min={0} max={24} step={1} value={layout.chatOuterMargin}
+              onChange={(v) => setLayout('chatOuterMargin', v)} />
           </Box>
           <Box>
             <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Плотность интерфейса</Typography>

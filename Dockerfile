@@ -15,6 +15,7 @@ COPY Server/ ./
 # Собранный фронт кладём туда же, где server.js ищет ../Web/dist
 COPY --from=web /app/Web/dist /app/Web/dist
 COPY --from=web /app/Web/src/store/cases.json /app/Web/src/store/cases.json
+COPY --from=web /app/Web/src/store/reactionSkins.json /app/Web/src/store/reactionSkins.json
 
 ENV NODE_ENV=production \
     PORT=3000 \

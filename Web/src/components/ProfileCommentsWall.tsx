@@ -2,6 +2,7 @@
 import { Box, Avatar, Typography, TextField, IconButton, Stack, Tooltip } from '@mui/material';
 import { Delete, Send } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
+import { UI_PROFILE_INNER_RADIUS } from '../store/uiPrefsStore';
 import { useAuthStore } from '../store/authStore';
 import api from '../services/api';
 import { getSocket } from '../services/socket';
@@ -102,7 +103,7 @@ export default function ProfileCommentsWall({ targetUserId, targetUserName }: Pr
         <Box sx={{
           display: 'flex', gap: 0.75, alignItems: 'flex-end',
           bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
-          borderRadius: 2, p: 1.25, mb: 2,
+          borderRadius: UI_PROFILE_INNER_RADIUS, p: 1.25, mb: 2,
         }}>
           <Avatar 
             src={me.avatarUrl || undefined} 
@@ -132,7 +133,7 @@ export default function ProfileCommentsWall({ targetUserId, targetUserName }: Pr
                 backgroundColor: theme.bg,
                 color: theme.text,
                 fontSize: 14,
-                borderRadius: 1.5,
+                borderRadius: UI_PROFILE_INNER_RADIUS,
                 '& fieldset': { borderColor: theme.border },
                 '&:hover fieldset': { borderColor: theme.textSec + '80' },
                 '&.Mui-focused fieldset': { borderColor: theme.accent },
@@ -169,7 +170,7 @@ export default function ProfileCommentsWall({ targetUserId, targetUserName }: Pr
             display: 'flex', 
             gap: 1.25, 
             p: 1.25, 
-            borderRadius: 2,
+            borderRadius: UI_PROFILE_INNER_RADIUS,
             bgcolor: theme.bgHeader, 
             border: `1px solid ${theme.border}`,
             alignItems: 'flex-start',

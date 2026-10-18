@@ -1,7 +1,9 @@
 ﻿// AUTO-GENERATED (scripts/make-icon-shim.mjs). Shim over @mui/icons-material to support icon packs.
 import React from 'react';
 import type { SvgIconProps } from '@mui/material/SvgIcon';
-import { useUiPrefsStore } from './store/uiPrefsStore';
+import { useUiPrefsStore, ICON_PACK_BASE, type IconPack } from './store/uiPrefsStore';
+import { IconPackOverrideContext } from './iconPackContext';
+import { useActiveCustomIcons, CustomSvgIcon } from './iconPackRuntime';
 
 import _vAccountBalanceWallet from '@mui/icons-material/AccountBalanceWallet';
 import _vAccountBalanceWalletOutlined from '@mui/icons-material/AccountBalanceWalletOutlined';
@@ -88,6 +90,11 @@ import _vCheckOutlined from '@mui/icons-material/CheckOutlined';
 import _vCheckRounded from '@mui/icons-material/CheckRounded';
 import _vCheckSharp from '@mui/icons-material/CheckSharp';
 import _vCheckTwoTone from '@mui/icons-material/CheckTwoTone';
+import _vCheckCircleOutline from '@mui/icons-material/CheckCircleOutline';
+import _vCheckCircleOutlineOutlined from '@mui/icons-material/CheckCircleOutlineOutlined';
+import _vCheckCircleOutlineRounded from '@mui/icons-material/CheckCircleOutlineRounded';
+import _vCheckCircleOutlineSharp from '@mui/icons-material/CheckCircleOutlineSharp';
+import _vCheckCircleOutlineTwoTone from '@mui/icons-material/CheckCircleOutlineTwoTone';
 import _vChevronLeft from '@mui/icons-material/ChevronLeft';
 import _vChevronLeftOutlined from '@mui/icons-material/ChevronLeftOutlined';
 import _vChevronLeftRounded from '@mui/icons-material/ChevronLeftRounded';
@@ -627,6 +634,7 @@ const MAP: Record<string, Record<string, React.ComponentType<SvgIconProps>>> = {
   CameraAlt: { filled: _vCameraAlt, outlined: _vCameraAltOutlined, rounded: _vCameraAltRounded, sharp: _vCameraAltSharp, twoTone: _vCameraAltTwoTone },
   Chat: { filled: _vChat, outlined: _vChatOutlined, rounded: _vChatRounded, sharp: _vChatSharp, twoTone: _vChatTwoTone },
   Check: { filled: _vCheck, outlined: _vCheckOutlined, rounded: _vCheckRounded, sharp: _vCheckSharp, twoTone: _vCheckTwoTone },
+  CheckCircleOutline: { filled: _vCheckCircleOutline, outlined: _vCheckCircleOutlineOutlined, rounded: _vCheckCircleOutlineRounded, sharp: _vCheckCircleOutlineSharp, twoTone: _vCheckCircleOutlineTwoTone },
   ChevronLeft: { filled: _vChevronLeft, outlined: _vChevronLeftOutlined, rounded: _vChevronLeftRounded, sharp: _vChevronLeftSharp, twoTone: _vChevronLeftTwoTone },
   ChevronRight: { filled: _vChevronRight, outlined: _vChevronRightOutlined, rounded: _vChevronRightRounded, sharp: _vChevronRightSharp, twoTone: _vChevronRightTwoTone },
   Close: { filled: _vClose, outlined: _vCloseOutlined, rounded: _vCloseRounded, sharp: _vCloseSharp, twoTone: _vCloseTwoTone },
@@ -735,14 +743,36 @@ const MAP: Record<string, Record<string, React.ComponentType<SvgIconProps>>> = {
 
 function make(baseName: string) {
   const C = React.forwardRef<SVGSVGElement, SvgIconProps>((props, ref) => {
-    const pack = useUiPrefsStore((s) => s.iconPack);
-    const v = MAP[baseName];
-    const Comp = v[pack] || v.filled;
-    return <Comp ref={ref as any} {...props} />;
+    const storePack = useUiPrefsStore((s) => s.iconPack);
+    const override = React.useContext(IconPackOverrideContext);
+    const custom = useActiveCustomIcons();
+    const pack = (override || storePack) as IconPack;
+    const variant = ICON_PACK_BASE[pack] || pack;
+    // Свой пак: слот можно заменить другой иконкой, текстом или картинкой.
+    // Замена «другой иконкой» берёт её форму из того же варианта и не идёт
+    // по заменам повторно — циклов вида A→B→A не бывает.
+    const replaced = custom?.[baseName];
+    if (replaced && replaced.kind !== 'mui') return <CustomSvgIcon ref={ref} {...props} icon={replaced} />;
+    const v = (replaced?.kind === 'mui' && MAP[replaced.name]) || MAP[baseName];
+    // Стилевые паки (рельеф, неон, плитки…) берут форму базового варианта,
+    // а вид им даёт CSS по классу vera-ico (main.tsx + IconPackDefs).
+    const Comp = v[variant] || v.filled;
+    const className = props.className ? `vera-ico ${props.className}` : 'vera-ico';
+    return <Comp ref={ref as any} {...props} className={className} />;
   });
   C.displayName = baseName;
   return C;
 }
+
+/** Все слоты, которые может заменить свой пак (= иконки шима). */
+export const ICON_SLOTS: string[] = Object.keys(MAP);
+const SLOT_COMPONENTS: Record<string, ReturnType<typeof make>> = {};
+/** Иконка по имени слота — для редактора паков. Учитывает текущие замены. */
+export const IconBySlot = React.forwardRef<SVGSVGElement, SvgIconProps & { slot: string }>(({ slot, ...props }, ref) => {
+  const Comp = SLOT_COMPONENTS[slot] || (MAP[slot] ? (SLOT_COMPONENTS[slot] = make(slot)) : null);
+  return Comp ? <Comp ref={ref as any} {...props} /> : null;
+});
+IconBySlot.displayName = 'IconBySlot';
 
 export const AccessTime = make('AccessTime');
 export const Schedule = make('AccessTime');
@@ -763,6 +793,7 @@ export const CallEnd = make('CallEnd');
 export const CameraAlt = make('CameraAlt');
 export const Chat = make('Chat');
 export const Check = make('Check');
+export const CheckCircleOutline = make('CheckCircleOutline');
 export const ChevronLeft = make('ChevronLeft');
 export const ChevronRight = make('ChevronRight');
 export const Close = make('Close');

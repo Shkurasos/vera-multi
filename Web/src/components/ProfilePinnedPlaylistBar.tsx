@@ -9,6 +9,7 @@ import { useAuthStore } from '../store/authStore';
 import { useMusicStore } from '../store/musicStore';
 import { usePlaylistStore } from '../store/playlistStore';
 import type { Track } from '../types';
+import { UI_PROFILE_RADIUS } from '../store/uiPrefsStore';
 
 interface Props {
   /** Владелец профиля. Если совпадает с текущим — можно менять закреп. */
@@ -133,7 +134,7 @@ export default function ProfilePinnedPlaylistBar({ ownerId, pinnedPlaylistId, pi
   return (
     <Box sx={{
       width: '100%', maxWidth: 480,
-      mt: 1.5, px: 1.5, py: 1, borderRadius: 2,
+      mt: 1.5, px: 1.5, py: 1, borderRadius: UI_PROFILE_RADIUS,
       bgcolor: 'rgba(0,0,0,0.55)', color: '#fff',
       display: 'flex', alignItems: 'center', gap: 1,
       backdropFilter: 'blur(6px)',

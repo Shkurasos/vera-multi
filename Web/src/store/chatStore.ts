@@ -11,6 +11,8 @@ import {
   mergeById,
 } from '../services/localArchive';
 import { registerAccountStore } from '../services/storeSyncSimple';
+import { OLDER_PAGE_SIZE, oldestCursor } from '../utils/messagePagination';
+import { splitBoardPrefix } from '../utils/deskBoard';
 
 /* ---------- P2P ↔ UI-модель адаптеры ---------- */
 // UI-типы (Chat/Message) исторически заточены под серверную модель.
@@ -19,10 +21,15 @@ import { registerAccountStore } from '../services/storeSyncSimple';
 function peerChatToChat(c: PeerChat): Chat {
   const ownerId = (c as any).ownerId as string | undefined;
   const admins: string[] = Array.isArray((c as any).admins) ? (c as any).admins : (ownerId ? [ownerId] : []);
+  // В P2P-узле отдельного поля вида нет: символ «|»/«/» остаётся в title.
+  // Пользователю его не показываем, а при переименовании ChatInfoPanel
+  // дописывает символ обратно, чтобы вид чата не менялся.
+  const board = c.kind === 'group' ? splitBoardPrefix(c.title) : { kind: null, name: c.title || '' };
   return {
     id: c.id,
     type: c.kind === 'group' ? 'group' : 'private',
-    name: c.title,
+    ...(board.kind ? { kind: board.kind } : {}),
+    name: board.kind ? (board.name || (board.kind === 'desk' ? 'Доска' : 'Холст')) : c.title,
     description: (c as any).description || '',
     avatarUrl: (c as any).avatar || '',
     pinnedMessageId: c.pinnedMessageId || undefined,
@@ -136,6 +143,22 @@ function withoutTemporaryCopy(list: Message[], confirmed: Message, myId?: string
   });
 }
 
+/**
+ * Сохраняет optimistic-сообщения при обновлении истории. Временную запись
+ * можно удалить только когда в snapshot действительно присутствует постоянная
+ * запись с тем же clientTempId; сам по себе устаревший объект с этим полем не
+ * должен создавать окно без сообщения.
+ */
+function keepPendingUntilConfirmed(list: Message[]): Message[] {
+  const confirmedTempIds = new Set(
+    list
+      .filter((message) => message && !isTemporaryId(message.id))
+      .map((message) => (message as any).clientTempId as string | undefined)
+      .filter(Boolean),
+  );
+  return list.filter((message) => !isTemporaryId(message.id) || !confirmedTempIds.has(message.id));
+}
+
 /** Текущие закреплённые id чата (поддерживает старый формат с одним id). */
 function chatPinnedIds(chat: Chat | null | undefined): string[] {
   if (!chat) return [];
@@ -155,9 +178,21 @@ interface ChatState {
   loadChats: () => Promise<void>;
   setActiveChat: (chat: Chat | null) => void;
   loadMessages: (chatId: string, before?: string) => Promise<void>;
+  /**
+   * Состояние догрузки истории вверх по чатам: идёт ли запрос и осталось ли
+   * что-то старее на сервере. Отсутствие записи = «неизвестно, пробуем».
+   */
+  olderHistory: Record<string, { loading: boolean; hasMore: boolean }>;
+  /**
+   * Догрузить страницу сообщений старее самого раннего известного.
+   * Параллельные вызовы по одному чату склеиваются в один запрос.
+   * `beforeCommit(added)` вызывается синхронно прямо перед записью в стор —
+   * окно чата снимает там якорь прокрутки. Возвращает число новых сообщений.
+   */
+  loadOlderMessages: (chatId: string, beforeCommit?: (added: number) => void) => Promise<number>;
   sendMessage: (chatId: string, content: string, replyToId?: string) => Promise<void>;
   forwardMessage: (chatId: string, source: Message) => Promise<void>;
-  sendMessageWithFile: (chatId: string, attachment: any, replyToId?: string, type?: string) => Promise<void>;
+  sendMessageWithFile: (chatId: string, attachments: any | any[], replyToId?: string, type?: string, content?: string) => Promise<void>;
   editMessage: (messageId: string, content: string) => Promise<void>;
   deleteMessage: (messageId: string, chatId: string) => Promise<void>;
   pinMessage: (chatId: string, messageId: string | null) => Promise<void>;
@@ -165,14 +200,30 @@ interface ChatState {
   unpinMessage: (chatId: string, messageId: string) => Promise<void>;
   addReaction: (chatId: string, messageId: string, emoji: string) => Promise<void>;
   leaveChat: (chatId: string) => Promise<void>;
+  /** Убрать удалённый чат из списка и из локального архива (иначе loadChats вернёт его из архива). */
+  forgetChat: (chatId: string) => Promise<void>;
   addMessage: (message: Message) => void;
   replaceOrAddMessage: (message: Message) => void;
   updateMessage: (message: Message) => void;
   removeMessage: (messageId: string, chatId: string) => void;
+  /**
+   * Удаление с анимацией распада: помечает сообщение удаляемым (пузырь
+   * рассыпается на частицы и схлопывается), ждёт конца входящей анимации
+   * и только потом убирает сообщение из состояния.
+   */
+  removeMessageAnimated: (messageId: string, chatId: string) => Promise<void>;
+  /** id сообщений, которые сейчас проигрывают анимацию распада. */
+  deletingMessageIds: Set<string>;
   applyPinnedMessage: (chatId: string, messageId: string | null, pinnedMessage?: Message | null, pinnedMessageIds?: string[], pinnedMessageList?: Message[] | null) => void;
   setTyping: (chatId: string, userId: string, isTyping: boolean) => void;
   markRead: (chatId: string, messageId: string) => void;
   markChatRead: (chatId: string) => void;
+  /**
+   * Поднять чат по активности: доска/холст изменились, но сообщение не
+   * появилось. Сортировка берёт максимум из lastMessage и updatedAt,
+   * поэтому достаточно сдвинуть updatedAt вперёд.
+   */
+  touchChat: (chatId: string) => void;
   updateChatList: (chat: Chat) => void;
   setUserOnline: (userId: string) => void;
   setUserOffline: (userId: string) => void;
@@ -180,7 +231,37 @@ interface ChatState {
   markMessageRead: (chatId: string, messageId: string, userId: string) => void;
 }
 
+/**
+ * Момент последней активности чата: новее из последнего сообщения и
+ * `updatedAt` (его двигает, например, правка доски — сообщение не появляется).
+ * Если смотреть только на `lastMessage`, доска со свежей заметкой висела бы
+ * внизу списка под всеми чатами со старыми сообщениями.
+ */
+export function chatActivityAt(chat: Pick<Chat, 'lastMessage' | 'updatedAt' | 'createdAt'>): string {
+  // Берём самую свежую метку: правка доски двигает только updatedAt, и чат
+  // с давним последним сообщением должен подняться (как на сервере).
+  const stamps = [chat.lastMessage?.createdAt, chat.updatedAt, chat.createdAt]
+    .map((value) => (value ? Date.parse(value) : NaN))
+    .filter((value) => Number.isFinite(value));
+  return stamps.length ? new Date(Math.max(...stamps)).toISOString() : '';
+}
+
 const VERA_AI_ID = 'vera-ai';
+
+/**
+ * Длительность входящей анимации удаления (распад пузыря + схлопывание
+ * строки). Стор выдерживает эту паузу перед реальным removeMessage, а
+ * MessageBubble использует её для transition — одна константа на обоих.
+ * Частицы живут в портале и долетают уже после удаления из состояния.
+ */
+export const MESSAGE_DELETE_EXIT_MS = 360;
+
+/** Системная настройка «уменьшить движение»: анимацию не показываем. */
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
 
 /**
  * Удалённые здесь сообщения — «надгробья».
@@ -231,13 +312,29 @@ function withVeraAi(chats: Chat[]): Chat[] {
   return [{ ...ai, ...existing, name: ai.name }, ...withoutVera];
 }
 
+/* ---------- Догрузка истории вверх ---------- */
+/**
+ * Курсор `before` по чату: createdAt самого раннего сообщения, полученного
+ * с сервера НЕПРЕРЫВНОЙ цепочкой страниц. Брать просто самое раннее в сторе
+ * нельзя: в архиве IndexedDB могут лежать давние сообщения, и между ними и
+ * свежей первой страницей осталась бы дыра, которую никто не догрузит.
+ */
+const olderCursorByChat = new Map<string, string>();
+/** Текущий запрос по чату — повторные вызовы получают тот же промис. */
+const olderInflight = new Map<string, Promise<number>>();
+/** После ошибки (офлайн) не долбим сервер на каждом событии скролла. */
+const olderRetryAt = new Map<string, number>();
+const OLDER_RETRY_MS = 3000;
+
 export const useChatStore = create<ChatState>((set, get) => ({
   chats: [],
   activeChat: null,
   messages: {},
   loadingMessages: false,
+  olderHistory: {},
   typingUsers: {},
   onlineUsers: new Set<string>(),
+  deletingMessageIds: new Set<string>(),
 
   setUserOnline: (userId) => {
     set((state) => {
@@ -406,10 +503,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
         merged = mergeById(mergeById(archived, get().messages[chatId] || []), incoming);
       }
       merged = withoutDeleted(merged);
-      set((state) => ({
-        messages: { ...state.messages, [chatId]: merged.filter(m => !merged.some(saved => (saved as any).clientTempId === m.id)) },
-      }));
+      set((state) => {
+        // The request can finish after an optimistic send or a socket echo.
+        // Merge against the current list at commit time so an old HTTP snapshot
+        // cannot briefly remove a pending message from the conversation.
+        const current = state.messages[chatId] || [];
+        const latest = withoutDeleted(mergeById(merged, current));
+        return {
+          messages: { ...state.messages, [chatId]: keepPendingUntilConfirmed(latest) },
+        };
+      });
       saveArchivedMessages(withoutDeleted(incoming)).catch(() => {});
+      if (!before) {
+        // Первая страница задаёт курсор догрузки вверх. Неполная страница —
+        // старее на сервере ничего нет.
+        if (incoming.length && incoming[0]?.createdAt) olderCursorByChat.set(chatId, incoming[0].createdAt);
+        set((state) => ({
+          olderHistory: {
+            ...state.olderHistory,
+            [chatId]: { loading: false, hasMore: incoming.length >= OLDER_PAGE_SIZE },
+          },
+        }));
+      }
       if (!before && get().activeChat?.id === chatId && incoming.length) {
         const userId = useAuthStore.getState().user?.id;
         const lastIncoming = [...incoming].reverse().find((m) => m.senderId !== userId);
@@ -421,6 +536,66 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } finally {
       set({ loadingMessages: false });
     }
+  },
+
+  loadOlderMessages: async (chatId, beforeCommit) => {
+    if (!chatId) return 0;
+    const pending = olderInflight.get(chatId);
+    if (pending) return pending;
+    const status = get().olderHistory[chatId];
+    if (status && !status.hasMore) return 0;
+    if ((olderRetryAt.get(chatId) || 0) > Date.now()) return 0;
+
+    const setStatus = (patch: Partial<{ loading: boolean; hasMore: boolean }>) => set((state) => ({
+      olderHistory: {
+        ...state.olderHistory,
+        [chatId]: { loading: false, hasMore: true, ...state.olderHistory[chatId], ...patch },
+      },
+    }));
+
+    // Vera AI и P2P отдают всю историю целиком — старее ничего не будет.
+    if (chatId === VERA_AI_ID || isPeerAvailable()) {
+      setStatus({ loading: false, hasMore: false });
+      return 0;
+    }
+    const before = olderCursorByChat.get(chatId) || oldestCursor(get().messages[chatId] || []);
+    if (!before) return 0;
+
+    const run = (async () => {
+      setStatus({ loading: true });
+      try {
+        const res = await messagesApi.getMessages(chatId, before, OLDER_PAGE_SIZE);
+        const incoming: Message[] = withoutDeleted(Array.isArray(res.data) ? res.data : []);
+        if (incoming[0]?.createdAt) olderCursorByChat.set(chatId, incoming[0].createdAt);
+        const current = get().messages[chatId] || [];
+        const known = new Set(current.map((m) => m.id));
+        const added = incoming.filter((m) => m && m.id && !known.has(m.id)).length;
+        const hasMore = (Array.isArray(res.data) ? res.data.length : 0) >= OLDER_PAGE_SIZE;
+        if (added > 0) {
+          beforeCommit?.(added);
+          set((state) => ({
+            messages: {
+              ...state.messages,
+              // Мержим с актуальным списком на момент записи: за время запроса
+              // могли прийти новые сообщения или подтверждения отправки.
+              [chatId]: keepPendingUntilConfirmed(withoutDeleted(mergeById(state.messages[chatId] || [], incoming))),
+            },
+          }));
+          saveArchivedMessages(incoming).catch(() => {});
+        }
+        setStatus({ loading: false, hasMore });
+        return added;
+      } catch (err) {
+        console.error('loadOlderMessages error:', err);
+        olderRetryAt.set(chatId, Date.now() + OLDER_RETRY_MS);
+        setStatus({ loading: false });
+        return 0;
+      } finally {
+        olderInflight.delete(chatId);
+      }
+    })();
+    olderInflight.set(chatId, run);
+    return run;
   },
 
   sendMessage: async (chatId, content, replyToId) => {
@@ -573,21 +748,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
     get().replaceOrAddMessage(data);
   },
 
-  sendMessageWithFile: async (chatId, attachment, replyToId, type = 'document') => {
+  sendMessageWithFile: async (chatId, attachments, replyToId, type = 'document', content = '') => {
     const user = useAuthStore.getState().user;
+    // Несколько файлов (например, подборка фото) уходят одним сообщением-«альбомом»,
+    // как в ВК. Одиночное вложение поддерживаем для обратной совместимости
+    // (записанные голосовые/кружки).
+    const attachmentList: any[] = Array.isArray(attachments) ? attachments : [attachments];
     const tempId = 'temp-' + Date.now();
     const tempMsg: Message = {
       id: tempId,
       chatId,
       senderId: user?.id,
       sender: user || undefined,
-      content: '',
+      content,
       type: type as any,
       isEdited: false,
       isPinned: false,
       isDeleted: false,
       replyToId,
-      attachments: [attachment],
+      attachments: attachmentList,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -600,36 +779,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     try {
       // P2P: mesh не умеет slać attachments — сохраняем сообщение локально,
-      // чтобы ГС/файлы не пропадали при перезаходе в чат.
+      // чтобы ГС/файлы не пропадали при перезаходе в чат. Мост принимает одно
+      // вложение на сообщение, поэтому альбом раскладываем по одному (как раньше).
       if (isPeerAvailable()) {
-        const saved = await peer.storeMessage({
-          chatId,
-          text: '',
-          attachment,
-          kind: type,
-        });
+        const finals: Message[] = [];
+        for (let i = 0; i < attachmentList.length; i++) {
+          const saved = await peer.storeMessage({
+            chatId,
+            text: i === 0 ? content : '',
+            attachment: attachmentList[i],
+            kind: type,
+          });
+          finals.push({
+            ...tempMsg,
+            id: saved.id,
+            content: i === 0 ? content : '',
+            attachments: [attachmentList[i]],
+            createdAt: new Date(saved.ts).toISOString(),
+            updatedAt: new Date(saved.ts).toISOString(),
+          });
+        }
         set((state) => {
           const existing = state.messages[chatId] || [];
           const filtered = existing.filter((m) => m.id !== tempId);
-          const finalMsg: Message = {
-            ...tempMsg,
-            id: saved.id,
-            createdAt: new Date(saved.ts).toISOString(),
-            updatedAt: new Date(saved.ts).toISOString(),
-          };
           return {
             messages: {
               ...state.messages,
-              [chatId]: [...filtered, attachReplyPreview(finalMsg, state.messages)],
+              [chatId]: [...filtered, ...finals.map((m) => attachReplyPreview(m, state.messages))],
             },
           };
         });
         return;
       }
       const res = await messagesApi.send(chatId, {
-        text: '',
+        text: content,
         replyToId,
-        attachments: [attachment],
+        attachments: attachmentList,
         type,
         // Тот же контракт, что у текстовых сообщений: сервер вернёт clientTempId,
         // и локальная заглушка гарантированно заменится подтверждённым сообщением.
@@ -720,11 +905,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // P2P: физически удаляем через peer.updateMessage → пометим deleted=true,
         // и убираем из UI. Полное удаление можно добавить позже отдельным API.
         await peer.updateMessage(chatId, messageId, { deleted: true, text: '' });
-        get().removeMessage(messageId, chatId);
+        await get().removeMessageAnimated(messageId, chatId);
         return;
       }
       await messagesApi.delete(messageId);
-      get().removeMessage(messageId, chatId);
+      await get().removeMessageAnimated(messageId, chatId);
     } catch (err) {
       console.error('deleteMessage error:', err);
       throw err;
@@ -857,11 +1042,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       await chatsApi.leaveChat(chatId);
     } catch {}
-    deleteArchivedChat(chatId).catch(() => {});
+    await get().forgetChat(chatId);
+  },
+
+  forgetChat: async (chatId) => {
+    // Сначала убираем из состояния, чтобы чат исчез из списка сразу.
     set((state) => ({
       chats: state.chats.filter((c) => c.id !== chatId),
       activeChat: state.activeChat?.id === chatId ? null : state.activeChat,
     }));
+    // Ждём очистку архива: loadChats мерджит сервер с архивом, и
+    // незачищенная запись вернула бы удалённый чат в список.
+    await deleteArchivedChat(chatId).catch(() => {});
   },
 
   replaceOrAddMessage: (message) => {
@@ -905,11 +1097,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 unreadCount: isActive ? 0 : (c.unreadCount || 0) + 1,
               }
             : c
-        ).sort((a, b) => {
-          const ta = a?.lastMessage?.createdAt || a?.updatedAt || a?.createdAt || '';
-          const tb = b?.lastMessage?.createdAt || b?.updatedAt || b?.createdAt || '';
-          return new Date(tb).getTime() - new Date(ta).getTime();
-        }),
+  ).sort((a, b) => new Date(chatActivityAt(b)).getTime() - new Date(chatActivityAt(a)).getTime()),
       };
     });
   },
@@ -948,11 +1136,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   : (isActive ? 0 : (c.unreadCount || 0)),
               }
             : c
-        ).sort((a, b) => {
-          const ta = a?.lastMessage?.createdAt || a?.updatedAt || a?.createdAt || '';
-          const tb = b?.lastMessage?.createdAt || b?.updatedAt || b?.createdAt || '';
-          return new Date(tb).getTime() - new Date(ta).getTime();
-        }),
+  ).sort((a, b) => new Date(chatActivityAt(b)).getTime() - new Date(chatActivityAt(a)).getTime()),
       };
     });
   },
@@ -979,6 +1163,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
         [chatId]: (state.messages[chatId] || []).filter((m) => m.id !== messageId),
       },
     }));
+  },
+
+  /**
+   * Удаление с анимацией распада.
+   *
+   * Помечаем id в deletingMessageIds — MessageBubble видит флаг, запускает
+   * распад пузыря на частицы и схлопывание строки, и только после паузы
+   * сообщение уходит из состояния. Уже удалённое (двойной эхо-сокет +
+   * HTTP-ответ) и reduced-motion удаляем без паузы.
+   */
+  removeMessageAnimated: async (messageId, chatId) => {
+    if (!messageId) return;
+    if (deletedMessageIds.has(messageId) || prefersReducedMotion()) {
+      get().removeMessage(messageId, chatId);
+      return;
+    }
+    if (!get().deletingMessageIds.has(messageId)) {
+      set((state) => {
+        const next = new Set(state.deletingMessageIds);
+        next.add(messageId);
+        return { deletingMessageIds: next };
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, MESSAGE_DELETE_EXIT_MS));
+    get().removeMessage(messageId, chatId);
+    set((state) => {
+      if (!state.deletingMessageIds.has(messageId)) return {};
+      const next = new Set(state.deletingMessageIds);
+      next.delete(messageId);
+      return { deletingMessageIds: next };
+    });
   },
 
   applyPinnedMessage: (chatId, messageId, pinnedMessage, pinnedMessageIds, pinnedMessageList) => {
@@ -1053,12 +1268,38 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 
+  touchChat: (chatId) => {
+    if (!chatId) return;
+    // Локальный «пинг» активности — сервер своё updatedAt шлёт через
+    // chat:updated, а до того чат должен подняться уже здесь.
+    const now = new Date().toISOString();
+    set((state) => ({
+      chats: state.chats.map((c) => {
+        if (c?.id !== chatId) return c;
+        // Свежее сообщение новее — трогать updatedAt бессмысленно.
+        if (c.lastMessage && Date.parse(c.lastMessage.createdAt) >= Date.parse(now)) return c;
+        return { ...c, updatedAt: now };
+      }),
+      activeChat: state.activeChat?.id === chatId && state.activeChat.updatedAt !== now
+        ? { ...state.activeChat, updatedAt: now }
+        : state.activeChat,
+    }));
+  },
+
   updateChatList: (chat) => {
     if (!chat || !chat.id) return;
     const normalized = { ...chat, type: chat.type === 'direct' ? 'private' : chat.type } as Chat;
     set((state) => ({
       activeChat: state.activeChat?.id === normalized.id
-        ? { ...state.activeChat, ...normalized, unreadCount: 0 }
+        ? {
+            ...state.activeChat,
+            ...normalized,
+            lastMessage: normalized.lastMessage ?? state.activeChat.lastMessage,
+            // Не откатываем локально поднятый пинг активности, если сервер
+            // прислал chat без updatedAt (например, PATCH имени/обоев).
+            updatedAt: normalized.updatedAt || state.activeChat.updatedAt,
+            unreadCount: 0,
+          }
         : state.activeChat,
       chats: state.chats.some((c) => c?.id === normalized.id)
         ? state.chats.map((c) => {
@@ -1066,6 +1307,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             const isActive = state.activeChat?.id === normalized.id;
             return {
               ...normalized,
+              // PATCH /api/chats/:id и сокет chat:updated приходят БЕЗ
+              // lastMessage. Раньше он затирался, сортировка падала на
+              // createdAt — и чат «уезжал вниз» списка после смены обоев/имени.
+              lastMessage: normalized.lastMessage ?? c.lastMessage,
+              // Как и с lastMessage: без фолбэка серверный chat:updated без
+              // updatedAt затирал локальный пинг активности (правка доски).
+              updatedAt: normalized.updatedAt || c.updatedAt,
               unreadCount: isActive ? 0 : (normalized.unreadCount ?? c.unreadCount ?? 0),
             };
           }).filter(Boolean) as Chat[]

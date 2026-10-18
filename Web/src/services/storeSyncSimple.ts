@@ -78,6 +78,9 @@ function resetStore(api: StoreApi<any>): void {
 function clearSyncMetadata(storeName: string): void {
   localStorage.removeItem(`vera_sync_${storeName}_updated`);
   localStorage.removeItem(`vera_sync_${storeName}_local_changed`);
+  // Очередь плеера хранится отдельным списком id: без очистки новый аккаунт
+  // увидел бы очередь предыдущего.
+  if (storeName === 'music') localStorage.removeItem('vera-music:queueIds');
 }
 
 function resetAllRegisteredStores(): void {

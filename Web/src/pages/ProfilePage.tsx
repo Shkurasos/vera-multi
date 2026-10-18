@@ -19,6 +19,7 @@ import SettingsDialog from '../components/SettingsDialog';
 import ProfilePinnedPlaylistBar from '../components/ProfilePinnedPlaylistBar';
 import ProfileCustomizeDialog from '../components/ProfileCustomizeDialog';
 import ProfileCommentsWall from '../components/ProfileCommentsWall';
+import ReactionSlotsEditor from '../components/ReactionSlotsEditor';
 import ActivityLine from '../components/ActivityLine';
 import { useProfileCustomizationStore } from '../store/profileCustomizationStore';
 import { useShopStore, SHOP_CATALOG } from '../store/shopStore';
@@ -31,6 +32,9 @@ import { useUserSettingsStore } from '../store/userSettingsStore';
 import { usePetStore } from '../store/petStore';
 import { PET_CATALOG } from '../store/petCatalog';
 import PetArtwork from '../components/PetArtwork';
+import useMaxPetSize, { MIN_PET_SIZE } from '../hooks/useMaxPetSize';
+// Плашки профиля берут углы из ползунка «Скругление углов интерфейса».
+import { UI_PROFILE_RADIUS, UI_PROFILE_INNER_RADIUS } from '../store/uiPrefsStore';
 
 /** Пресеты шрифтов для имени питомца (выбор в карточке «Питомцы»). */
 const PET_FONT_OPTIONS = [
@@ -182,11 +186,18 @@ export default function ProfilePage() {
   const colorModes = useShopStore(s => s.colorModes);
   const customProfileSpec = useCustomEquipStore((s) => s.equipped.profile ? s.items[s.equipped.profile]?.spec : undefined);
   const ownedPets = usePetStore((s) => s.ownedPets);
+  const petCounts = usePetStore((s) => s.petCounts);
   const equippedPet = usePetStore((s) => s.equippedPet);
+  const maxPetSize = useMaxPetSize();
+  const renderedPetSize = Math.min(equippedPet?.settings.size || 72, maxPetSize);
   const equipPet = usePetStore((s) => s.equip);
   const updatePetSettings = usePetStore((s) => s.updateSettings);
   const [petName, setPetName] = useState('');
+  const [petSizeDraft, setPetSizeDraft] = useState('');
   useEffect(() => { setPetName(equippedPet?.settings.name || ''); }, [equippedPet?.id, equippedPet?.settings.name]);
+  useEffect(() => {
+    setPetSizeDraft(equippedPet?.settings.size ? String(equippedPet.settings.size) : '72');
+  }, [equippedPet?.id, equippedPet?.settings.size]);
   // Ошибки сервера (например, «Питомец не найден в инвентаре») показываем снеком,
   // иначе rejected promise тихо теряется в void-вызовах.
   const runPetAction = (action: Promise<unknown>, failMessage: string) => {
@@ -195,6 +206,21 @@ export default function ProfilePage() {
       message: error?.response?.data?.message || failMessage,
       severity: 'error',
     }));
+  };
+  const commitPetSize = (value = petSizeDraft) => {
+    // Пустое поле (тип number отдаёт '' для любого мусора) — не «ноль»:
+    // Number('') === 0 молча сохранял бы питомцу серверный минимум.
+    const trimmed = String(value ?? '').trim();
+    const parsed = trimmed === '' ? NaN : Number(trimmed);
+    if (!Number.isFinite(parsed)) {
+      setPetSizeDraft(String(equippedPet?.settings.size || MIN_PET_SIZE));
+      return;
+    }
+    const size = Math.round(Math.max(MIN_PET_SIZE, Math.min(maxPetSize, parsed)));
+    setPetSizeDraft(String(size));
+    if (size !== equippedPet?.settings.size) {
+      runPetAction(updatePetSettings({ size }), 'Не удалось сохранить размер');
+    }
   };
 
   async function openLinkQr() {
@@ -344,7 +370,7 @@ export default function ProfilePage() {
 
   const inputSx = {
     '& .MuiOutlinedInput-root': {
-      bgcolor: theme.bgInput, color: theme.text, borderRadius: 2, fontSize: 15,
+      bgcolor: theme.bgInput, color: theme.text, borderRadius: UI_PROFILE_INNER_RADIUS, fontSize: 15,
       '& fieldset': { borderColor: theme.border },
       '&:hover fieldset': { borderColor: theme.accent + '50' },
       '&.Mui-focused fieldset': { borderColor: theme.accent },
@@ -496,7 +522,7 @@ export default function ProfilePage() {
             onClick={() => { useShopStore.getState().setTab('inventory'); useShopStore.getState().setOpen(true); }}
             sx={{
               display: 'inline-flex', alignItems: 'center', gap: 1,
-              px: 3, py: 0.7, borderRadius: 2.5, cursor: 'pointer',
+              px: 3, py: 0.7, borderRadius: UI_PROFILE_RADIUS, cursor: 'pointer',
               bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
               transition: 'border-color .25s, background .25s, transform .25s',
               '&:hover': { borderColor: theme.accent + '66', transform: 'translateY(-1px)' },
@@ -520,7 +546,7 @@ export default function ProfilePage() {
         {user?.id && <ProfilePinnedPlaylistBar ownerId={user.id} pinnedPlaylistId={user.pinnedPlaylistId} pinnedTrackId={user.pinnedTrackId} />}
         {customization.showcase && (
           <Box sx={{
-            mt: 2, px: 2, py: 1.5, borderRadius: 2,
+            mt: 2, px: 2, py: 1.5, borderRadius: UI_PROFILE_RADIUS,
             bgcolor: theme.bgHeader,
             border: `1px solid ${(customization.cardAccent || theme.accent) + '40'}`,
             maxWidth: 480, width: '100%',
@@ -542,7 +568,7 @@ export default function ProfilePage() {
         {editing ? (
           <Box sx={{ 
             bgcolor: theme.bgHeader, 
-            borderRadius: 3, 
+            borderRadius: UI_PROFILE_RADIUS, 
             p: 2.5,
             border: `1px solid ${theme.border}`,
           }}>
@@ -610,7 +636,7 @@ export default function ProfilePage() {
                   bgcolor: theme.accent, 
                   '&:hover': { bgcolor: theme.accent + 'CC' }, 
                   textTransform: 'none', 
-                  borderRadius: 2,
+                  borderRadius: UI_PROFILE_INNER_RADIUS,
                   py: 1,
                   fontWeight: 600,
                 }}>
@@ -621,7 +647,7 @@ export default function ProfilePage() {
                   borderColor: theme.border, 
                   color: theme.textSec, 
                   textTransform: 'none', 
-                  borderRadius: 2,
+                  borderRadius: UI_PROFILE_INNER_RADIUS,
                   minWidth: 110,
                   '&:hover': { borderColor: theme.accent, bgcolor: theme.accent + '10' }
                 }}>
@@ -631,10 +657,20 @@ export default function ProfilePage() {
             </Box>
           </Box>
         ) : (
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 720, mx: 'auto', width: '100%' }}>
+          // Три колонки на широком экране: слева питомцы, в центре «О себе»,
+          // действия (QR) и под ними комментарии, справа реакции. Боковые
+          // колонки занимают обе строки сетки. На узком экране всё идёт
+          // одной колонкой: «О себе», питомцы, реакции, комментарии.
+          <Box data-vera-profile-columns sx={{
+            display: 'grid', gap: 2, width: '100%', maxWidth: 1500, mx: 'auto', alignItems: 'start',
+            gridTemplateColumns: { xs: 'minmax(0,1fr)', md: 'minmax(0,1fr) minmax(0,1.3fr) minmax(0,1fr)' },
+            gridTemplateRows: { md: 'auto 1fr' },
+            gridTemplateAreas: { xs: '"center" "left" "right" "comments"', md: '"left center right" "left comments right"' },
+          }}>
+          <Box data-vera-profile-center sx={{ gridArea: 'center', display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
             {/* ── Карточка: О себе (Steam-style) ── */}
             <Box sx={{
-              bgcolor: theme.bgHeader, borderRadius: 3, p: 2.5,
+              bgcolor: theme.bgHeader, borderRadius: UI_PROFILE_RADIUS, p: 2.5,
               border: `1px solid ${theme.border}`,
             }}>
               <Typography sx={{ fontSize: 12, color: theme.textSec, textTransform: 'uppercase', letterSpacing: 0.6, mb: 1.5, fontWeight: 700 }}>
@@ -695,14 +731,14 @@ export default function ProfilePage() {
                     <video
                       src={customization.aboutMediaUrl}
                       autoPlay loop muted playsInline
-                      style={{ width: '100%', maxHeight: 320, objectFit: 'contain', borderRadius: 8 }}
+                      style={{ width: '100%', maxHeight: 320, objectFit: 'contain', borderRadius: UI_PROFILE_INNER_RADIUS }}
                     />
                   ) : (
                     <Box
                       component="img"
                       src={customization.aboutMediaUrl}
                       alt="О себе"
-                      sx={{ width: '100%', maxHeight: 320, objectFit: 'contain', borderRadius: 2 }}
+                      sx={{ width: '100%', maxHeight: 320, objectFit: 'contain', borderRadius: UI_PROFILE_INNER_RADIUS }}
                     />
                   )}
                   {editing && (
@@ -724,7 +760,7 @@ export default function ProfilePage() {
                   onClick={() => aboutMediaInputRef.current?.click()}
                   sx={{
                     mt: 2, border: `1px dashed ${theme.accent}40`,
-                    borderRadius: 2, p: 2, textAlign: 'center', cursor: 'pointer',
+                    borderRadius: UI_PROFILE_INNER_RADIUS, p: 2, textAlign: 'center', cursor: 'pointer',
                     '&:hover': { bgcolor: theme.accent + '08' },
                   }}
                 >
@@ -739,7 +775,7 @@ export default function ProfilePage() {
               {!user?.bio && !user?.firstName && (
                 <Box onClick={handleEdit} sx={{
                   mt: 1, border: `1px dashed ${theme.accent}40`,
-                  borderRadius: 2, p: 2, textAlign: 'center', cursor: 'pointer',
+                  borderRadius: UI_PROFILE_INNER_RADIUS, p: 2, textAlign: 'center', cursor: 'pointer',
                   '&:hover': { bgcolor: theme.accent + '08' },
                 }}>
                   <Typography sx={{ fontSize: 14, color: theme.textSec }}>
@@ -751,7 +787,7 @@ export default function ProfilePage() {
 
             {/* ── Карточка: Действия (компактные chip-кнопки) ── */}
             <Box sx={{
-              bgcolor: theme.bgHeader, borderRadius: 3, p: 2,
+              bgcolor: theme.bgHeader, borderRadius: UI_PROFILE_RADIUS, p: 2,
               border: `1px solid ${theme.border}`,
               display: 'flex', flexWrap: 'wrap', gap: 1,
             }}>
@@ -763,7 +799,7 @@ export default function ProfilePage() {
                 <Button key={i} onClick={a.onClick} startIcon={a.icon} size="small"
                   sx={{
                     color: theme.text, bgcolor: theme.bgHover, textTransform: 'none',
-                    borderRadius: 999, px: 1.5, py: 0.6, fontSize: 13,
+                    borderRadius: UI_PROFILE_INNER_RADIUS, px: 1.5, py: 0.6, fontSize: 13,
                     border: `1px solid ${theme.border}`,
                     '&:hover': { bgcolor: theme.accent + '18', borderColor: theme.accent + '55' },
                   }}>
@@ -771,8 +807,11 @@ export default function ProfilePage() {
                 </Button>
               ))}
             </Box>
+          </Box>
 
-            <Box sx={{ bgcolor: theme.bgHeader, borderRadius: 3, p: 2, border: `1px solid ${theme.border}` }}>
+          {/* ── Левая колонка: питомцы ── */}
+          <Box data-vera-profile-left sx={{ gridArea: 'left', display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+            <Box sx={{ bgcolor: theme.bgHeader, borderRadius: UI_PROFILE_RADIUS, p: 2, border: `1px solid ${theme.border}` }}>
               <Typography sx={{ fontSize: 12, color: theme.textSec, textTransform: 'uppercase', letterSpacing: 0.6, mb: 1.5, fontWeight: 700 }}>
                 Питомцы
               </Typography>
@@ -784,10 +823,18 @@ export default function ProfilePage() {
                     const pet = PET_CATALOG.find((item) => item.id === id);
                     if (!pet) return null;
                     const active = equippedPet?.id === id;
-                    return <Box key={id} sx={{ border: `1px solid ${active ? theme.accent : theme.border}`, borderRadius: 2, p: 1, textAlign: 'center' }}>
+                    return <Box key={id} sx={{ border: `1px solid ${active ? theme.accent : theme.border}`, borderRadius: UI_PROFILE_INNER_RADIUS, p: 1, textAlign: 'center' }}>
                       <PetArtwork petId={id} size={72} />
                       <Typography sx={{ color: theme.text, fontSize: 12, mt: 0.5 }}>{pet.name}</Typography>
-                      <Button size="small" onClick={() => runPetAction(equipPet(active ? null : id), 'Не удалось изменить экипировку питомца')} sx={{ mt: 0.5, minHeight: 28, fontSize: 11 }}>
+                      {(petCounts[id] || 1) > 1 && <Typography sx={{ color: theme.accent, fontSize: 11, fontWeight: 700 }}>×{petCounts[id]} шт.</Typography>}
+                      {/* Надетого питомца можно снять прямо здесь: equip(null) сохраняет его настройки. */}
+                      <Button
+                        size="small"
+                        variant={active ? 'outlined' : 'text'}
+                        aria-label={active ? `Снять питомца ${pet.name}` : `Надеть питомца ${pet.name}`}
+                        onClick={() => runPetAction(equipPet(active ? null : id), 'Не удалось изменить экипировку питомца')}
+                        sx={{ mt: 0.5, minHeight: 28, fontSize: 11, borderRadius: UI_PROFILE_INNER_RADIUS }}
+                      >
                         {active ? 'Снять' : 'Надеть'}
                       </Button>
                     </Box>;
@@ -807,21 +854,41 @@ export default function ProfilePage() {
                       <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
                     ))}
                   </TextField>
-                  <Button onClick={() => runPetAction(updatePetSettings({ name: petName }), 'Не удалось сохранить имя')} variant="contained">Сохранить</Button>
-                  <TextField size="small" label="Размер" type="number" value={equippedPet.settings.size || 72}
-                    onChange={(event) => runPetAction(updatePetSettings({ size: Math.max(36, Math.min(180, Number(event.target.value) || 72)) }), 'Не удалось сохранить размер')}
-                    inputProps={{ min: 36, max: 180 }} sx={{ ...inputSx, width: 105 }} />
+                  <Button onClick={() => runPetAction(updatePetSettings({ name: petName }), 'Не удалось сохранить имя')} variant="contained" sx={{ borderRadius: UI_PROFILE_INNER_RADIUS }}>Сохранить</Button>
+                  <TextField size="small" label="Размер" type="number" value={petSizeDraft}
+                    onChange={(event) => setPetSizeDraft(event.target.value)}
+                    onBlur={() => commitPetSize()}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        commitPetSize();
+                        event.currentTarget.blur();
+                      }
+                    }}
+                    inputProps={{ min: MIN_PET_SIZE, max: maxPetSize }} sx={{ ...inputSx, width: 150 }} />
                 </Box>
               )}
               <Typography sx={{ color: theme.textSec, fontSize: 11, mt: 1.5 }}>
-                Питомец живёт на экране рядом с вами: его можно перетаскивать, изменить размер, имя и шрифт. Пока он включён — не пропадает сам, убрать можно только кнопкой × на самом питомце.
+                Питомец живёт на экране рядом с вами: его можно перетаскивать, изменить размер, имя и шрифт. Максимальный размер — ⅕ меньшей стороны окна. Снять питомца можно только через его карточку в инвентаре.
               </Typography>
             </Box>
+          </Box>
 
-            {/* ── Карточка: Стена комментариев (без отдельного чёрного блока внизу) ── */}
+          {/* ── Правая колонка: реакции (10 слотов, свои скины, получение новых) ── */}
+          <Box data-vera-profile-right sx={{ gridArea: 'right', display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+            <Box data-vera-profile-reactions sx={{ bgcolor: theme.bgHeader, borderRadius: UI_PROFILE_RADIUS, p: 2, border: `1px solid ${theme.border}` }}>
+              <Typography sx={{ fontSize: 12, color: theme.textSec, textTransform: 'uppercase', letterSpacing: 0.6, mb: 1.5, fontWeight: 700 }}>
+                Реакции
+              </Typography>
+              <ReactionSlotsEditor />
+            </Box>
+          </Box>
+
+            {/* ── Центр, под «О себе» и QR: стена комментариев ── */}
             {user?.id && (
-              <Box sx={{
-                bgcolor: theme.bgHeader, borderRadius: 3, p: 2.5,
+              <Box data-vera-profile-comments sx={{
+                gridArea: 'comments',
+                bgcolor: theme.bgHeader, borderRadius: UI_PROFILE_RADIUS, p: 2.5, minWidth: 0,
                 border: `1px solid ${theme.border}`,
               }}>
                 <Typography sx={{ fontSize: 12, color: theme.textSec, textTransform: 'uppercase', letterSpacing: 0.6, mb: 1.5, fontWeight: 700 }}>
@@ -834,22 +901,25 @@ export default function ProfilePage() {
         )}
       </Box>
 
-      {/* Питомец «выглядывает» с правого края экрана профиля (только крупные экраны). */}
+      {/* Питомец выглядывает из-за правого края с наклоном к профилю на 45° (крупные экраны). */}
       {equippedPet && (
         <Box
           aria-hidden
           sx={{
             position: 'fixed',
-            right: -Math.round((equippedPet.settings.size || 72) * 0.35),
+            right: -Math.round(renderedPetSize * 0.35),
             top: '62%',
             transform: 'translateY(-50%)',
             zIndex: 15,
             pointerEvents: 'none',
             display: { xs: 'none', md: 'block' },
             animation: 'veraPetPeekIn .7s ease both, veraPetPeekSway 4s ease-in-out .7s infinite',
+            '@media (prefers-reduced-motion: reduce)': { animation: 'none' },
           }}
         >
-          <PetArtwork petId={equippedPet.id} size={equippedPet.settings.size || 72} />
+          <Box sx={{ transform: 'rotate(-45deg)', transformOrigin: 'center' }}>
+            <PetArtwork petId={equippedPet.id} size={renderedPetSize} />
+          </Box>
         </Box>
       )}
 

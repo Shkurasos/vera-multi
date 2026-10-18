@@ -10,7 +10,7 @@ function createStore() {
   const context = { exports: {}, Math: Object.assign(Object.create(Math), { random: () => 0 }), require: (name) => {
     if (name === 'zustand') return { create: () => (init) => {
       state = init(patch => { state = { ...state, ...(typeof patch === 'function' ? patch(state) : patch) }; }, () => state);
-      return { getState: () => state };
+      return { getState: () => state, setState: (patch) => { state = { ...state, ...patch }; }, subscribe: () => () => {} };
     } };
     if (name === 'zustand/middleware') return { persist: init => init };
     if (name.endsWith('/api')) return { musicApi: { recordPlay: () => Promise.resolve() } };

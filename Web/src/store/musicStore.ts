@@ -80,8 +80,7 @@ export const useMusicStore = create<MusicState>()(
           playsCount: m.playsCount || 0,
           createdAt: m.addedAt ? new Date(m.addedAt).toISOString() : new Date().toISOString(),
         }));
-        const savedTrack = tracks.find((track) => track.id === get().playbackTrackId);
-        set({ tracks, currentTrack: savedTrack || null, queue: savedTrack ? [savedTrack] : [], currentIndex: savedTrack ? 0 : -1 });
+        applyLoadedLibrary(tracks);
         return;
       } catch (e) { console.warn('[peer] listMedia failed:', e); }
       set({ tracks: [] });
@@ -89,8 +88,7 @@ export const useMusicStore = create<MusicState>()(
     }
     const res = await musicApi.getMy();
     const tracks = Array.isArray(res.data) ? res.data : (res.data.tracks || []);
-    const savedTrack = tracks.find((track) => track.id === get().playbackTrackId);
-    set({ tracks, currentTrack: savedTrack || null, queue: savedTrack ? [savedTrack] : [], currentIndex: savedTrack ? 0 : -1 });
+    applyLoadedLibrary(tracks);
   },
 
   search: async (q) => {
@@ -350,9 +348,73 @@ export const useMusicStore = create<MusicState>()(
         playbackTrackId: s.playbackTrackId,
         progress: s.progress,
         isPlaying: s.isPlaying,
+        // Порядок очереди: только id — восстанавливается из библиотеки в
+        // loadTracks(). Очередь целиком не сохраняем (см. комментарий выше).
+        queueIds: s.queue.map((t) => t.id),
       }),
     }
   )
 );
+
+/**
+ * id треков текущей очереди. Очередь в state не сохраняется (треки целиком
+ * не пишем в localStorage), но partialize кладёт её id в `vera-music:queueIds`.
+ * После перезагрузки состояние гидратируется пустой очередью, и первое же
+ * set() перезаписало бы persist — поэтому основной источник здесь отдельный
+ * ключ, а `state.queueIds` — запасной (старые вкладки без подписи).
+ */
+function savedQueueIds(): string[] {
+  const read = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((id: unknown): id is string => typeof id === 'string') : [];
+  try {
+    const backup = localStorage.getItem('vera-music:queueIds');
+    if (backup) return read(JSON.parse(backup));
+    const raw = localStorage.getItem('vera-music');
+    return read(raw ? JSON.parse(raw)?.state?.queueIds : null);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Применить свежую библиотеку: восстановить currentTrack по сохранённому id
+ * и ОЧЕРЕДЬ по сохранённому порядку. Раньше очередь заменялась одним текущим
+ * треком — после перезагрузки «предыдущие» песни пропадали, и `next()`
+ * заканчивался сразу. getState/setState — не замыкание фабрики: так функцию
+ * можно звать извне (тесты, loadTracks) без потери контекста.
+ */
+function applyLoadedLibrary(tracks: Track[]): void {
+  const { playbackTrackId, queue } = useMusicStore.getState();
+  const savedTrack = tracks.find((track) => track.id === playbackTrackId) || null;
+  const currentTrack = savedTrack || queue.find((track) => track.id === playbackTrackId) || null;
+  const nextQueue = queue.length
+    ? queue
+        .map((track) => tracks.find((fresh) => fresh.id === track.id) || track)
+        .filter((track) => tracks.some((fresh) => fresh.id === track.id))
+    : savedQueueIds()
+        .map((id) => tracks.find((fresh) => fresh.id === id))
+        .filter((track): track is Track => Boolean(track));
+  const currentIndex = currentTrack ? nextQueue.findIndex((track) => track.id === currentTrack.id) : -1;
+  // Текущий трек есть, но в сохранённой очереди его нет (очередь правили,
+  // пока вкладка была закрыта) — кладём его в конец, иначе next() нечего играть.
+  const finalQueue = currentIndex >= 0 || !currentTrack ? nextQueue : [...nextQueue, currentTrack];
+  useMusicStore.setState({
+    tracks,
+    currentTrack,
+    queue: finalQueue,
+    currentIndex: currentIndex >= 0 ? currentIndex : (currentTrack ? finalQueue.length - 1 : -1),
+  });
+}
+
+/**
+ * Порядок очереди — список id. main persist-ключ тоже получает `queueIds`
+ * через partialize, но гидратация пишет его пустым ещё до восстановления из
+ * библиотеки, поэтому держим запасной ключ: его не трогаем, пока очередь
+ * не станет непустой.
+ */
+useMusicStore.subscribe((state) => {
+  if (!state.queue.length) return;
+  try { localStorage.setItem('vera-music:queueIds', JSON.stringify(state.queue.map((t) => t.id))); } catch { /* квота */ }
+});
 
 registerAccountStore('music', useMusicStore);

@@ -13,6 +13,8 @@ function setup() {
     ], marketListings: [] },
     MARKET_MIN_PRICE_VP: 6, MARKET_MAX_PRICE_VP: 100000000, MARKET_SELLER_SHARE: 85,
     ensureWallet: u => u, isKnownSkinId: id => id === 'ring-glow',
+    PET_CATALOG: { 'pet-cat': { name: 'Ночной кот', rarity: 'legendary', cases: ['case-pets'] } },
+    normalizePetId: id => id,
     uuidv4: () => 'listing', authMiddleware() {},
     app: { get: (p, a, fn) => routes[p] = fn, post: (p, a, fn) => routes[p] = fn },
     saveDb() {}, pushWalletEmit() {}, emitMarketUpdated() {},
@@ -58,4 +60,39 @@ test('cancellation restores inventory and failed saves roll back', () => {
   assert.equal(call('/api/market/:id/cancel').code, 200);
   assert.equal(context.db.users[0].ownedItems[0], 'ring-glow');
   assert.equal(context.db.marketListings.length, 0);
+});
+
+test('pet marketplace moves one copy, not the whole stack', () => {
+  const { context, call } = setup();
+  const seller = context.db.users[0];
+  const buyer = context.db.users[1];
+  seller.ownedPets = ['pet-cat'];
+  seller.petCounts = { 'pet-cat': 3 };
+  seller.equippedPet = { id: 'pet-cat', settings: { x: 78, y: 76, size: 72, name: '', font: 'inherit' } };
+  assert.equal(call('/api/market/list', 'seller', { itemId: 'pet-cat', price: 6 }).code, 200);
+  assert.deepEqual([...seller.ownedPets], ['pet-cat'], 'оставшиеся копии остаются у продавца');
+  assert.equal(seller.petCounts['pet-cat'], 2, 'в эскроу ушла одна копия');
+  assert.ok(seller.equippedPet, 'надетый питомец не снимается, пока есть копии');
+  assert.equal(call('/api/market/list', 'seller', { itemId: 'pet-cat', price: 7 }).code, 409, 'повторный листинг заблокирован');
+  assert.equal(call('/api/market/:id/buy', 'buyer').code, 200);
+  assert.deepEqual([...buyer.ownedPets], ['pet-cat']);
+  assert.equal(buyer.petCounts['pet-cat'], 1, 'покупатель получил копию со счётчиком');
+  assert.equal(seller.petCounts['pet-cat'], 2);
+  assert.equal(seller.walletBalance, 5);
+  assert.equal(buyer.walletBalance, 94);
+});
+
+test('selling the last pet copy removes it; cancellation restores the copy', () => {
+  const { context, call } = setup();
+  const seller = context.db.users[0];
+  seller.ownedPets = ['pet-cat'];
+  seller.petCounts = { 'pet-cat': 1 };
+  seller.equippedPet = { id: 'pet-cat', settings: { x: 78, y: 76, size: 72, name: '', font: 'inherit' } };
+  assert.equal(call('/api/market/list', 'seller', { itemId: 'pet-cat', price: 6 }).code, 200);
+  assert.deepEqual([...seller.ownedPets], [], 'единственная копия ушла в эскроу');
+  assert.equal(seller.equippedPet, null, 'без копий питомец снимается');
+  assert.equal(seller.petCounts['pet-cat'], 0);
+  assert.equal(call('/api/market/:id/cancel').code, 200);
+  assert.deepEqual([...seller.ownedPets], ['pet-cat']);
+  assert.equal(seller.petCounts['pet-cat'], 1, 'отмена вернула копию');
 });

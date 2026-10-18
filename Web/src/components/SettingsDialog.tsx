@@ -19,6 +19,7 @@ import InviteLinkDialog from './InviteLinkDialog';
 import { useShopStore } from '../store/shopStore';
 import { useAnimStore, ANIM_GROUPS } from '../store/animStore';
 import { useAuthStore } from '../store/authStore';
+import { UI_SURFACE_RADIUS } from '../store/uiPrefsStore';
 
 
 const SCOPE_LABELS: Record<PrivacyScope, string> = {
@@ -62,7 +63,7 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
   return (
     <>
       <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm"
-        PaperProps={{ sx: { bgcolor: theme.bg, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 3 } }}>
+        PaperProps={{ sx: { bgcolor: theme.bg, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: UI_SURFACE_RADIUS } }}>
         <DialogTitle sx={{ fontWeight: 700 }}>Настройки</DialogTitle>
         <DialogContent dividers sx={{ bgcolor: theme.bgChat, p: 0 }}>
           <List sx={{ py: 0 }}>

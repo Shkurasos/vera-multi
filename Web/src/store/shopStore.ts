@@ -366,26 +366,6 @@ export const SHOP_CATALOG: ShopItem[] = [
     value: { type: 'gradient', gradient: 'linear-gradient(135deg, rgba(46,125,50,0.3) 0%, rgba(27,94,32,0.5) 100%)' },
     previewColor: 'linear-gradient(135deg,#2e7d32,#1b5e20)', price: 50 },
 ];
-/**
- * PERF: индекс каталога по applyKey + id.
- *
- * В MessageBubble на каждый пузырь приходилось делать четыре `SHOP_CATALOG.find`
- * по всему списку. Список статичен (зашит в клиент), поэтому линейный поиск
- * на каждый рендер — чистая трата: в чате на 200 сообщений это 800 проходов
- * при каждом скролле и каждой смене темы.
- *
- * Ключ составной: `applyKey|id`, потому что один applyKey (avatarRing)
- * встречается у десятков предметов, и искать нужно именно по связке.
- */
-const SHOP_ITEM_INDEX: Map<string, ShopItem> = new Map(
-  SHOP_CATALOG.map(item => [`${item.applyKey}|${item.id}`, item]),
-);
-
-/** Предмет по applyKey и id за O(1). Аналог find, но без перебора каталога. */
-export function findShopItem(applyKey: string, id?: string | null): ShopItem | undefined {
-  if (!id) return undefined;
-  return SHOP_ITEM_INDEX.get(`${applyKey}|${id}`);
-}
 
 // ─── Линейка редкостей (21×2 = 42 платных предмета) ────────────────────────
 // Генерируется из RARITY_META (общий источник истины для UI-стилей и цен).
@@ -457,6 +437,23 @@ for (const r of RARITY_ORDER) {
     rarity: r, previewColor: meta.color, value: { type: 'pack', pack: `r-${r}`, color: meta.color } });
 }
 
+/**
+ * Индекс каталога для горячего пути отрисовки сообщений.
+ *
+ * Важно: индекс строится ПОСЛЕ всех циклов генерации. Раньше он создавался
+ * сразу после статической части каталога, поэтому сгенерированные скины
+ * редкостей и части тематических паков не находились при отрисовке.
+ */
+const SHOP_ITEM_INDEX: Map<string, ShopItem> = new Map(
+  SHOP_CATALOG.map(item => [`${item.applyKey}|${item.id}`, item]),
+);
+
+/** Предмет по applyKey и id за O(1). Аналог find, но без перебора каталога. */
+export function findShopItem(applyKey: string, id?: string | null): ShopItem | undefined {
+  if (!id) return undefined;
+  return SHOP_ITEM_INDEX.get(`${applyKey}|${id}`);
+}
+
 export const SHOP_CURRENCY = 'ВП';
 
 export type AvatarRingSetting = 'default' | 'rainbow' | 'glow';
@@ -465,6 +462,10 @@ export type SelfCardSetting = 'plain' | 'gradient' | 'badge';
 export type ShopTab = 'inventory' | 'shop';
 export type ItemColorMode = 'stock' | 'theme';
 export type MarketListing = ApiMarketListing;
+const sameListings = (a: MarketListing[], b: MarketListing[]) => a.length === b.length && a.every((l, i) => {
+  const o = b[i];
+  return l.id === o.id && l.itemId === o.itemId && l.price === o.price && l.sellerId === o.sellerId && l.seller === o.seller && l.createdAt === o.createdAt && !!l.isMine === !!o.isMine;
+});
 
 export interface ShopState {
   /** Какие товары куплены (по умолчанию все бесплатные открыты). */
@@ -610,7 +611,11 @@ export const useShopStore = create<ShopState>()(
         loadMarket: async () => {
           const account = useAuthStore.getState().user?.id;
           const { data } = await marketApi.list();
-          if (account === useAuthStore.getState().user?.id) set({ marketListings: data.listings });
+          if (account !== useAuthStore.getState().user?.id) return;
+          // Опрос раз в 10 с: без изменений не трогаем стор, иначе сетка
+          // магазина пересобиралась бы целиком на каждый тик.
+          if (sameListings(get().marketListings, data.listings)) return;
+          set({ marketListings: data.listings });
         },
         purchase: async () => {
           // Реальные покупки отключены. Выдача выполняется только сервером
@@ -627,7 +632,11 @@ export const useShopStore = create<ShopState>()(
         // Сервер присылает полный список. Замена важна при входе нового
         // аккаунта, чтобы локальные предметы другого пользователя не остались.
         mergeOwned: (ids) => set(s => {
-          const owned = Object.fromEntries(ids.map((id) => [id, true]));
+          const fresh = Object.fromEntries(ids.map((id) => [id, true]));
+          // Тот же набор — сохраняем ссылку, чтобы memo-подписчики (сетка
+          // магазина) не пересчитывались на каждом опросе кошелька.
+          const freshKeys = Object.keys(fresh);
+          const owned = freshKeys.length === Object.keys(s.owned).length && freshKeys.every(id => s.owned[id]) ? s.owned : fresh;
           const catalogItem = (id: string) => !id || !!SHOP_CATALOG.find(item => item.id === id);
           return {
             owned,

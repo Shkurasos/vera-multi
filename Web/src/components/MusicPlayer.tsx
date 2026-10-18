@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, useMemo, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { Box, IconButton, Slider, Typography, Tooltip, Popover, List, ListItemButton, Avatar, Button, TextField, useMediaQuery } from '@mui/material';
+import { Box, IconButton, Slider, Typography, Tooltip, Popover, List, ListItemButton, Avatar, Button, TextField, ToggleButton, ToggleButtonGroup, useMediaQuery } from '@mui/material';
 import {
   GraphicEq, Pause, SkipNext, SkipPrevious,
   VolumeUp, VolumeOff, Shuffle, Repeat, RepeatOne, MusicNote,
@@ -14,7 +14,8 @@ import { usePlaylistStore } from '../store/playlistStore';
 import { useMusicVisualizerStore } from '../store/musicVisualizerStore';
 import type { MusicVisualizerSettings } from '../store/musicVisualizerStore';
 import MusicVisualizerOverlay from './MusicVisualizerOverlay';
-import MusicVisualizerSettingsDialog from './MusicVisualizerSettingsDialog';
+import MusicVisualizerSettingsDialog, { MusicVisualizerSettingsControls } from './MusicVisualizerSettingsDialog';
+import PlaylistsPanel from './PlaylistsPanel';
 
 const resolveAudioUrl = (url: string): string => {
   if (!url) return '';
@@ -91,6 +92,7 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
   const theme = useThemeStore((s) => s.theme);
   const playerPos = useUserSettingsStore((s) => s.layout.playerPos);
   const playlists = usePlaylistStore((s) => s.playlists);
+  const loadPlaylists = usePlaylistStore((s) => s.load);
   const getPlaylistTracks = usePlaylistStore((s) => s.getPlaylistTracks);
   const visualizerMap = useMusicVisualizerStore((s) => s.settings);
   const getSettings = useMusicVisualizerStore((s) => s.getSettings);
@@ -139,6 +141,7 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
     : 0;
   // В правой панели можно переключать компоненты внутри: «Трек», «Плейлист», «Настройки».
   const [rightTab, setRightTab] = useState<'track' | 'playlist' | 'settings'>('track');
+  const [settingsScope, setSettingsScope] = useState<'track' | 'playlist'>('track');
 
   const playlistViz = getSettings('playlist', currentPlaylist?.id);
   const trackViz = getSettings('track', currentTrack?.id);
@@ -151,6 +154,8 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
     : configuredViz;
   const activeVizScope = trackViz.enabled || !currentPlaylist ? 'track' : 'playlist';
   const activeVizId = activeVizScope === 'track' ? currentTrack?.id : currentPlaylist?.id;
+  const editableVizScope = settingsScope === 'playlist' && currentPlaylist ? 'playlist' : 'track';
+  const editableVizId = editableVizScope === 'playlist' ? currentPlaylist?.id : currentTrack?.id;
 
   useEffect(() => {
     previousTrackIdRef.current = currentTrack?.id;
@@ -162,6 +167,8 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
     // для восстановления сохранённого воспроизведения после перезагрузки.
     loadTracks().catch(() => {});
   }, [loadTracks]);
+
+  useEffect(() => { void loadPlaylists(); }, [loadPlaylists]);
 
   useEffect(() => {
     const resumeAfterInteraction = () => {
@@ -521,13 +528,24 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
           </Box>
 
           {/* Вкладки */}
-          <Box sx={{ display: 'flex', borderBottom: `1px solid ${theme.border}`, bgcolor: theme.bgInput }}>
+          <Box role="tablist" aria-label="Разделы плеера" sx={{ display: 'flex', flexShrink: 0, borderBottom: `1px solid ${theme.border}`, bgcolor: theme.bgInput }}>
             {(['track', 'playlist', 'settings'] as const).map((tab) => (
               <Box
+                component="button"
+                type="button"
+                role="tab"
+                id={`music-player-tab-${tab}`}
+                aria-controls={`music-player-panel-${tab}`}
+                aria-selected={rightTab === tab}
                 key={tab}
                 onClick={() => setRightTab(tab)}
                 sx={{
                   flex: 1,
+                  border: 0,
+                  bgcolor: 'transparent',
+                  fontFamily: 'inherit',
+                  py: 1,
+                  '&:focus-visible': { outline: `2px solid ${theme.accent}`, outlineOffset: -2 },
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -540,12 +558,34 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
                 }}
               >
                 {tab === 'track' && 'Трек'}
-                {tab === 'playlist' && 'Плейлист'}
+                {tab === 'playlist' && 'Плейлисты'}
                 {tab === 'settings' && 'Настройки'}
               </Box>
             ))}
           </Box>
-          <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', gap: 1.5, p: 1.5, overflow: 'auto' }}>
+          {rightTab === 'playlist' && <Box role="tabpanel" id="music-player-panel-playlist" aria-labelledby="music-player-tab-playlist" sx={{ flex: 1, minHeight: 240, ...(embedded ? { height: '45vh', flex: '0 1 auto' } : {}), overflow: 'auto' }}>
+            <PlaylistsPanel />
+          </Box>}
+          {rightTab === 'settings' && <Box role="tabpanel" id="music-player-panel-settings" aria-labelledby="music-player-tab-settings" sx={{ flex: 1, minHeight: 0, ...(embedded ? { maxHeight: '50vh' } : {}), p: 1.5, overflowY: 'auto', color: theme.text }}>
+            <Typography sx={{ fontSize: 14, fontWeight: 700, mb: 1 }}>Подсветка</Typography>
+            <ToggleButtonGroup exclusive fullWidth size="small" value={editableVizScope} onChange={(_, scope: 'track' | 'playlist' | null) => scope && setSettingsScope(scope)}>
+              <ToggleButton value="track">Трек</ToggleButton>
+              <ToggleButton value="playlist" disabled={!currentPlaylist}>Плейлист</ToggleButton>
+            </ToggleButtonGroup>
+            <Typography sx={{ fontSize: 12, color: theme.textSec, mt: 1 }}>
+              {editableVizScope === 'playlist' ? currentPlaylist?.name : currentTrack.title}
+              {' — настройки сохраняются автоматически.'}
+            </Typography>
+            {!currentPlaylist && <Typography sx={{ fontSize: 12, color: theme.textSec, mt: 0.5 }}>Запустите плейлист, чтобы настроить его подсветку.</Typography>}
+            {trackViz.enabled && editableVizScope === 'playlist' && <Typography sx={{ fontSize: 12, color: theme.textSec, mt: 0.5 }}>Подсветка трека имеет приоритет. Отключите её, чтобы увидеть подсветку плейлиста.</Typography>}
+            {editableVizId && <MusicVisualizerSettingsControls
+              settings={editableVizScope === 'playlist' ? playlistViz : trackViz}
+              onChange={(patch) => setSettings(editableVizScope, editableVizId, patch)}
+              systemAudioReactive={systemAudioReactive}
+              onSystemAudioReactiveChange={setSystemAudioReactive}
+            />}
+          </Box>}
+          {rightTab === 'track' && <Box role="tabpanel" id="music-player-panel-track" aria-labelledby="music-player-tab-track" sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', gap: 1.5, p: 1.5, overflow: 'auto' }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Box sx={{ width: 52, height: 52, borderRadius: 1.5, bgcolor: theme.bgInput, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
                 {currentTrack.coverUrl ? <img src={currentTrack.coverUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <MusicNote sx={{ color: theme.accent }} />}
@@ -568,7 +608,7 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
               <Slider size="small" min={0} max={1} step={0.01} value={volume} onChange={(_, v) => setVolume((Array.isArray(v) ? v[0] : v) as number)} sx={{ color: theme.accent }} />
             </Box>
             <Button size="small" startIcon={<QueueMusic />} onClick={(e) => setQueueAnchor(e.currentTarget)} sx={{ color: theme.textSec, textTransform: 'none' }}>Очередь ({queue.length})</Button>
-          </Box>
+          </Box>}
         </Box>
       )}
 

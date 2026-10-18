@@ -8,6 +8,7 @@ import { packKeyFromPackId, packPartIds } from './packCatalog';
 import { registerAccountStore } from '../services/storeSyncSimple';
 import { walletApi } from '../services/api';
 import { usePetStore } from './petStore';
+import { useReactionSkinStore } from './reactionSkinStore';
 
 export interface SkinPack {
   id: string;
@@ -112,6 +113,11 @@ export const useLootStore = create<LootState>()(persist((set, get) => ({
     set({ cases: data.caseCounts?.['case-base'] || 0, caseCounts: data.caseCounts || {}, packs: data.packs || {}, lastDrop: data.lastDrop || null, prices: data.prices || {} });
     useShopStore.getState().setBalance(data.balance);
     useShopStore.getState().mergeOwned(data.ownedItems || []);
+    // Скины реакций выпадают из кейса — владение и 10 слотов приходят вместе:
+    // гидратация без reactionSlots затирала выбранные слоты стоком.
+    if (data.reactionSkins || data.reactionSlots) {
+      useReactionSkinStore.getState().hydrate({ reactionSkins: data.reactionSkins, reactionSlots: data.reactionSlots });
+    }
   },
   load: async () => {
     const token = localStorage.getItem('vera_token');

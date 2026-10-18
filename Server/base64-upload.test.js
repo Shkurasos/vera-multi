@@ -13,6 +13,7 @@ function upload(body) {
   vm.runInNewContext(source.slice(start, end), {
     app: { post: (_path, _auth, callback) => { handler = callback; } },
     authMiddleware() {}, Buffer, path, uuidv4: () => 'generated-id',
+    stripImageMetadata: require('./image-privacy').stripImageMetadata, crypto: require('node:crypto'),
     UPLOADS_DIR: path.join(__dirname, 'unused-test-path'),
     fs: { writeFileSync: (...args) => writes.push(args) },
   });
@@ -36,10 +37,12 @@ test('base64 upload rejects objects, SVG, spoofed MIME, oversized and malformed 
 });
 
 test('base64 image receives a server-generated path, never a client MIME extension', () => {
-  const data = 'data:image/png;base64,' + Buffer.from([137,80,78,71,13,10,26,10]).toString('base64');
+  const data = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6XcAAAAASUVORK5CYII=';
   const result = upload({ data, mimeType: '../../evil', fileName: '../../evil.html' });
   assert.equal(result.status, 200);
   assert.equal(result.body.url, '/uploads/avatars/generated-id.png');
   assert.equal(result.body.mimeType, 'image/png');
   assert.equal(result.writes.length, 1);
+  assert.equal(result.body.size, result.writes[0][1].length);
+  assert.equal(result.body.sha256, require('node:crypto').createHash('sha256').update(result.writes[0][1]).digest('hex'));
 });

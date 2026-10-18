@@ -53,6 +53,17 @@ function clampNum(value, fallback, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
+/**
+ * Совместный холст: чат, созданный с «/» в начале названия.
+ *
+ * Вид хранится в chat.kind, а не читается из названия: символ при создании
+ * срезается, и переименование не превращает обычный чат в холст. Правило
+ * совпадает с клиентским (deskBoard: isWhiteboardChat). Холст — не доска
+ * улик: приглашение в чат и есть приглашение рисовать вместе, управлять
+ * составом там некому.
+ */
+const isWhiteboardChat = (chat) => chat?.kind === 'whiteboard';
+
 /** Коллекция досок в БД (старые базы её не содержат). */
 function ensureProtoBoards(db) {
   if (!Array.isArray(db.protoBoards)) db.protoBoards = [];
@@ -92,6 +103,12 @@ function sanitizeBoard(input) {
     // для элемента, который сам не папка.
     const folderId = clampText(raw.folderId, 64);
     if (folderId) item.folderId = folderId;
+    // Будильник карточки: только конечное положительное время в мс.
+    // Папке будильник не нужен — у неё нет содержимого.
+    const alarmAt = Number(raw.alarmAt);
+    if (kind !== 'folder' && Number.isFinite(alarmAt) && alarmAt > 0 && alarmAt <= 8.64e15) {
+      item.alarmAt = Math.round(alarmAt);
+    }
     if (kind === 'photo') {
       // Ссылка на фото — только из своей папки загрузок. Иначе в карточку
       // можно было бы подставить любой URL и заставить приложение грузить
@@ -271,6 +288,27 @@ function install({ app, getDb, saveDb, auth, uploadPhoto, guardContent, notify, 
     .filter((a) => a.userId !== board.ownerId)
     .map((a) => ({ ...a, user: publicUser(getDb(), a.userId) }));
 
+  /**
+   * Участник чата с холстом молча получает редакторство.
+   *
+   * Без этого приглашённый в чат получал 403 на чтение доски, и рисунки
+   * хозяина для него просто не существовали: на холсте нет панели выдачи
+   * прав, выдать их было нечем. Доска «|Имя» своё правило сохраняет — там
+   * доступ выдаёт владелец явно, и молчаливого открытия участникам нет.
+   */
+  const grantWhiteboardAccess = (board, userId) => {
+    if (!userId || levelOf(board, userId)) return false;
+    const chat = (getDb().chats || []).find((c) => c.id === board.chatId);
+    if (!chat || !isWhiteboardChat(chat)) return false;
+    const member = (getDb().chatMembers || []).some((m) => m.chatId === board.chatId && m.userId === userId);
+    if (!member) return false;
+    if (!Array.isArray(board.access)) board.access = [];
+    board.access.push({ userId, level: 'editor', joinedAt: new Date().toISOString() });
+    board.updatedAt = new Date().toISOString();
+    persist();
+    return true;
+  };
+
   /** Общий вид доски для клиента: содержимое плюс мои права на него. */
   const view = (board, userId) => ({
     ...board,
@@ -293,6 +331,9 @@ function install({ app, getDb, saveDb, auth, uploadPhoto, guardContent, notify, 
       if (!opened) return res.status(404).json({ message: 'Чат не найден' });
       return res.json({ ...view(opened, req.userId), drawing: opened.drawing || [] });
     }
+    // Участник холста («/…») читает его сразу: приглашение в чат — уже
+    // приглашение к совместному рисованию, панели выдачи прав на холсте нет.
+    grantWhiteboardAccess(board, req.userId);
     // Читать доску может только тот, кому права выдали, либо владелец.
     // Проверка ДО отдачи содержимого: иначе любой, кто угадает chatId,
     // получил бы все карточки и фото чужой доски.
@@ -306,6 +347,8 @@ function install({ app, getDb, saveDb, auth, uploadPhoto, guardContent, notify, 
   app.put('/api/proto-boards/:chatId', auth, express.json({ limit: '4mb' }), (req, res) => {
     const board = boardFor(req.params.chatId) || openBoard(req.params.chatId, req.userId);
     if (!board) return res.status(404).json({ message: 'Чат не найден' });
+    // Сохранение штрихов приглашённым участником холста — тоже запись.
+    grantWhiteboardAccess(board, req.userId);
     if (!canEdit(board, req.userId)) {
       return res.status(403).json({ message: 'Вам выдан только просмотр' });
     }
@@ -320,12 +363,29 @@ function install({ app, getDb, saveDb, auth, uploadPhoto, guardContent, notify, 
     // после перезагрузки доска вернулась бы к размеру по умолчанию.
     board.width = clean.width;
     board.height = clean.height;
-    board.drawing = clean.drawing;
+    // Штрихи перезаписываем ТОЛЬКО когда их прислали. Раньше поле отсутствия
+    // приравнивалось к пустому массиву, и обычное сохранение карточек
+    // (protoBoardApi.save шлёт items/threads без drawing) стирало чужие
+    // рисунки — приглашённый открывал холст и видел пустоту.
+    if (Array.isArray(req.body?.drawing)) board.drawing = clean.drawing;
     board.updatedAt = new Date().toISOString();
     const after = new Set(clean.items.map((i) => i.photoUrl).filter(Boolean));
     persist();
     if (prunePhotos) {
       try { prunePhotos([...before].filter((u) => !after.has(u))); } catch { /* чистка не критична */ }
+    }
+    // getDb() — единственный доступный источник БД: замыкание PUT-хэндлера
+    // не знает ни db, ни chats напрямую.
+    const chat = getDb().chats?.find(c => c.id === board.chatId);
+    if (chat) {
+      // Правка доски (карточка, нить, холст) — активность группы. Поднимаем
+      // `updatedAt`: сортировка списка чатов берёт максимум из последнего
+      // сообщения и `updatedAt`, поэтому доска у всех вверху без сообщений.
+      // Ошибка здесь не должна отменить сохранение самой доски.
+      try {
+        chat.updatedAt = board.updatedAt;
+        persist();
+      } catch { /* БД не тронута — список просто не поднимется */ }
     }
     // Остальным участникам доска должна обновиться сразу, без перезагрузки.
     try { notify('proto-board:updated', { chatId: board.chatId }); } catch { /* сокет не поднят */ }

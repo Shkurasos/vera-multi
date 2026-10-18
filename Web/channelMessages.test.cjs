@@ -7,10 +7,16 @@ const ts = require('typescript');
 
 const source = fs.readFileSync(path.join(__dirname, 'src/store/chatStore.ts'), 'utf8');
 // Хелперы работы с локальными заглушками (`temp-*`) нужны replaceOrAddMessage.
-const helpers = source.slice(
-  source.indexOf('/* ---------- Локальные заглушки сообщений'),
-  source.indexOf('interface ChatState'),
-);
+// Множество удалённых id (markDeleted/withoutDeleted) живёт ПОСЛЕ интерфейса
+// ChatState — вырезаем отдельным куском, иначе replaceOrAddMessage падает
+// с ReferenceError прямо в vm-контексте теста.
+const helpers = [
+  source.slice(
+    source.indexOf('/* ---------- Локальные заглушки сообщений'),
+    source.indexOf('interface ChatState'),
+  ),
+  source.slice(source.indexOf('const deletedMessageIds'), source.indexOf('function veraAiChat')),
+].join('\n');
 const handler = source.slice(source.indexOf('  replaceOrAddMessage: (message) => {'), source.indexOf('  addMessage: (message) => {'));
 
 test('channel confirmation replaces the temporary post despite channel sender identity', () => {

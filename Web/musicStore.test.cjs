@@ -28,13 +28,16 @@ const realModules = {
 
 const track = (id, title) => ({ id, title, artist: 'A', fileUrl: `blob:${id}` });
 
-/** Поднимает стор заново, как при перезагрузке страницы. */
-function boot() {
+/**
+ * Поднимает стор заново, как при перезагрузке страницы.
+ * `musicApi` — подмена API: нужна, чтобы loadTracks() получил «библиотеку».
+ */
+function boot(musicApi) {
   const ctx = vm.createContext({
     console, exports: {}, module: { exports: {} },
     localStorage: fakeStorage, setTimeout, clearTimeout,
     require: (n) => realModules[n] || ({
-      '../services/api': { musicApi: { recordPlay: () => Promise.resolve() } },
+      '../services/api': { musicApi: musicApi || { recordPlay: () => Promise.resolve() } },
       './../services/peer': { peer: {}, isPeerAvailable: () => false },
       '../services/storeSyncSimple': { registerAccountStore: () => {} },
     }[n] || {}),
@@ -48,6 +51,41 @@ function boot() {
   );
   return ctx.exports.useMusicStore;
 }
+
+// ── Очередь переживает перезагрузку ─────────────────────────────────────────
+
+test('loadTracks восстанавливает всю очередь, а не только текущий трек', async () => {
+  const store = boot();
+  const a = track('a', 'Первый');
+  const b = track('b', 'Второй');
+  const c = track('c', 'Третий');
+
+  // Играет средний — до него «предыдущие» должны дойти через prev(),
+  // после него «следующие» — через next(). Раньше после F5 очередь
+  // схлопывалась до одного трека и обе кнопки замирали.
+  store.getState().play(b, [a, b, c]);
+  assert.equal(store.getState().queue.length, 3, 'очередь из трёх');
+
+  const saved = JSON.parse(mem.get('vera-music')).state;
+  assert.deepEqual(saved.queueIds, ['a', 'b', 'c'], 'порядок очереди сохранён id-ами');
+
+  // Свежая «библиотека» пришла после перезагрузки — очередь собирается по
+  // сохранённому порядку, currentTrack — по playbackTrackId.
+  const reloaded = boot({ getMy: () => Promise.resolve({ data: [a, b, c] }), recordPlay: () => Promise.resolve() });
+  await reloaded.getState().loadTracks();
+  const state = reloaded.getState();
+  assert.equal(state.currentTrack?.id, 'b', 'текущий трек тот же');
+  // Array.from — массив из vm-контекста имеет чужой Array.prototype, и
+  // deepStrictEqual без копии падает при одинаковых значениях.
+  assert.deepEqual(Array.from(state.queue, (t) => t.id), ['a', 'b', 'c'], 'очередь восстановлена целиком');
+  assert.equal(state.currentIndex, 1, 'указатель стоит на текущем');
+  // state — снимок до вызова: после next()/prev() читаем свежее состояние.
+  state.next();
+  assert.equal(reloaded.getState().currentTrack?.id, 'c', 'next() доходит до следующего');
+  reloaded.getState().prev();
+  reloaded.getState().prev();
+  assert.equal(reloaded.getState().currentTrack?.id, 'a', 'prev() доходит до первого');
+});
 
 const reload = () => boot();
 
@@ -143,6 +181,18 @@ test('попап реакции не уезжает в угол, когда па
     src.includes('opacity: isHovered || reactionAnchor ? 1 : 0'),
     'панель видна вместе с попапом, даже если ховер сброшен',
   );
+  // Попап открывается НАД строкой панели, начинаясь от правого края кнопки:
+  // панель и её триггер остаются видимыми слева от эмодзи, а попап не
+  // падает под панелью поверх сообщений.
+  assert.ok(
+    src.includes("anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}")
+      && src.includes("transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}"),
+    'попап реакций открывается над панелью, справа от кнопки-триггера',
+  );
+  assert.ok(
+    !src.includes("anchorOrigin={{ vertical: 'top', horizontal: 'center' }}"),
+    'попап больше не падает под кнопку',
+  );
 });
 
 test('сайдбар не пересоздаётся при перестановке — редактор не выключается сам', () => {
@@ -161,13 +211,13 @@ test('сайдбар не пересоздаётся при перестанов
     src.includes('key="vera-sidebar-mobile"'),
     'и у мобильного сайдбара свой key',
   );
-  // Перестановка обязана идти через тот же элемент, иначе key не поможет.
-  for (const side of ['left', 'right', 'top', 'bottom']) {
-    assert.ok(
-      src.includes(`sidebarSide === '${side}' && (`),
-      `ветка ${side} на месте`,
-    );
-  }
+  // Перестановка обязана идти через тот же самый элемент (sidebar), иначе key
+  // не поможет: обе ветки тернарника обязаны ссылаться на одну и ту же
+  // переменную, а не создавать свои экземпляры <Sidebar>.
+  assert.ok(
+    /\(sidebarSide === 'right' \|\| sidebarSide === 'bottom'\) \? \[mainArea, sidebar\] : \[sidebar, mainArea\]/.test(src),
+    'перестановка сторон переставляет те же элементы списка, а не пересоздаёт сайдбар',
+  );
   assert.ok(
     !/<Sidebar open onToggle/.test(src),
     'нигде не остался сайдбар без key',

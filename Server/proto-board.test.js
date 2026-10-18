@@ -92,6 +92,20 @@ test('дубликаты id не проходят', () => {
   const b = sanitizeBoard({ items: [{ id: 'a', kind: 'note' }, { id: 'a', kind: 'note' }] });
   assert.equal(b.items.length, 1);
 });
+test('будильник карточки: только число в разумных пределах и не у папки', () => {
+  const b = sanitizeBoard({ items: [
+    { id: 'ok', kind: 'note', alarmAt: 1700000000000.4 },
+    { id: 'str', kind: 'note', alarmAt: 'завтра' },
+    { id: 'neg', kind: 'note', alarmAt: -5 },
+    { id: 'huge', kind: 'note', alarmAt: 9e15 },
+    { id: 'dir', kind: 'folder', alarmAt: 1700000000000 },
+  ] });
+  const at = (id) => b.items.find((i) => i.id === id)?.alarmAt;
+  assert.equal(at('ok'), 1700000000000);
+  for (const id of ['str', 'neg', 'huge', 'dir']) assert.equal(at(id), undefined, id);
+});
+
+
 
 test('фото принимается только из своей папки', () => {
   const b = sanitizeBoard({
@@ -377,5 +391,86 @@ test('сохранили доску — остальным ушло событи
     await call('PUT', '/api/proto-boards/c1', 'editor', { items: [{ id: 'n', kind: 'note' }], threads: [] });
     // Без события у второго участника доска обновится только после F5.
     assert.ok(events.some((x) => x.e === 'proto-board:updated' && x.p.chatId === 'c1'), 'событие рассылки');
+  });
+});
+
+test('правка доски поднимает updatedAt родительского чата', async () => {
+  await withServer(async ({ db, call }) => {
+    db.protoBoards.push({ id: 'b', chatId: 'c1', ownerId: 'owner', items: [], threads: [], access: [{ userId: 'editor', level: 'editor' }] });
+    db.chats[0].updatedAt = '2000-01-01T00:00:00.000Z';
+    await call('PUT', '/api/proto-boards/c1', 'editor', { items: [{ id: 'n', kind: 'note', text: 'свежая заметка' }], threads: [] });
+    // Список чатов сортируется по активности (максимум lastMessage/updatedAt):
+    // без этого чат доски висел бы внизу под всеми чатами со старыми сообщениями.
+    assert.ok(Date.parse(db.chats[0].updatedAt) > Date.parse('2000-01-01T00:00:00.000Z'), 'updatedAt чата поднят');
+    assert.equal(db.chats[0].updatedAt, db.protoBoards[0].updatedAt, 'взята метка сохранения доски');
+    // Зритель доску не пишет — и активность чата не двигает.
+    db.chats[0].updatedAt = '2000-01-01T00:00:00.000Z';
+    db.protoBoards[0].access.push({ userId: 'viewer', level: 'viewer' });
+    await call('PUT', '/api/proto-boards/c1', 'viewer', { items: [], threads: [] });
+    assert.equal(db.chats[0].updatedAt, '2000-01-01T00:00:00.000Z', 'зритель не поднимает чат');
+  });
+});
+
+// ─── Совместный холст «/…» ────────────────────────────────────────────────────
+// Жалоба: «кто-то рисует и приглашает в холст — у второго пусто». Причина была
+// двойная: (1) участник чата без явной выдачи прав получал 403 на чтение, а на
+// холсте панели выдачи прав нет вовсе; (2) PUT без поля drawing затирал штрихи
+// пустым массивом — сохранение карточек стирало чужие рисунки.
+
+test('участник чата-холста получает редакторство и видит рисунки', async () => {
+  await withServer(async ({ db, call }) => {
+    db.chats.push({ id: 'w1', name: 'Холст', kind: 'whiteboard', type: 'group', ownerId: 'owner' });
+    db.chatMembers.push({ id: 'm1', chatId: 'w1', userId: 'owner', role: 'owner' });
+    db.chatMembers.push({ id: 'm2', chatId: 'w1', userId: 'editor', role: 'member' });
+    db.protoBoards.push({
+      id: 'bw', chatId: 'w1', ownerId: 'owner', items: [], threads: [],
+      drawing: [{ points: [{ x: 1, y: 2 }], color: '#123456', width: 3 }],
+      access: [],
+    });
+    const get = await call('GET', '/api/proto-boards/w1', 'editor');
+    assert.equal(get.status, 200, 'приглашённый в чат холста читает его');
+    const body = await get.json();
+    assert.equal(body.canEdit, true, 'и может рисовать');
+    assert.equal(body.drawing.length, 1, 'рисунки на месте');
+    assert.equal(db.protoBoards[0].access.some((a) => a.userId === 'editor'), true, 'право записано в БД');
+    // Сохранение штрихов приглашённым проходит.
+    const put = await call('PUT', '/api/proto-boards/w1', 'editor', {
+      items: [], threads: [],
+      drawing: [{ points: [{ x: 1, y: 2 }, { x: 3, y: 4 }], color: '#123456', width: 3 }],
+    });
+    assert.equal(put.status, 200, 'приглашённый сохраняет рисунок');
+    assert.equal(db.protoBoards[0].drawing[0].points.length, 2, 'штрих записан');
+    // Посторонний (не участник чата) по-прежнему за бортом.
+    assert.equal((await call('GET', '/api/proto-boards/w1', 'stranger')).status, 403, 'посторонний не видит холст');
+  });
+});
+
+test('участник обычной доски «|…» не получает прав молча', async () => {
+  await withServer(async ({ db, call }) => {
+    // Семантика доски улик не меняется: там доступ выдаёт владелец явно,
+    // молчаливая выдача сломала бы и панель, и тесты на 403.
+    db.chatMembers.push({ id: 'm2', chatId: 'c1', userId: 'editor', role: 'member' });
+    db.protoBoards.push({ id: 'b', chatId: 'c1', ownerId: 'owner', items: [], threads: [], access: [] });
+    assert.equal((await call('GET', '/api/proto-boards/c1', 'editor')).status, 403, 'без выдачи — не видит');
+  });
+});
+
+test('PUT без поля drawing не затирает существующие штрихи', async () => {
+  await withServer(async ({ db, call }) => {
+    db.protoBoards.push({
+      id: 'b', chatId: 'c1', ownerId: 'owner', items: [], threads: [],
+      drawing: [{ points: [{ x: 5, y: 5 }], color: '#abcdef', width: 2 }],
+      access: [{ userId: 'editor', level: 'editor' }],
+    });
+    // Так шлёт protoBoardApi.save (перемещение карточки): drawing в теле нет.
+    const put = await call('PUT', '/api/proto-boards/c1', 'editor', {
+      items: [{ id: 'n', kind: 'note', text: 'карточка' }], threads: [],
+    });
+    assert.equal(put.status, 200);
+    assert.equal(db.protoBoards[0].drawing.length, 1, 'рисунки пережили сохранение карточек');
+    // А явный пустой массив — законный способ очистить холст.
+    const clear = await call('PUT', '/api/proto-boards/c1', 'editor', { items: [], threads: [], drawing: [] });
+    assert.equal(clear.status, 200);
+    assert.equal(db.protoBoards[0].drawing.length, 0, 'явная очистка работает');
   });
 });

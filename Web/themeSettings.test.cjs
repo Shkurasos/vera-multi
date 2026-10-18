@@ -187,5 +187,6 @@ test('окна из редактора открываются поверх пл�
   assert.ok(panels.includes('modal: 10100'), 'шкала modal поднята выше плашки');
   assert.ok(panels.includes('tooltip: 10200'), 'тултипы и меню внутри окон тоже подняты');
   assert.ok(editor.includes('<ThemeSettingsLayer>'), 'вкладки настроек обёрнуты в слой');
-  assert.ok(/tab !== 'theme' && \([\s\S]{0,200}<ThemeSettingsLayer>/.test(editor), 'слой только для вкладок настроек');
+  // Вкладка «community» тоже рисуется без слоя — условие исключает обе.
+  assert.ok(/tab !== 'theme' && tab !== 'community' && \([\s\S]{0,200}<ThemeSettingsLayer>/.test(editor), 'слой только для вкладок настроек');
 });

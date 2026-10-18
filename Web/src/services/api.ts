@@ -80,6 +80,10 @@ api.interceptors.response.use(
 
 export const authApi = {
   device: (createAccount = false) => api.post('/auth/device', { deviceId: getDeviceId(), deviceName: getDeviceName(), createAccount }, { timeout: 15000 }),
+  register: (email: string, username: string, password: string) => api.post('/auth/register', { email, username, password, deviceId: getDeviceId(), deviceName: getDeviceName() }, { timeout: 30000 }),
+  login: (identifier: string, password: string) => api.post('/auth/login', { identifier, password, deviceId: getDeviceId(), deviceName: getDeviceName() }, { timeout: 30000 }),
+  loginEvents: () => api.get('/auth/login-events'),
+  passkey: { registerOptions: () => api.post('/auth/passkey/register/options'), registerVerify: (response: unknown) => api.post('/auth/passkey/register/verify', response), loginOptions: (identifier?: string) => api.post('/auth/passkey/login/options', { identifier }), loginVerify: (response: unknown) => api.post('/auth/passkey/login/verify', response) },
   me: () => api.get('/auth/me', { timeout: 15000 }),
   logout: () => api.post('/auth/logout'),
 };
@@ -178,6 +182,12 @@ export const petsApi = {
   setEquipment: (petId: string | null, settings?: any) => api.put('/pets/equipment', { petId, settings }),
 };
 
+/** Скины реакций: владение и 10 слотов быстрых реакций. */
+export const reactionsApi = {
+  get: () => api.get<{ reactionSkins: Record<string, number>; reactionSlots: string[] }>('/reactions'),
+  setSlots: (slots: string[]) => api.put<{ reactionSkins: Record<string, number>; reactionSlots: string[] }>('/reactions/slots', { slots }),
+};
+
 export const adminApi = {
   grantVp: (username: string, amount: number) => api.post('/admin/wallet/grant', { username, amount }),
   listIpBans: () => api.get('/admin/ip-bans'),
@@ -226,6 +236,30 @@ export const communityThemesApi = {
   install: (id: string) => api.post<{ theme: CommunityTheme }>(`/community/themes/${encodeURIComponent(id)}/install`),
   download: (id: string) => api.get<Blob>(`/community/themes/${encodeURIComponent(id)}/download`, { responseType: 'blob' }),
   remove: (id: string) => api.delete(`/community/themes/${encodeURIComponent(id)}`),
+};
+
+export type CommunityIconPack = {
+  id: string;
+  name: string;
+  description: string;
+  base: string;
+  authorId: string;
+  authorName: string;
+  iconCount: number;
+  /** Несколько слотов для карточки (тот же формат, что и в паке). */
+  preview: Record<string, any>;
+  downloads: number;
+  createdAt: string;
+};
+
+/** Каталог паков иконок сообщества (Server/community-icon-packs.js). */
+export const communityIconPacksApi = {
+  list: (q = '') => api.get<{ packs: CommunityIconPack[] }>('/community/icon-packs', { params: q ? { q } : undefined }),
+  publish: (pack: unknown, name: string, description: string) =>
+    api.post<{ pack: CommunityIconPack }>('/community/icon-packs', { pack, name, description }),
+  get: (id: string, install = false) =>
+    api.get<{ item: CommunityIconPack; pack: any }>(`/community/icon-packs/${encodeURIComponent(id)}`, { params: install ? { install: 1 } : undefined }),
+  remove: (id: string) => api.delete(`/community/icon-packs/${encodeURIComponent(id)}`),
 };
 
 /**
@@ -365,7 +399,65 @@ export const messagesApi = {
     api.get(`/messages/${chatId}/search`, { params: { q } }),
   addReaction: (chatId: string, messageId: string, emoji: string) =>
     api.post(`/messages/${chatId}/reaction`, { messageId, emoji }),
+  /** Отложенное сообщение (/time): задержку отсчитывает сервер. */
+  schedule: (chatId: string, text: string, delayMs: number) =>
+    api.post<ScheduledMessage>(`/messages/${chatId}/schedule`, { text, delayMs }),
+  scheduled: (chatId: string) => api.get<ScheduledMessage[]>(`/messages/${chatId}/scheduled`),
+  cancelScheduled: (id: string) => api.delete(`/messages/scheduled/${encodeURIComponent(id)}`),
 };
+
+/**
+ * Морской бой (/warship): сессия-карточка в чате.
+ * mode 'ai' — одиночная игра против ИИ на клиенте, сервер принимает итог (/finish).
+ * mode 'pvp' — дуэль 1 на 1 в личке: флоты и ходы живут на сервере,
+ * клиент получает только свой вид (/state) и стреляет через /fire.
+ */
+export const warshipsApi = {
+  /** Создать сессию в чате. inviteeId — для лички (собеседник); в группе не нужен. */
+  create: (chatId: string, inviteeId?: string | null) =>
+    api.post(`/messages/${encodeURIComponent(chatId)}/warship`, { inviteeId: inviteeId ?? null }),
+  accept: (messageId: string) =>
+    api.post(`/warships/${encodeURIComponent(messageId)}/accept`),
+  decline: (messageId: string) =>
+    api.post(`/warships/${encodeURIComponent(messageId)}/decline`),
+  finish: (messageId: string, result: { winner: 'player' | 'computer'; durationMs: number; shots: number }) =>
+    api.post(`/warships/${encodeURIComponent(messageId)}/finish`, result),
+  state: (messageId: string) =>
+    api.get<WarshipDuelView>(`/warships/${encodeURIComponent(messageId)}/state`),
+  fire: (messageId: string, r: number, c: number) =>
+    api.post<{ outcome: 'miss' | 'hit' | 'sunk'; view: WarshipDuelView }>(`/warships/${encodeURIComponent(messageId)}/fire`, { r, c }),
+  surrender: (messageId: string) =>
+    api.post(`/warships/${encodeURIComponent(messageId)}/surrender`),
+};
+
+/** Вид дуэли глазами текущего игрока (чужой флот сервер не отдаёт). */
+export interface WarshipDuelView {
+  mode: 'pvp';
+  myShips: Array<{ cells: [number, number][]; sunk: boolean }>;
+  /** Мои выстрелы по сопернику: «r,c» → исход. */
+  myShots: Record<string, 'miss' | 'hit' | 'sunk'>;
+  /** Выстрелы соперника по моему полю. */
+  enemyShots: Record<string, 'miss' | 'hit' | 'sunk'>;
+  myTurn: boolean;
+  over: boolean;
+  winnerId: string | null;
+  opponentId: string;
+  opponentName: string;
+  enemyShipsLeft: number;
+  myShipsLeft: number;
+  myShotsCount: number;
+  enemyShotsCount: number;
+  startedAt: number;
+  finishedAt: number | null;
+}
+
+export interface ScheduledMessage {
+  id: string;
+  chatId: string;
+  text: string;
+  sendAt: number;
+  createdAt: number;
+}
 
 export interface BlockedUser {
   id: string;

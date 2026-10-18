@@ -12,14 +12,31 @@ import MainLayout from './pages/MainLayout';
 // навигации — начальный бандл несёт только первый экран (чат/экран входа).
 // DeviceEntryPage остаётся статическим: это первый экран без авторизации.
 import DeviceEntryPage from './pages/DeviceEntryPage';
-const ProfilePage = React.lazy(() => import('./pages/ProfilePage'));
-const DevicesPage = React.lazy(() => import('./pages/DevicesPage'));
-const AcceptLinkPage = React.lazy(() => import('./pages/AcceptLinkPage'));
-const DownloadPage = React.lazy(() => import('./pages/DownloadPage'));
-const ContactsPage = React.lazy(() => import('./pages/ContactsPage'));
-const CallLogPage = React.lazy(() => import('./pages/CallLogPage'));
-const BotFatherPage = React.lazy(() => import('./pages/BotFatherPage'));
-const AdminToolsPage = React.lazy(() => import('./pages/AdminToolsPage'));
+import ProfilePage from './pages/ProfilePage';
+import { StoreOpen } from './components/Store';
+// Vite иногда возвращает namespace-модуль без корректного default при HMR.
+// Явно нормализуем результат dynamic import, иначе React.lazy пытается
+// преобразовать namespace-объект в строку и падает в printWarning.
+function lazyPage<T extends React.ComponentType<any>>(
+  load: () => Promise<{ default?: T }>,
+  name: string,
+) {
+  return React.lazy(async () => {
+    const module = await load();
+    if (typeof module.default !== 'function') {
+      throw new Error(`Lazy page "${name}" has no default React component export`);
+    }
+    return { default: module.default };
+  });
+}
+
+const DevicesPage = lazyPage(() => import('./pages/DevicesPage'), 'DevicesPage');
+const AcceptLinkPage = lazyPage(() => import('./pages/AcceptLinkPage'), 'AcceptLinkPage');
+const DownloadPage = lazyPage(() => import('./pages/DownloadPage'), 'DownloadPage');
+const ContactsPage = lazyPage(() => import('./pages/ContactsPage'), 'ContactsPage');
+const CallLogPage = lazyPage(() => import('./pages/CallLogPage'), 'CallLogPage');
+const BotFatherPage = lazyPage(() => import('./pages/BotFatherPage'), 'BotFatherPage');
+const AdminToolsPage = lazyPage(() => import('./pages/AdminToolsPage'), 'AdminToolsPage');
 import MusicPlayer from './components/MusicPlayer';
 import MobileBottomNav from './components/MobileBottomNav';
 import CallOverlay from './components/CallOverlay';
@@ -33,6 +50,7 @@ import { useThemeStore, bindBuiltinThemesSocket, refreshBuiltinThemes } from './
 import { useShopStore } from './store/shopStore';
 import { useLootStore } from './store/lootStore';
 import { usePetStore } from './store/petStore';
+import { useReactionSkinStore } from './store/reactionSkinStore';
 import { useCustomEquipStore } from './store/customEquipStore';
 import { useChatThemeStore } from './store/chatThemeStore';
 import { useChatBgPrefsStore } from './store/chatBgPrefsStore';
@@ -43,12 +61,6 @@ import AppLockGate from './components/AppLockGate';
 import DevInspector from './components/DevInspector';
 import { GlobalStyles } from '@mui/material';
 import { playDefaultChime, disposeNotificationSound } from './utils/notificationSound';
-
-// Магазин/инвентарь/кейсы — тяжёлый оверлей (арт паков, каталоги кейсов,
-// кошелёк). Открывается редко, поэтому грузим его по требованию, а не в
-// начальном бандле: StoreOpen смонтирован всегда, но рендерит Store только
-// когда open === true.
-const StoreOpen = React.lazy(() => import('./components/Store').then((m) => ({ default: m.StoreOpen })));
 
 // Звук уведомления: синтез живёт в utils/notificationSound. Раньше здесь была
 // его копия (и вторая в ChatWindow) — две почти одинаковые реализации beep'а.
@@ -125,10 +137,13 @@ export default function App() {
   const addMessage = useChatStore((s) => s.addMessage);
   const replaceOrAddMessage = useChatStore((s) => s.replaceOrAddMessage);
   const updateMessage = useChatStore((s) => s.updateMessage);
-  const removeMessage = useChatStore((s) => s.removeMessage);
+  // Анимированное удаление: и для HTTP-ответа, и для сокет-эха `message:deleted`.
+  const removeMessageAnimated = useChatStore((s) => s.removeMessageAnimated);
   const applyPinnedMessage = useChatStore((s) => s.applyPinnedMessage);
   const setTyping = useChatStore((s) => s.setTyping);
   const updateChatList = useChatStore((s) => s.updateChatList);
+  // Доска/холст изменились — поднимаем чат в списке (сообщение не появляется).
+  const touchChat = useChatStore((s) => s.touchChat);
   const setUserOnline = useChatStore((s) => s.setUserOnline);
   const setUserOffline = useChatStore((s) => s.setUserOffline);
   const clearOnlineUsers = useChatStore((s) => s.clearOnlineUsers);
@@ -274,6 +289,10 @@ export default function App() {
       // подписываемся на его изменения, чтобы тема обновилась без перезагрузки.
       bindBuiltinThemesSocket();
       refreshBuiltinThemes();
+      // Сокет часто подключается раньше, чем навешаны слушатели: первый
+      // 'connect' пропускается, и без явной загрузки после F5 слоты реакций
+      // оставались стоковыми до захода в инвентарь.
+      void useReactionSkinStore.getState().load().catch(console.error);
 
       socket.on('message:new', (message: any) => {
         if (message.senderId === user?.id) {
@@ -318,7 +337,7 @@ export default function App() {
       socket.on('message:edited', updateMessage);
 
       socket.on('message:deleted', ({ id, chatId }: { id: string; chatId: string }) => {
-        removeMessage(id, chatId);
+        void removeMessageAnimated(id, chatId);
       });
 
       socket.on('message:pinned', ({ chatId, messageId, pinnedMessage, pinnedMessageIds, pinnedMessages }: { chatId: string; messageId: string | null; pinnedMessage?: any; pinnedMessageIds?: string[]; pinnedMessages?: any[] }) => {
@@ -337,10 +356,8 @@ export default function App() {
 
       // Чат удалён — убираем из списка
       socket.on('chat:deleted', ({ chatId }: { chatId: string }) => {
-        useChatStore.setState((state) => ({
-          chats: state.chats.filter((c) => c.id !== chatId),
-          activeChat: state.activeChat?.id === chatId ? null : state.activeChat,
-        }));
+        // И из списка, и из локального архива — иначе чат вернётся при loadChats.
+        useChatStore.getState().forgetChat(chatId);
       });
 
       // Участник покинул чат
@@ -366,6 +383,12 @@ export default function App() {
         updateChatList(chat);
       });
 
+      // Правка доски/холста чужим участником: сообщение не появляется, но
+      // активность группы есть — поднимаем чат в списке по updatedAt.
+      socket.on('proto-board:updated', (payload: { chatId?: string } | null) => {
+        if (payload?.chatId) touchChat(payload.chatId);
+      });
+
       socket.on('chat:settings_offer', (offer: any) => {
         if (offer?.chatId && offer?.settings && offer?.senderId !== user?.id) setSettingsOffer(offer);
       });
@@ -388,12 +411,14 @@ export default function App() {
         useShopStore.getState().mergeOwned(ownedItems || []);
       });
       socket.on('cases:updated', data => useLootStore.getState().hydrate(data));
-      socket.on('pets:updated', data => usePetStore.setState({ ownedPets: data.ownedPets || [], equippedPet: data.equippedPet || null }));
+      socket.on('reactions:updated', data => useReactionSkinStore.getState().hydrate(data));
+      socket.on('pets:updated', data => usePetStore.setState({ ownedPets: data.ownedPets || [], petCounts: data.petCounts || {}, equippedPet: data.equippedPet || null }));
 
       socket.on('connect', () => {
         void useChatStore.getState().loadChats();
         void useLootStore.getState().load().catch(console.error);
         void usePetStore.getState().load().catch(console.error);
+        void useReactionSkinStore.getState().load().catch(console.error);
       });
 
       socket.on('disconnect', () => {
@@ -501,7 +526,9 @@ export default function App() {
     root.style.setProperty('--vera-accent-soft', appTheme.accent + '33');
     root.style.setProperty('--vera-text', appTheme.text);
     root.style.setProperty('--vera-text-sec', appTheme.textSec);
-  }, [appTheme.accent, appTheme.text, appTheme.textSec]);
+    // Фон темы — им «вырезается» знак в паке иконок «Плитки».
+    root.style.setProperty('--vera-bg', appTheme.bg);
+  }, [appTheme.accent, appTheme.text, appTheme.textSec, appTheme.bg]);
 
   // Подгружаем каталог кастомных предметов (от авторов) один раз после авторизации.
   useEffect(() => {

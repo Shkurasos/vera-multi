@@ -60,6 +60,8 @@ export interface Chat {
   activeBubble?: string;
   id: string;
   type: ChatType;
+  /** Особый вид группы: доска («|» при создании) или холст («/»). Не меняется при переименовании. */
+  kind?: 'desk' | 'whiteboard';
   name?: string;
   description?: string;
   avatarUrl?: string;

@@ -14,7 +14,7 @@ import {
   ContentCopy, ContentPaste, QrCode, Link,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useChatStore } from '../store/chatStore';
+import { useChatStore, chatActivityAt } from '../store/chatStore';
 import { useChatPrefsStore } from '../store/chatPrefsStore';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore, getFinishStyles, type Theme } from '../store/themeStore';
@@ -23,7 +23,17 @@ import { useDraftsStore } from '../store/draftsStore';
 import { useSidebarViewStore } from '../store/sidebarViewStore';
 import { useChatBgPrefsStore } from '../store/chatBgPrefsStore';
 import { usePhotoBgUrl } from '../hooks/usePhotoBgUrl';
-import { isDeskName } from '../utils/deskBoard';
+import { creationKind } from '../utils/deskBoard';
+
+/** Подсказка в диалоге создания: какой чат получится из введённого названия. */
+function creationHint(name: string): string {
+  if (!name.trim()) return 'Начните с /desk — получится доска, с /canvas — холст, с ! — публичный канал';
+  const kind = creationKind(name);
+  if (kind === 'desk') return 'Это будет доска вместо обычного чата';
+  if (kind === 'whiteboard') return 'Это будет совместный холст для рисования';
+  if (kind === 'channel') return 'Это будет публичный канал';
+  return 'Обычная группа. /desk — доска, /canvas — холст, ! — канал';
+}
 import { externalSiteUrl } from '../utils/externalSite';
 import ExternalSiteDialog from './ExternalSiteDialog';
 import { chatsApi, usersApi } from '../services/api';
@@ -135,7 +145,6 @@ const SidebarChatRow = React.memo(function SidebarChatRow(props: SidebarChatRowP
             : avatarOnly
               ? { justifyContent: 'center', px: .5, py: .65, mb: .4 }
               : { px: open ? 1.15 : .65, py: .85, mb: .55 }),
-          borderRadius: 3.5,
           bgcolor: active ? theme.bgActive : 'rgba(255,255,255,0.026)',
           border: `1px solid ${active ? theme.accent + '66' : 'rgba(255,255,255,0.045)'}`,
           boxShadow: active ? `0 12px 34px ${theme.accent}22` : 'none',
@@ -433,9 +442,9 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       const ap = isPinned(a.id) ? 1 : 0;
       const bp = isPinned(b.id) ? 1 : 0;
       if (ap !== bp) return bp - ap;
-      const at = a.lastMessage?.createdAt || a.createdAt;
-      const bt = b.lastMessage?.createdAt || b.createdAt;
-      return new Date(bt).getTime() - new Date(at).getTime();
+      // Максимум из последнего сообщения и updatedAt: правка доски/холста
+      // двигает updatedAt, не создавая сообщение, и чат должен подняться.
+      return new Date(chatActivityAt(b)).getTime() - new Date(chatActivityAt(a)).getTime();
     });
   }, [chats, search, tab, archiveView, user?.id, isPinned, isArchived]);
 
@@ -491,8 +500,17 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       if (isPeerAvailable()) {
         await peer.deleteChat(chat.id);
       } else {
-        await chatsApi.deleteChat(chat.id);
+        try {
+          await chatsApi.deleteChat(chat.id);
+        } catch (e: any) {
+          // 404 — сервер чат уже удалил, а в локальном архиве он остался.
+          // Это не ошибка: просто дочищаем локально.
+          if (e?.response?.status !== 404) throw e;
+        }
       }
+      // Чистим и список, и локальный архив до перезагрузки: иначе loadChats
+      // смерджит архив с сервером и удалённый чат вернётся.
+      await useChatStore.getState().forgetChat(chat.id);
       await loadChats();
       if (activeChat?.id === chat.id) navigate('/');
     } catch (e: any) {
@@ -654,6 +672,8 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
               }}>
                 <Button
                   size="small"
+                  disableRipple
+                  data-vera-sidebar-tab
                   onClick={() => setTab(t.id)}
                   sx={{
                     width: '100%',
@@ -664,7 +684,12 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
                     fontSize: 12.5,
                     fontWeight: active ? 700 : 500,
                     color: active ? '#001018' : theme.textSec,
-                    bgcolor: active ? theme.accent : 'transparent',
+                    // Заливку рисует только ::before. Собственный bgcolor кнопки
+                    // давал второй слой того же цвета (двойной край на скруглении),
+                    // а MUI на hover подменял его своим полупрозрачным фоном.
+                    bgcolor: 'transparent',
+                    '&:hover': { bgcolor: 'transparent' },
+                    '&.Mui-focusVisible': { bgcolor: 'transparent', outline: `2px solid ${theme.accent}`, outlineOffset: 2 },
                     border: 'none',
                     position: 'relative',
                     zIndex: 1,
@@ -674,7 +699,9 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
                       content: '""',
                       position: 'absolute',
                       inset: 0,
-                      borderRadius: 999,
+                      // Повторяет радиус кнопки: в «Полускруглённом» стиле он
+                      // приходит из ползунка (--vera-sq-radius), а не 999.
+                      borderRadius: 'inherit',
                       background: theme.accent,
                       opacity: active ? 1 : 0,
                       transform: active ? 'scale(1)' : 'scale(0.6)',
@@ -737,7 +764,9 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
             active={activeChat?.id === chat.id}
             pinned={isPinned(chat.id)}
             unreadCount={chat.unreadCount}
-            updatedAt={chat.lastMessage?.createdAt || chat.updatedAt || chat.createdAt}
+            // Та же метка, что и для сортировки: правка доски/холста двигает
+            // только updatedAt, и время в строке должно его показать.
+            updatedAt={chatActivityAt(chat)}
             theme={theme}
             ringSx={ringSx}
             avatarOnly={avatarOnly}
@@ -870,7 +899,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       <Dialog open={createGroupOpen} onClose={() => setCreateGroupOpen(false)} fullWidth maxWidth="xs">
         <DialogTitle>Новая группа</DialogTitle>
         <DialogContent>
-          <TextField fullWidth autoFocus margin="dense" label="Название" helperText={newGroupName.trim() ? (isDeskName(newGroupName) ? 'Это будет доска вместо обычного чата' : /^\s*\//.test(newGroupName) ? 'Это будет совместный холст для рисования' : 'Начните название с !, чтобы создать публичный канал') : 'Начните название с | — получится доска, с / — холст. С ! — публичный канал'} value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} />
+          <TextField fullWidth autoFocus margin="dense" label="Название" helperText={creationHint(newGroupName)} value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} />
           <Typography sx={{ mt: 2, mb: 1, fontSize: 13, color: theme.textSec }}>
             Участники ({contactsForGroup.length ? 'выберите контакты' : 'контактов пока нет — создайте группу и пришлите ссылку'})
           </Typography>

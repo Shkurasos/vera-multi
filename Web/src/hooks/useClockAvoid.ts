@@ -21,9 +21,12 @@ export function useClockAvoid(
   bubbleRef: RefObject<HTMLElement | null>,
   rowRef: RefObject<HTMLElement | null>,
 ): number {
-  const rect = useClockLayout((s) => s.rect);
-  const tick = useClockLayout((s) => s.tick);
   const enabled = useUserSettingsStore((s) => s.wallClockAvoid);
+  const rect = useClockLayout((s) => (enabled ? s.rect : null));
+  // Тик прокрутки нужен только когда есть что обходить. Раньше КАЖДЫЙ пузырь
+  // (до 200 в ленте) подписывался на него безусловно и перерисовывался раз в
+  // 120 мс прокрутки даже с выключенными часами — основной источник лагов.
+  const tick = useClockLayout((s) => (enabled && s.rect ? s.tick : 0));
   const [shift, setShift] = useState(0);
   // Текущий сдвиг держим ещё и в ref: в эффекте он нужен, чтобы отнять его от
   // замера, а setState в том же проходе недоступен.

@@ -14,6 +14,7 @@ function setup() {
     saveDb() { disk = JSON.stringify(context.db); },
     app: { post: (path, auth, handler) => { routes[path] = handler; } },
   };
+  require('./privacy-test-context')(context);
   vm.runInNewContext(source.slice(source.indexOf('function messageSender('), source.indexOf('// POST /api/messages/:chatId  (base route)')), context);
   vm.runInNewContext(source.slice(source.indexOf("app.post('/api/admin/wallet/grant'"), source.indexOf("app.get('/api/wallet'")), context);
   const response = () => ({ code: 200, status(code) { this.code = code; return this; }, json(data) { this.data = data; return this; } });

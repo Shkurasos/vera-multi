@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { clampBubble } from '../utils/bubbleSettings';
+import { clampBubble, normalizeMetaPos } from '../utils/bubbleSettings';
+import type { BubbleMetaPos } from '../utils/bubbleSettings';
 import { persist } from 'zustand/middleware';
 import { registerAccountStore } from '../services/storeSyncSimple';
 
@@ -54,6 +55,10 @@ export interface LayoutSettings {
   bubbleEnabled: boolean;
   bubbleTextSize: number;
   bubblePadding: number;
+  /** Выравнивание текста по стенке (свои — вправо, чужие — влево). */
+  bubbleWallAlign: boolean;
+  /** Где в пузыре время и галочки. */
+  bubbleMetaPos: BubbleMetaPos;
   showAvatarsInList: boolean;  // аватары в списке чатов
   showTabs: boolean;           // вкладки Диалоги/Архив/Группы
 }
@@ -76,6 +81,8 @@ export const defaultLayout: LayoutSettings = {
   bubbleEnabled: true,
   bubbleTextSize: 15,
   bubblePadding: 6,
+  bubbleWallAlign: false,
+  bubbleMetaPos: 'belowLeft',
   showAvatarsInList: true,
   showTabs: true,
 };
@@ -210,14 +217,21 @@ export const useUserSettingsStore = create<UserSettingsState>()(
       setLayout: (key, value) => set({ layout: { ...get().layout, [key]:
         key === 'messageMaxWidth' ? clampBubble('maxWidth', Number(value)) :
         key === 'bubbleTextSize' ? clampBubble('textSize', Number(value)) :
-        key === 'bubblePadding' ? clampBubble('padding', Number(value)) : value } } as any),
+        key === 'bubblePadding' ? clampBubble('padding', Number(value)) :
+        key === 'bubbleMetaPos' ? normalizeMetaPos(value) :
+        key === 'bubbleWallAlign' ? !!value : value } } as any),
       resetLayout: () => set({ layout: { ...defaultLayout } } as any),
       reset: () => set({ ...initial } as any),
     }),
-    { name: 'vera-user-settings', version: 3, migrate: (persisted: any) => {
+    { name: 'vera-user-settings', version: 4, migrate: (persisted: any, version: number) => {
         if (!persisted) return persisted;
         // v2: добавлены chatOuterMargin и bubbleRadius; merge с defaultLayout на всякий случай
         persisted.layout = { ...defaultLayout, ...(persisted.layout || {}) };
+        // v4: время и галочки по умолчанию — отдельной строкой снизу слева.
+        // Старый дефолт inlineRight сохранялся у всех, кто не трогал настройку.
+        if (version < 4 && persisted.layout.bubbleMetaPos === 'inlineRight') {
+          persisted.layout.bubbleMetaPos = 'belowLeft';
+        }
         return persisted;
       } }
   )
@@ -255,6 +269,8 @@ const SYNC_KEYS: (keyof UserSettingsState)[] = [
 ];
 
 const LOCAL_UPDATED_KEY = 'vera-settings-updated-at';
+/** Версия формата layout в серверном снапшоте (4 — время снизу слева по умолчанию). */
+const LAYOUT_VERSION = 4;
 const CLIENT_ID_KEY = 'vera-settings-client-id';
 let activeSettingsAccountId: string | null = null;
 let settingsGeneration = 0;
@@ -274,6 +290,8 @@ function snapshotForSync(s: UserSettingsState) {
   const out: any = {};
   for (const k of SYNC_KEYS) out[k] = (s as any)[k];
   out.__clientId = getClientId();
+  // Метка формата layout: снапшоты без неё сохранены до смены дефолта времени.
+  out.__layoutVersion = LAYOUT_VERSION;
   return out;
 }
 
@@ -300,7 +318,13 @@ function applyServerSnapshot(settings: any, accountId: string, generation: numbe
   for (const k of SYNC_KEYS) {
     if (settings[k] !== undefined) clean[k] = settings[k];
   }
-  if (clean.layout) clean.layout = { ...defaultLayout, ...clean.layout };
+  if (clean.layout) {
+    clean.layout = { ...defaultLayout, ...clean.layout };
+    // Старые снапшоты хранят прежний дефолт inlineRight — переводим на belowLeft.
+    if (!(Number(settings.__layoutVersion) >= LAYOUT_VERSION) && clean.layout.bubbleMetaPos === 'inlineRight') {
+      clean.layout.bubbleMetaPos = 'belowLeft';
+    }
+  }
   hydrating = true;
   try {
     useUserSettingsStore.setState(clean);

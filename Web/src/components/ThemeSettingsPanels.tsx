@@ -1,15 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Box, Typography, Button, Slider, Switch, Alert, ThemeProvider, createTheme, useTheme,
+  Box, Typography, Button, Switch, Alert, ThemeProvider, createTheme, useTheme,
   ToggleButton, ToggleButtonGroup, FormControlLabel,
 } from '@mui/material';
-import { RestartAlt, TextFields, ViewSidebar } from '@mui/icons-material';
+import { RestartAlt, TextFields, ViewSidebar, Chat, Palette, Settings } from '@mui/icons-material';
+import { IconPackOverrideContext } from '../iconPackContext';
 import { useThemeStore, themeBaseWallpaperId } from '../store/themeStore';
 import {
   useUserSettingsStore, type SidePos, type VertPos, type PlayerPos, type Density,
   type WallClockPos, type WallClockDatePos, type WallClockSecondsPos,
 } from '../store/userSettingsStore';
-import { useUiPrefsStore, ICON_PACKS, UI_STYLES, CHAT_SHAPES } from '../store/uiPrefsStore';
+import {
+  useUiPrefsStore, ICON_PACKS, UI_MODES, CHAT_SHAPES, SQUIRCLE_LIMITS, SQUIRCLE_SWITCH_RANGE,
+} from '../store/uiPrefsStore';
 import { useAnimStore, ANIM_GROUPS } from '../store/animStore';
 import { useChatBgPrefsStore, useAllStockWallpapers, wallpaperCssClass } from '../store/chatBgPrefsStore';
 import { baseWallpaperClass } from '../store/baseWallpapers';
@@ -18,8 +21,11 @@ import ChatListWallpaperPanel from './ChatListWallpaperPanel';
 import { GlobalSoundSettingsContent } from './GlobalSoundSettingsDialog';
 import LayoutDesignerDialog from './LayoutDesignerDialog';
 import BubbleSettingsControls from './BubbleSettingsControls';
+import { normalizeMetaPos } from '../utils/bubbleSettings';
 import FontPicker from './FontPicker';
 import { APP_FONT_OPTIONS } from '../utils/appFont';
+import SliderWithInput from './SliderWithInput';
+import CustomIconPacksPanel from './CustomIconPacksPanel';
 
 /**
  * Вкладки настроек, которые живут В ТЕМЕ: обои, звук, иконки и стиль,
@@ -65,7 +71,6 @@ function RowToggle({ label, hint, checked, onChange, disabled }: {
   );
 }
 
-/** Заголовок секции внутри вкладки. */
 function PanelTitle({ children }: { children: React.ReactNode }) {
   const theme = useThemeStore((s) => s.theme);
   return (
@@ -149,8 +154,8 @@ export function SoundPanel() {
 export function UiStylePanel() {
   const theme = useThemeStore((s) => s.theme);
   const {
-    iconPack, uiStyle, chatShape, chatBorder, chatFill,
-    setIconPack, setUiStyle, setChatShape, setChatBorder, setChatFill,
+    iconPack, chatShape, chatBorder, chatFill, squircle, uiModes,
+    setIconPack, setUiStyle, setUiMode, setChatShape, setChatBorder, setChatFill, setSquircleRadius,
   } = useUiPrefsStore();
   return (
     <Box>
@@ -162,9 +167,16 @@ export function UiStylePanel() {
           <ToggleButton key={p.id} value={p.id}
             sx={{
               flex: '1 1 45%', textTransform: 'none', color: theme.text,
-              borderColor: theme.border,
+              borderColor: theme.border, gap: 1, justifyContent: 'flex-start',
               '&.Mui-selected': { bgcolor: theme.accent + '25', color: theme.text, borderColor: theme.accent },
             }}>
+            {/* Превью в стиле самого пака, а не текущего (см. IconPackOverrideContext). */}
+            <IconPackOverrideContext.Provider value={p.id}>
+              <Box component="span" data-icon-preview={p.id} aria-hidden
+                sx={{ display: 'inline-flex', gap: 0.5, color: theme.accent, '& .MuiSvgIcon-root': { fontSize: 20 } }}>
+                <Chat /><Palette /><Settings />
+              </Box>
+            </IconPackOverrideContext.Provider>
             {p.label}
           </ToggleButton>
         ))}
@@ -173,24 +185,47 @@ export function UiStylePanel() {
         {ICON_PACKS.find((p) => p.id === iconPack)?.desc}
       </Typography>
 
+      <Box sx={{ mb: 2.5, pb: 2, borderBottom: `1px solid ${theme.border}` }}>
+        <CustomIconPacksPanel />
+      </Box>
+
       <PanelTitle>Стиль интерфейса</PanelTitle>
-      <ToggleButtonGroup exclusive fullWidth size="small" value={uiStyle}
-        onChange={(_, v) => v && setUiStyle(v)}
-        sx={{ flexWrap: 'wrap', gap: 0.5 }}>
-        {UI_STYLES.map((u) => (
-          <ToggleButton key={u.id} value={u.id}
-            sx={{
-              flex: '1 1 30%', textTransform: 'none', color: theme.text,
-              borderColor: theme.border,
-              '&.Mui-selected': { bgcolor: theme.accent + '25', color: theme.text, borderColor: theme.accent },
-            }}>
-            {u.label}
-          </ToggleButton>
+      {/* Радиусы действуют на весь интерфейс: карточки, настройки, меню, пузыри. */}
+      <Box sx={{ mb: 1.5 }}>
+        {([
+          ['surface', 'Скругление углов основного экрана', 'px'],
+          ['profile', 'Скругление плашек профиля', 'px'],
+          ['avatar', 'Скругление аватарок', '%'],
+          ['bubble', 'Скругление сообщений', 'px'],
+        ] as const).map(([key, label, unit]) => (
+          <Box key={key}>
+            <Typography id={`squircle-${key}`} sx={{ fontSize: 13, color: theme.text }}>
+              {label} — {squircle[key]}{unit}
+            </Typography>
+            <SliderWithInput
+              min={SQUIRCLE_LIMITS[key].min} max={SQUIRCLE_LIMITS[key].max} step={1}
+              value={squircle[key]}
+              onChange={(v) => setSquircleRadius(key, v)}
+              aria-labelledby={`squircle-${key}`}
+            />
+          </Box>
         ))}
-      </ToggleButtonGroup>
-      <Typography sx={{ fontSize: 12, color: theme.textSec, mt: 1, mb: 2 }}>
-        {UI_STYLES.find((u) => u.id === uiStyle)?.desc}
-      </Typography>
+        <Typography sx={{ fontSize: 11, color: theme.textSec }}>
+          Аватарки: 0% — квадрат, 50% — круг. При углах до {SQUIRCLE_SWITCH_RANGE.max}px
+          переключатели тоже становятся квадратными.
+        </Typography>
+        <Button size="small" startIcon={<RestartAlt />} onClick={() => setUiStyle('default')}
+          sx={{ mt: 0.5, textTransform: 'none', color: theme.textSec }}>
+          Сбросить стиль
+        </Button>
+      </Box>
+
+      <Box sx={{ mb: 2 }}>
+        {UI_MODES.map((m) => (
+          <RowToggle key={m.id} label={m.label} hint={m.desc}
+            checked={uiModes[m.id]} onChange={(v) => setUiMode(m.id, v)} />
+        ))}
+      </Box>
 
       <PanelTitle>Вид чатов</PanelTitle>
       <ToggleButtonGroup exclusive fullWidth size="small" value={chatShape}
@@ -263,15 +298,15 @@ export function AppearancePanel() {
   return (
     <Box>
       <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Яркость</Typography>
-      <Slider min={0.5} max={1.5} step={0.05} value={s.brightness}
-        onChange={(_, v) => s.set('brightness', Array.isArray(v) ? v[0] : v)}
-        valueLabelDisplay="auto" valueLabelFormat={(v) => `${Math.round(v * 100)}%`} />
+      <SliderWithInput min={0.5} max={1.5} step={0.05} value={s.brightness}
+        onChange={(v) => s.set('brightness', v)}
+        valueLabelDisplay="auto" scale={100} />
       <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
         <TextFields fontSize="small" /> Масштаб текста
       </Typography>
-      <Slider min={0.8} max={1.6} step={0.05} value={s.textScale}
-        onChange={(_, v) => s.set('textScale', Array.isArray(v) ? v[0] : v)}
-        valueLabelDisplay="auto" valueLabelFormat={(v) => `${Math.round(v * 100)}%`} />
+      <SliderWithInput min={0.8} max={1.6} step={0.05} value={s.textScale}
+        onChange={(v) => s.set('textScale', v)}
+        valueLabelDisplay="auto" scale={100} />
       <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
         <TextFields fontSize="small" /> Шрифт всего приложения
       </Typography>
@@ -363,24 +398,24 @@ export function AppearancePanel() {
               <ToggleButton value="bottomRight">Снизу справа</ToggleButton>
             </ToggleButtonGroup>
             <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5 }}>Размер секунд</Typography>
-            <Slider
+            <SliderWithInput
               min={0.6} max={1.6} step={0.05} value={s.wallClockSecondsScale}
-              onChange={(_, v) => s.set('wallClockSecondsScale', Array.isArray(v) ? v[0] : v)}
-              valueLabelDisplay="auto" valueLabelFormat={(v) => `${Math.round(v * 100)}%`}
+              onChange={(v) => s.set('wallClockSecondsScale', v)}
+              valueLabelDisplay="auto" scale={100}
             />
           </>
         )}
         <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5 }}>Размер времени</Typography>
-        <Slider
+        <SliderWithInput
           min={0.6} max={1.6} step={0.05} value={s.wallClockTimeScale}
-          onChange={(_, v) => s.set('wallClockTimeScale', Array.isArray(v) ? v[0] : v)}
-          valueLabelDisplay="auto" valueLabelFormat={(v) => `${Math.round(v * 100)}%`}
+          onChange={(v) => s.set('wallClockTimeScale', v)}
+          valueLabelDisplay="auto" scale={100}
         />
         <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5 }}>Размер даты</Typography>
-        <Slider
+        <SliderWithInput
           min={0.6} max={1.6} step={0.05} value={s.wallClockDateScale}
-          onChange={(_, v) => s.set('wallClockDateScale', Array.isArray(v) ? v[0] : v)}
-          valueLabelDisplay="auto" valueLabelFormat={(v) => `${Math.round(v * 100)}%`}
+          onChange={(v) => s.set('wallClockDateScale', v)}
+          valueLabelDisplay="auto" scale={100}
         />
       </Box>
       <Alert severity="info" sx={{ mt: 1.5, fontSize: 12 }}>
@@ -454,19 +489,8 @@ export function LayoutPanel() {
         <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
           Скругление углов окна чата и панелей — {s.layout.radius}px
         </Typography>
-        <Slider min={0} max={28} step={1} value={s.layout.radius}
-          onChange={(_, v) => s.setLayout('radius', Array.isArray(v) ? v[0] : v)} />
-      </Box>
-
-      <Box>
-        <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
-          Скругление пузырей сообщений — {s.layout.bubbleRadius}px
-        </Typography>
-        <Slider min={4} max={30} step={1} value={s.layout.bubbleRadius}
-          onChange={(_, v) => s.setLayout('bubbleRadius', Array.isArray(v) ? v[0] : v)} />
-        <Typography sx={{ fontSize: 11, color: theme.textSec }}>
-          Маленькие значения выглядят строже, большие — мягче и дружелюбнее.
-        </Typography>
+        <SliderWithInput min={0} max={28} step={1} value={s.layout.radius}
+          onChange={(v) => s.setLayout('radius', v)} />
       </Box>
 
       <Box>
@@ -478,7 +502,11 @@ export function LayoutPanel() {
           maxWidth: s.layout.messageMaxWidth,
           textSize: s.layout.bubbleTextSize ?? 15,
           padding: s.layout.bubblePadding ?? 6,
+          wallAlign: s.layout.bubbleWallAlign ?? false,
+          metaPos: normalizeMetaPos(s.layout.bubbleMetaPos),
         }} onChange={patch => {
+          if (patch.wallAlign !== undefined) s.setLayout('bubbleWallAlign', patch.wallAlign);
+          if (patch.metaPos !== undefined) s.setLayout('bubbleMetaPos', patch.metaPos);
           if (patch.enabled !== undefined) s.setLayout('bubbleEnabled', patch.enabled);
           if (patch.maxWidth !== undefined) s.setLayout('messageMaxWidth', patch.maxWidth);
           if (patch.textSize !== undefined) s.setLayout('bubbleTextSize', patch.textSize);
@@ -493,8 +521,8 @@ export function LayoutPanel() {
         <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
           Ширина боковой панели — {effectiveSidebarWidth}px
         </Typography>
-        <Slider min={200} max={sidebarWidthMax} step={5} value={Math.min(s.layout.sidebarWidth, sidebarWidthMax)}
-          onChange={(_, v) => s.setLayout('sidebarWidth', Array.isArray(v) ? v[0] : v)} />
+        <SliderWithInput min={200} max={sidebarWidthMax} step={5} value={Math.min(s.layout.sidebarWidth, sidebarWidthMax)}
+          onChange={(v) => s.setLayout('sidebarWidth', v)} />
       </Box>
 
       <RowToggle label="Показывать вкладки (Диалоги / Архив / Группы)"

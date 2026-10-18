@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   addItem, addThread, bringToFront, boardSize, defaultSize, dropItem, emptyBoard, findFreeSpot, moveFolder,
-  nextZ, removeItem, removeThread, resizeBoard, rotateItem, scaleItem, updateItem,
+  nextZ, removeItem, removeThread, resizeBoard, rotateItem, scaleItem, setItemAlarm, updateItem,
   type DeskBoard, type DeskItem, type DeskItemKind, type DeskRights,
 } from '../utils/deskBoard';
 import { protoBoardApi } from '../services/api';
@@ -43,6 +43,8 @@ export interface UseDeskBoard {
   scale: (id: string, factor: number) => void;
   rotate: (id: string, delta: number) => void;
   patch: (id: string, patch: Partial<DeskItem>) => void;
+  /** Поставить будильник карточки (ms) или снять его (null). */
+  setAlarm: (id: string, at: number | null) => void;
   replacePhoto: (id: string, file: File) => Promise<void>;
   drop: (id: string) => void;
   link: (from: string, to: string, color: string) => void;
@@ -242,6 +244,10 @@ export function useDeskBoard(chatId?: string): UseDeskBoard {
     mutate((b) => updateItem(b, id, p));
   }, [mutate]);
 
+  const setAlarm = useCallback((id: string, at: number | null) => {
+    mutate((b) => setItemAlarm(b, id, at));
+  }, [mutate]);
+
   const replacePhoto = useCallback(async (id: string, file: File) => {
     if (!chatId || !canEditRef.current || !latestRef.current.items.some((i) => i.id === id && i.kind === 'photo')) return;
     const res = await protoBoardApi.uploadPhoto(chatId, file);
@@ -333,7 +339,7 @@ export function useDeskBoard(chatId?: string): UseDeskBoard {
 
   return {
     board, rights, ready, error,
-    addNote, addMessage, addPhoto, move, scale, rotate, patch, replacePhoto, drop, link, unlink, focus,
+    addNote, addMessage, addPhoto, move, scale, rotate, patch, setAlarm, replacePhoto, drop, link, unlink, focus,
     addFolder, moveFolderTo, dropCard, resize,
     grant, setLevel, revoke, reload,
   };

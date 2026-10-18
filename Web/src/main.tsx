@@ -5,10 +5,41 @@ import { ThemeProvider, createTheme, CssBaseline, GlobalStyles, Box, Typography,
 import { useUserSettingsStore } from './store/userSettingsStore';
 import { useThemeStore } from './store/themeStore';
 import { muiPaletteFromTheme } from './utils/muiPalette';
-import { CHAT_SHAPES, UI_STYLE_RADII, UI_STYLE_FLAT_TARGETS } from './store/uiPrefsStore';
+import { CHAT_SHAPES, UI_STYLE_FLAT_TARGETS, UI_STYLE_SQUIRCLE_TARGETS } from './store/uiPrefsStore';
 import { appFontStyles, resolveAppFont } from './utils/appFont';
+import IconPackDefs from './components/IconPackDefs';
 import App from './App';
-import './store/uiPrefsStore'; // применяет data-icon-pack / data-ui-style на <html>
+
+/**
+ * CSS стилевых паков иконок. Ключ — хвост селектора после `.vera-ico`
+ * ('' — сама иконка). Фильтры url(#…) объявлены в IconPackDefs.
+ */
+const ICON_PACK_STYLES: Record<string, Record<string, Record<string, string | number>>> = {
+  relief: { '': { filter: 'url(#vera-ico-relief)', overflow: 'visible' } },
+  puffy: { '': { filter: 'url(#vera-ico-puffy)', overflow: 'visible' } },
+  sticker: { '': { filter: 'url(#vera-ico-sticker)', overflow: 'visible' } },
+  // Неон: тонкий контур и двойное свечение цветом самой иконки.
+  neon: {
+    '': {
+      filter: 'drop-shadow(0 0 1px currentColor) drop-shadow(0 0 4px color-mix(in srgb, currentColor 65%, transparent))',
+      overflow: 'visible',
+    },
+  },
+  // Плитки: скруглённая подложка цветом иконки, знак «вырезан» цветом фона
+  // темы, поэтому читается и на светлых, и на тёмных темах.
+  tile: {
+    '': {
+      fill: 'var(--vera-bg, #0B0B10)',
+      background: 'linear-gradient(150deg, color-mix(in srgb, currentColor 70%, #fff) 0%, currentColor 100%)',
+      borderRadius: '30%',
+      padding: '0.14em',
+      boxSizing: 'border-box',
+      boxShadow: '0 1px 3px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.35)',
+    },
+    ' *': { fill: 'inherit' },
+  },
+};
+import './store/uiPrefsStore'; // применяет data-icon-pack / data-ui-* / data-switch-style на <html>
 import './store/animStore'; // глобальные анимации интерфейса (data-anim-off-* на <html>)
 import './store/outboxStore'; // очередь исходящих сообщений (оффлайн-режим)
 
@@ -45,8 +76,9 @@ class ErrorBoundary extends React.Component<
             Скопируй текст выше и отправь разработчику
           </Typography>
           <Button variant="contained" onClick={() => {
-            this.setState({ hasError: false, error: '' });
-            window.location.href = '#/';
+            // React.lazy кэширует rejected promise; простого сброса state
+            // недостаточно — нужен полный reload с новым Vite-модулем.
+            window.location.reload();
           }} sx={{ bgcolor: '#7C6AF7' }}>
             Перезагрузить
           </Button>
@@ -357,6 +389,27 @@ const darkTheme = createTheme({
         },
         '.MuiSwitch-switchBase.Mui-checked': { color: 'var(--vera-accent, #00E5FF)' },
         '.MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { backgroundColor: 'var(--vera-accent, #00E5FF)' },
+        // Обычные (MUI) переключатели — тоже в цветах темы, и во «вкл», и во
+        // «выкл». Префикс html[...] поднимает специфичность над стилями MUI.
+        'html[data-switch-style="base"] .MuiSwitch-switchBase': {
+          color: 'var(--vera-text-sec, #bdbdbd)',
+          '&:hover': { backgroundColor: 'color-mix(in srgb, var(--vera-text-sec, #bdbdbd) 10%, transparent)' },
+        },
+        'html[data-switch-style="base"] .MuiSwitch-switchBase + .MuiSwitch-track': {
+          backgroundColor: 'var(--vera-text-sec, #bdbdbd)',
+          opacity: 0.35,
+        },
+        'html[data-switch-style="base"] .MuiSwitch-switchBase.Mui-checked': {
+          color: 'var(--vera-accent, #00E5FF)',
+          '&:hover': { backgroundColor: 'var(--vera-accent-soft, rgba(0,229,255,.2))' },
+        },
+        'html[data-switch-style="base"] .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
+          backgroundColor: 'var(--vera-accent, #00E5FF)',
+          opacity: 0.5,
+        },
+        'html[data-switch-style="base"] .MuiSwitch-switchBase.Mui-disabled + .MuiSwitch-track': {
+          opacity: 0.15,
+        },
         '.MuiCheckbox-root.Mui-checked': { color: 'var(--vera-accent, #00E5FF)' },
         '.MuiRadio-root.Mui-checked': { color: 'var(--vera-accent, #00E5FF)' },
         '.MuiLinearProgress-root .MuiLinearProgress-bar': { backgroundColor: 'var(--vera-accent, #00E5FF)' },
@@ -386,21 +439,77 @@ const darkTheme = createTheme({
         '*::-webkit-scrollbar-thumb': { background: 'var(--vera-accent-soft, rgba(0,229,255,.32))', borderRadius: 999 },
         '*::-webkit-scrollbar-track': { background: 'transparent' },
 
-        // ─── UI-стили из настроек ────────────────────────────────────────
-        // Скруглённый и строгий разворачиваются из UI_STYLE_RADII: список
-        // поверхностей задан один раз в сторе, поэтому стиль действует на всё
-        // (диалоги, меню, чипы, вкладки, бейджи, аватары), а не на три класса.
-        ...Object.fromEntries(
-          (['rounded', 'square'] as const).flatMap((style) =>
-            Object.entries(UI_STYLE_RADII[style]).map(([selector, radius]) => [
-              `html[data-ui-style="${style}"] ${selector}`,
-              { borderRadius: radius },
-            ])),
-        ),
-        // Пузыри сообщений — не MUI-компоненты, у них свой маркер.
-        'html[data-ui-style="rounded"] [data-vera-bubble]': { borderRadius: 26 },
-        'html[data-ui-style="square"] [data-vera-bubble]': { borderRadius: 4 },
-        'html[data-ui-style="square"] .MuiAvatar-root': { borderRadius: 6 },
+        // ─── Стиль интерфейса из настроек ────────────────────────────────
+        // Три ползунка (uiPrefsStore → CSS-переменные на <html>) действуют
+        // всегда: поверхности, аватарки и пузыри. Список поверхностей задан
+        // один раз в сторе (UI_STYLE_SQUIRCLE_TARGETS).
+        ...Object.fromEntries(UI_STYLE_SQUIRCLE_TARGETS.map((selector) => [
+          `html[data-ui-style] ${selector}`,
+          { borderRadius: 'var(--vera-sq-radius, 12px)' },
+        ])),
+        'html[data-ui-style] .MuiAvatar-root': { borderRadius: 'var(--vera-sq-avatar, 50%)' },
+        // Пузыри и ПКМ-меню — не MUI-компоненты, у них свои маркеры. Пузыри
+        // берут --vera-bubble-radius в sx (с «хвостиком»), здесь не трогаем.
+        'html[data-ui-style] [data-vera-context-menu]': { borderRadius: 'var(--vera-sq-radius, 12px)' },
+        // Вкладки «Все / Диалоги / Группы»: в sx у них таблетка (999), здесь
+        // явно перебиваем радиусом из ползунка «Поверхности».
+        'html[data-ui-style] .MuiButton-root[data-vera-sidebar-tab]': { borderRadius: 'var(--vera-sq-radius, 12px)' },
+
+        // ─── Переключатели в тон стилю ───────────────────────────────────
+        // При скруглённо-квадратных углах (data-switch-style="squircle")
+        // рисуем дорожку и бегунок скруглёнными квадратами: выкл — ✕,
+        // вкл — ○. Цвета — из акцента темы. Иначе остаётся вид MUI.
+        // Размеры — только для обычного размера; size="small" сохраняет свои.
+        'html[data-switch-style="squircle"] .MuiSwitch-root:not(.MuiSwitch-sizeSmall)': {
+          width: 52, height: 32, padding: 4,
+          '& .MuiSwitch-switchBase': { padding: 7 },
+          '& .MuiSwitch-thumb': { width: 18, height: 18 },
+        },
+        'html[data-switch-style="squircle"] .MuiSwitch-sizeSmall .MuiSwitch-thumb::before': {
+          fontSize: '9px !important',
+        },
+        'html[data-switch-style="squircle"] .MuiSwitch-track': {
+          borderRadius: 'max(4px, calc(var(--vera-sq-radius, 12px) - 4px)) !important',
+          opacity: '1 !important',
+          backgroundColor: 'color-mix(in srgb, currentColor 22%, transparent) !important',
+          border: '1px solid color-mix(in srgb, currentColor 30%, transparent)',
+        },
+
+        'html[data-switch-style="squircle"] .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
+          backgroundColor: 'var(--vera-accent, #00E5FF) !important',
+          borderColor: 'var(--vera-accent, #00E5FF)',
+        },
+        'html[data-switch-style="squircle"] .MuiSwitch-thumb': {
+          boxShadow: 'none',
+          borderRadius: 'max(3px, calc(var(--vera-sq-radius, 12px) - 7px))',
+          backgroundColor: '#fff',
+          position: 'relative',
+          // Значок внутри бегунка: ✕ (выкл) / ○ (вкл).
+          '&::before': {
+            content: '"✕"', position: 'absolute', inset: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 11, fontWeight: 700, lineHeight: 1, color: 'rgba(0,0,0,0.55)',
+          },
+        },
+        'html[data-switch-style="squircle"] .MuiSwitch-switchBase.Mui-checked .MuiSwitch-thumb::before': {
+          content: '"○"', fontSize: 13, color: 'var(--vera-accent, #00E5FF)',
+        },
+        'html[data-switch-style="squircle"] .MuiSwitch-switchBase.Mui-disabled + .MuiSwitch-track': {
+          opacity: '0.4 !important',
+        },
+
+        // ─── Стилевые паки иконок ───────────────────────────────────────
+        // Форму даёт базовый вариант MUI (ICON_PACK_BASE), вид — этот слой.
+        // vera-ico ставит только шим, поэтому сторонние SVG не задеваются.
+        // Превью в выборе пака ([data-icon-preview]) показывает СВОЙ пак, а
+        // не текущий: сначала снимаем стиль текущего пака, затем кладём свой.
+        // Специфичность у всех трёх групп одинаковая — решает порядок.
+        ...Object.fromEntries(Object.entries(ICON_PACK_STYLES).flatMap(([pack, rules]) =>
+          Object.entries(rules).map(([tail, style]) => [`html[data-icon-pack="${pack}"] .vera-ico${tail}`, style]))),
+        'html [data-icon-preview] .vera-ico': { filter: 'none', background: 'none', boxShadow: 'none', padding: 0, fill: 'currentColor' },
+        ...Object.fromEntries(Object.entries(ICON_PACK_STYLES).flatMap(([pack, rules]) =>
+          Object.entries(rules).map(([tail, style]) => [`html [data-icon-preview="${pack}"] .vera-ico${tail}`, style]))),
+
 
         // Decorative avatar rings can extend beyond the avatar itself. The photo
         // must still follow the avatar shape instead of becoming a rectangle.
@@ -414,42 +523,42 @@ const darkTheme = createTheme({
         // Glass: полупрозрачные поверхности с блюром. Помимо бумаги и пузырей
         // накрываем выпадающие списки, поповеры и подсказки — иначе стиль
         // выглядел наполовину: окна стеклянные, а меню под ними матовые.
-        'html[data-ui-style="glass"] .MuiPaper-root': {
+        'html[data-ui-glass="on"] .MuiPaper-root': {
           backdropFilter: 'blur(16px) saturate(1.4)',
           backgroundColor: 'rgba(255,255,255,0.06) !important',
           border: '1px solid rgba(255,255,255,0.12)',
         },
-        'html[data-ui-style="glass"] [data-vera-bubble]': {
+        'html[data-ui-glass="on"] [data-vera-bubble]': {
           backdropFilter: 'blur(12px) saturate(1.3)',
         },
-        'html[data-ui-style="glass"] .MuiDialog-paper': {
+        'html[data-ui-glass="on"] .MuiDialog-paper': {
           backgroundColor: 'rgba(15,18,30,0.72) !important',
         },
-        'html[data-ui-style="glass"] .MuiMenu-paper, html[data-ui-style="glass"] .MuiPopover-paper': {
+        'html[data-ui-glass="on"] .MuiMenu-paper, html[data-ui-glass="on"] .MuiPopover-paper': {
           backgroundColor: 'rgba(15,18,30,0.72) !important',
         },
-        'html[data-ui-style="glass"] .MuiTooltip-tooltip': {
+        'html[data-ui-glass="on"] .MuiTooltip-tooltip': {
           backgroundColor: 'rgba(15,18,30,0.82) !important',
           backdropFilter: 'blur(12px)',
         },
-        'html[data-ui-style="glass"] .MuiChip-root': {
+        'html[data-ui-glass="on"] .MuiChip-root': {
           backgroundColor: 'rgba(255,255,255,0.10) !important',
         },
 
         // Плоский: убираем все тени, оставляя заливку и границы. Плоские
         // поверхности читаются за счёт контраста, а не объёма.
         ...Object.fromEntries(UI_STYLE_FLAT_TARGETS.map((selector) => [
-          `html[data-ui-style="flat"] ${selector}`,
+          `html[data-ui-flat="on"] ${selector}`,
           { boxShadow: 'none' },
         ])),
 
         // Компактный: уменьшаем отступы и высоту контролов.
-        'html[data-ui-style="compact"] .MuiListItemButton-root': { paddingTop: 4, paddingBottom: 4 },
-        'html[data-ui-style="compact"] .MuiListItem-root': { paddingTop: 2, paddingBottom: 2 },
-        'html[data-ui-style="compact"] .MuiButton-root': { paddingTop: 4, paddingBottom: 4, minHeight: 30 },
-        'html[data-ui-style="compact"] .MuiIconButton-root': { padding: 6 },
-        'html[data-ui-style="compact"] [data-vera-bubble]': { padding: '6px 10px' },
-        'html[data-ui-style="compact"] .MuiOutlinedInput-input': { paddingTop: 6, paddingBottom: 6 },
+        'html[data-ui-compact="on"] .MuiListItemButton-root': { paddingTop: 4, paddingBottom: 4 },
+        'html[data-ui-compact="on"] .MuiListItem-root': { paddingTop: 2, paddingBottom: 2 },
+        'html[data-ui-compact="on"] .MuiButton-root': { paddingTop: 4, paddingBottom: 4, minHeight: 30 },
+        'html[data-ui-compact="on"] .MuiIconButton-root': { padding: 6 },
+        'html[data-ui-compact="on"] [data-vera-bubble]': { padding: '6px 10px' },
+        'html[data-ui-compact="on"] .MuiOutlinedInput-input': { paddingTop: 6, paddingBottom: 6 },
 
         // ─── Вид карточек чатов в списке слева ─────────────────────────────
         // Vera — круглые «таблетки» (текущий вид), Telegram — умеренные,
@@ -522,6 +631,7 @@ function AppThemeProvider({ children }: { children: React.ReactNode }) {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <GlobalStyles styles={appFontStyles(font)} />
+      <IconPackDefs />
       {children}
     </ThemeProvider>
   );

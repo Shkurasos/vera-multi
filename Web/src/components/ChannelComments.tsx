@@ -7,9 +7,12 @@ import { useAuthStore } from '../store/authStore';
 import { hasGroupRight } from '../services/groupPermissions';
 import { useThemeStore } from '../store/themeStore';
 import { bubbleBackground } from '../utils/bubbleGradient';
+import { useReactionSkinStore, reactionLabel } from '../store/reactionSkinStore';
+import ReactionGlyph from './ReactionGlyph';
 
 export default function ChannelComments({ post }: { post: Message }) {
   const theme = useThemeStore(s => s.theme);
+  const reactionSlots = useReactionSkinStore(s => s.slots);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [reply, setReply] = useState<Message | null>(null);
   const [reactionBusy, setReactionBusy] = useState<string | null>(null);
@@ -39,7 +42,8 @@ export default function ChannelComments({ post }: { post: Message }) {
     try {
       if (remove) {
         await messagesApi.delete(message.id);
-        useChatStore.getState().removeMessage(message.id, post.chatId);
+        // С анимацией распада — как при обычном удалении сообщения.
+        await useChatStore.getState().removeMessageAnimated(message.id, post.chatId);
         setComments(current => current.filter(m => m.id !== message.id));
         if (reply?.id === message.id) setReply(null);
       } else {
@@ -135,14 +139,14 @@ export default function ChannelComments({ post }: { post: Message }) {
               <Typography sx={{ fontSize: 15, lineHeight: 1.6, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{m.content}</Typography>
             </Box>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
-              {m.reactions?.map(r => <Button key={r.emoji} size="small" disabled={reactionBusy === m.id} aria-label={`Реакция ${r.emoji}: ${r.count}`} aria-pressed={r.userIds.includes(userId || '')} onClick={() => void react(m, r.emoji)} sx={{ bgcolor: r.userIds.includes(userId || '') ? theme.bgActive : theme.bgHeader, border: `1px solid ${theme.border}`, borderRadius: 5, minWidth: 48 }}>{r.emoji} {r.count}</Button>)}
+              {m.reactions?.map(r => <Button key={r.emoji} size="small" disabled={reactionBusy === m.id} aria-label={`Реакция ${reactionLabel(r.emoji)}: ${r.count}`} aria-pressed={r.userIds.includes(userId || '')} onClick={() => void react(m, r.emoji)} sx={{ bgcolor: r.userIds.includes(userId || '') ? theme.bgActive : theme.bgHeader, border: `1px solid ${theme.border}`, borderRadius: 5, minWidth: 48, gap: 0.5 }}><ReactionGlyph value={r.emoji} /> {r.count}</Button>)}
               <Button size="small" disabled={busy} onClick={() => { setReply(m); inputRef.current?.focus(); }}>Ответить</Button>
               <Button size="small" aria-expanded={reactionPicker === m.id} onClick={() => setReactionPicker(reactionPicker === m.id ? null : m.id)}>Реакция</Button>
               {(own || hasGroupRight(member, 'editMessages')) && <Button size="small" onClick={() => moderate(m, false)}>Редактировать</Button>}
               {(own || hasGroupRight(member, 'deleteMessages')) && <Button size="small" onClick={() => moderate(m, true)}>Удалить</Button>}
             </Box>
             {reactionPicker === m.id && <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, p: 0.5, bgcolor: theme.bgHeader, borderRadius: 2 }}>
-              {['👍', '❤️', '🔥', '😂', '😮', '😢', '🎉', '👎'].map(emoji => <Button key={emoji} disabled={!!reactionBusy} aria-label={`Поставить реакцию ${emoji}`} onClick={() => void react(m, emoji)} sx={{ minWidth: 40, minHeight: 40, fontSize: 22 }}>{emoji}</Button>)}
+              {reactionSlots.map(emoji => <Button key={emoji} disabled={!!reactionBusy} aria-label={`Поставить реакцию ${reactionLabel(emoji)}`} onClick={() => void react(m, emoji)} sx={{ minWidth: 40, minHeight: 40, fontSize: 22 }}><ReactionGlyph value={emoji} /></Button>)}
             </Box>}
           </Box>;
         })}

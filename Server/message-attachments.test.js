@@ -25,6 +25,7 @@ function setup() {
     app: Object.fromEntries(['post', 'get', 'put'].map((method) =>
       [method, (url, auth, fn) => { routes[method + ' ' + url] = fn; }])),
   };
+  require('./privacy-test-context')(context);
   for (const [start, end] of [
     ['function messageSender(', '// POST /api/messages/:chatId  (base route)'],
     ['function getPinnedMessage(', '// Общий обработчик отправки сообщения'],
@@ -58,7 +59,7 @@ test('MIME санится (svg/html не проходят), data:image и отн
     attachments: [
       { fileUrl: '/uploads/files/a.png', mimeType: 'image/svg+xml' },
       { fileUrl: '/uploads/files/b.png', mimeType: 'text/html' },
-      { fileUrl: 'data:image/png;base64,AAAA', mimeType: 'image/png' },
+      { fileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6XcAAAAASUVORK5CYII=', mimeType: 'image/png' },
       { fileUrl: '/one.png', mimeType: 'application/pdf' },
     ],
   });
@@ -67,7 +68,10 @@ test('MIME санится (svg/html не проходят), data:image и отн
   assert.equal(items.length, 4);
   assert.equal(items[0].mimeType, ''); // svg запрещён
   assert.equal(items[1].mimeType, ''); // text/html запрещён
-  assert.equal(items[2].fileUrl, 'data:image/png;base64,AAAA');
+  assert.match(items[2].fileUrl, /^data:image\/png;base64,/);
+  assert.equal(items[2].sha256, require('node:crypto').createHash('sha256')
+    .update(Buffer.from(items[2].fileUrl.split(',')[1], 'base64')).digest('hex'));
+  assert.match(res.data.integrityHash, /^[a-f0-9]{64}$/);
   assert.equal(items[3].fileUrl, '/one.png');
   assert.equal(items[3].mimeType, 'application/pdf');
 });
