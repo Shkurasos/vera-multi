@@ -7,21 +7,32 @@ type Position = { x: number; y: number };
 // even when the pointer subsequently returns to its starting position.
 export const PET_DRAG_THRESHOLD = 6;
 
+// Зона прилипания к стене в долях половины питомца (1 — прилипает, как только
+// край питомца коснулся стены). Верх и низ липнут слабее: питомец сначала
+// упирается в стену и встаёт к ней вплотную, а прилипает, только если дотянуть
+// его почти до самого края экрана.
+export const PET_SNAP_SIDE = 1;
+export const PET_SNAP_TOP_BOTTOM = 0.35;
+
 // Store a docked edge as 0/100 so it survives resizing and reloading.
 export function dockPet(position: Position, size: number, width: number, height: number): Position {
   const halfX = Math.min(50, size / 2 / Math.max(width, 1) * 100);
   const halfY = Math.min(50, size / 2 / Math.max(height, 1) * 100);
   const x = Math.max(0, Math.min(100, position.x));
   const y = Math.max(0, Math.min(100, position.y));
-  const horizontal = Math.min(x, 100 - x) / (halfX || 1);
-  const vertical = Math.min(y, 100 - y) / (halfY || 1);
+  const clampX = Math.max(halfX, Math.min(100 - halfX, x));
+  const clampY = Math.max(halfY, Math.min(100 - halfY, y));
+  // <= 1 — центр питомца внутри зоны прилипания этой стены.
+  const horizontal = Math.min(x, 100 - x) / ((halfX || 1) * PET_SNAP_SIDE);
+  const vertical = Math.min(y, 100 - y) / ((halfY || 1) * PET_SNAP_TOP_BOTTOM);
   if (horizontal <= 1 && horizontal <= vertical) {
-    return { x: x < 50 ? 0 : 100, y: Math.max(halfY, Math.min(100 - halfY, y)) };
+    return { x: x < 50 ? 0 : 100, y: clampY };
   }
   if (vertical <= 1) {
-    return { x: Math.max(halfX, Math.min(100 - halfX, x)), y: y < 50 ? 0 : 100 };
+    return { x: clampX, y: y < 50 ? 0 : 100 };
   }
-  return { x, y };
+  // Вне зон прилипания питомец не уходит за край экрана.
+  return { x: clampX, y: clampY };
 }
 
 export function getPetDock(position: Position) {

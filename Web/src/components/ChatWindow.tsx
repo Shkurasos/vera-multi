@@ -260,6 +260,9 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const clearChatFont = useChatFontStore((s) => s.clearChatFont);
   const chatFontValue = useChatFontStore((s) => s.perChatFonts[id || '']);
   const globalFontFamily = useUserSettingsStore((s) => s.globalFontFamily);
+  // Плашка даты в ленте: слева / по центру / справа. Неизвестное значение — по центру.
+  const chatDateAlign = useUserSettingsStore((s) => s.chatDateAlign);
+  const dateJustify = chatDateAlign === 'left' ? 'flex-start' : chatDateAlign === 'right' ? 'flex-end' : 'center';
   const layoutBubbleEnabled = useUserSettingsStore((s) => s.layout.bubbleEnabled);
   const layoutBubbleTextSize = useUserSettingsStore((s) => s.layout.bubbleTextSize);
   const layoutBubblePadding = useUserSettingsStore((s) => s.layout.bubblePadding);
@@ -2539,7 +2542,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           )}
           {groupedMessages.map(({ date, messages: msgs }) => (
             <Box key={date}>
-              <Box display="flex" justifyContent="center" my={2}>
+              <Box display="flex" justifyContent={dateJustify} my={2} px={dateJustify === 'center' ? 0 : 1.5}>
                 <Typography sx={{
                   fontSize: 13, color: theme.textSec,
                   bgcolor: 'rgba(255,255,255,0.075)',

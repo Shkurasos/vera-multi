@@ -8,7 +8,7 @@ import { Close, RestartAlt, SwapHoriz, Undo } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
 import {
   useUserSettingsStore, LayoutSettings,
-  SidePos, VertPos, PlayerPos, Density, MessageAlign,
+  SidePos, VertPos, PlayerPos, Density, MessageAlign, DesktopNavStyle,
 } from '../store/userSettingsStore';
 import SliderWithInput from './SliderWithInput';
 
@@ -370,6 +370,7 @@ export default function LayoutDesignerDialog({ open, onClose }: Props) {
               <ToggleButton value="top">Сверху</ToggleButton>
                <ToggleButton value="left">Слева</ToggleButton>
                <ToggleButton value="right">Справа</ToggleButton>
+              <ToggleButton value="info">В инфопанели</ToggleButton>
             </ToggleButtonGroup>
           </Box>
           <Box>
@@ -390,6 +391,15 @@ export default function LayoutDesignerDialog({ open, onClose }: Props) {
               onChange={(_, v) => v && setLayout('mobileNavPos', v as VertPos)}>
               <ToggleButton value="bottom">Снизу</ToggleButton>
               <ToggleButton value="top">Сверху</ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+          <Box>
+            <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Нижняя панель сайдбара (десктоп)</Typography>
+            <ToggleButtonGroup exclusive size="small" fullWidth
+              value={layout.desktopNavStyle ?? 'compact'}
+              onChange={(_, v) => v && setLayout('desktopNavStyle', v as DesktopNavStyle)}>
+              <ToggleButton value="compact">Компактная</ToggleButton>
+              <ToggleButton value="phone">Как на телефоне</ToggleButton>
             </ToggleButtonGroup>
           </Box>
           <Box>

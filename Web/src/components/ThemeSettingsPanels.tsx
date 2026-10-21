@@ -1,21 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Box, Typography, Button, Switch, Alert, ThemeProvider, createTheme, useTheme,
-  ToggleButton, ToggleButtonGroup, FormControlLabel,
+  ToggleButton, ToggleButtonGroup, TextField, useMediaQuery,
 } from '@mui/material';
-import { RestartAlt, TextFields, ViewSidebar, Chat, Palette, Settings } from '@mui/icons-material';
+import { RestartAlt, Chat, Palette, Settings } from '@mui/icons-material';
 import { IconPackOverrideContext } from '../iconPackContext';
 import { useThemeStore, themeBaseWallpaperId } from '../store/themeStore';
 import {
-  useUserSettingsStore, type SidePos, type VertPos, type PlayerPos, type Density,
-  type WallClockPos, type WallClockDatePos, type WallClockSecondsPos,
+  useUserSettingsStore, type SidePos, type VertPos, type PlayerPos, type Density, type DesktopNavStyle,
+  type WallClockPos, type WallClockDatePos, type WallClockSecondsPos, type WallClockHudMode, type ChatDateAlign,
+  normalizeHudUrl, WALL_CLOCK_HUD_HTML_MAX, WALL_CLOCK_HUD_HEIGHT_LIMITS,
 } from '../store/userSettingsStore';
 import {
-  useUiPrefsStore, ICON_PACKS, UI_MODES, CHAT_SHAPES, SQUIRCLE_LIMITS, SQUIRCLE_SWITCH_RANGE,
+  useUiPrefsStore, ICON_PACKS, UI_MODES, CHAT_SHAPES, SQUIRCLE_LIMITS, SQUIRCLE_SWITCH_RANGE, NAV_OPACITY_LIMITS, NAV_HEIGHT_LIMITS,
 } from '../store/uiPrefsStore';
 import { useAnimStore, ANIM_GROUPS } from '../store/animStore';
 import { useChatBgPrefsStore, useAllStockWallpapers, wallpaperCssClass } from '../store/chatBgPrefsStore';
-import { baseWallpaperClass } from '../store/baseWallpapers';
 import WallpaperSettingsDialog from './WallpaperSettingsDialog';
 import ChatListWallpaperPanel from './ChatListWallpaperPanel';
 import { GlobalSoundSettingsContent } from './GlobalSoundSettingsDialog';
@@ -24,19 +24,32 @@ import BubbleSettingsControls from './BubbleSettingsControls';
 import { normalizeMetaPos } from '../utils/bubbleSettings';
 import FontPicker from './FontPicker';
 import { APP_FONT_OPTIONS } from '../utils/appFont';
-import SliderWithInput from './SliderWithInput';
 import CustomIconPacksPanel from './CustomIconPacksPanel';
+import { SettingRow, SettingSlider, SettingSection, choiceGroupSx } from './SettingRow';
+
+/** Пример для поля своего HUD: часы, которые берут время и цвет из сообщений приложения. */
+const HUD_HTML_EXAMPLE = `<div id="t" style="font:700 64px sans-serif;text-align:center"></div>
+<script>
+addEventListener('message', (e) => {
+  const d = e.data; if (!d || d.type !== 'vera-clock') return;
+  const el = document.getElementById('t');
+  el.style.color = d.color;
+  el.textContent = new Date(d.now).toLocaleTimeString(d.locale, { hour: '2-digit', minute: '2-digit' });
+});
+</script>`;
 
 /**
- * Вкладки настроек, которые живут В ТЕМЕ: обои, звук, иконки и стиль,
- * анимации, внешний вид и макет. Раньше эти секции жили в SettingsDialog,
- * теперь они редактируются в центрированном редакторе тем и сохраняются в
- * Theme.settings (snapshotThemeSettings → applyThemeSettings).
+ * Вкладки настроек, которые живут В ТЕМЕ: обои, иконки, стиль, анимации,
+ * внешний вид, часы, сообщения, макет и звук. Они редактируются в
+ * центрированном редакторе тем и сохраняются в Theme.settings
+ * (snapshotThemeSettings → applyThemeSettings).
  *
  * Панели работают с привычными сторами напрямую: правки видны сразу, а при
- * сохранении темы текущие значения снимаются снимком в тему — поэтому весь
- * существующий код рендера (обои, data-атрибуты иконок/анимаций, звуки,
- * раскладка) продолжает работать без изменений.
+ * сохранении темы текущие значения снимаются снимком в тему.
+ *
+ * Разметка — строки SettingRow: название слева, контрол справа, между
+ * строками тонкая линия. Подписи строк совпадают с индексом поиска
+ * (utils/themeEditorSearch.ts) — по ним поиск находит строку на экране.
  */
 
 // ── Слой порталов над плашкой редактора ──────────────────────────────────────
@@ -59,22 +72,38 @@ function RowToggle({ label, hint, checked, onChange, disabled }: {
   /** Зависимая настройка выключена — переключатель гасится и не нажимается. */
   disabled?: boolean;
 }) {
-  const theme = useThemeStore((s) => s.theme);
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 0.5 }}>
-      <Box sx={{ minWidth: 0, pr: 1 }}>
-        <Typography sx={{ fontSize: 14, color: disabled ? theme.textSec : theme.text }}>{label}</Typography>
-        {hint && <Typography sx={{ fontSize: 12, color: theme.textSec }}>{hint}</Typography>}
-      </Box>
-      <Switch checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
-    </Box>
+    <SettingRow label={label} hint={hint} disabled={disabled}>
+      <Switch checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)}
+        inputProps={{ 'aria-label': label }} />
+    </SettingRow>
   );
 }
 
-function PanelTitle({ children }: { children: React.ReactNode }) {
+/** Подсказка под группой строк — мелким серым, без рамки Alert. */
+function PanelNote({ children }: { children: React.ReactNode }) {
   const theme = useThemeStore((s) => s.theme);
+  return <Typography sx={{ fontSize: 12, color: theme.textSec, mt: 1.5 }}>{children}</Typography>;
+}
+
+/** Общий вид групп кнопок-вариантов во всех строках (см. choiceGroupSx). */
+function useToggleSx() {
+  const theme = useThemeStore((s) => s.theme);
+  return choiceGroupSx(theme);
+}
+
+/** Строка с выбором одного из вариантов. */
+function ChoiceRow({ label, hint, value, onChange, items, stacked }: {
+  label: string; hint?: React.ReactNode; value: string; onChange: (v: string) => void;
+  items: [string, string][]; stacked?: boolean;
+}) {
+  const sx = useToggleSx();
   return (
-    <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 1 }}>{children}</Typography>
+    <SettingRow label={label} hint={hint} stacked={stacked} wide>
+      <ToggleButtonGroup exclusive size="small" fullWidth value={value} onChange={(_, v) => v && onChange(v)} sx={sx}>
+        {items.map(([val, text]) => <ToggleButton key={val} value={val}>{text}</ToggleButton>)}
+      </ToggleButtonGroup>
+    </SettingRow>
   );
 }
 
@@ -105,33 +134,29 @@ export function WallpaperPanel() {
       : (stock?.name || 'Без обоев');
   return (
     <Box>
-      <PanelTitle>Обои применяются ко всем чатам, в которых не установлены свои.</PanelTitle>
-      <Box sx={{
-        display: 'flex', alignItems: 'center', gap: 1.5, p: 1.5, mb: 1.5,
-        border: `1px solid ${theme.border}`, borderRadius: 2, bgcolor: theme.bgInput,
-      }}>
-        <Box className={baseClass} sx={{
-          width: 56, height: 40, borderRadius: 1.5, flexShrink: 0,
-          border: `1px solid ${theme.border}`, bgcolor: theme.bgHover,
-          backgroundImage: stockUrl ? `url(${stockUrl})` : undefined,
-          backgroundSize: 'cover', backgroundPosition: 'center',
-        }} />
-        <Box sx={{ minWidth: 0 }}>
-          <Typography sx={{ fontSize: 14, color: theme.text, fontWeight: 600 }} noWrap>{title}</Typography>
-          <Typography sx={{ fontSize: 12, color: theme.textSec }}>Текущие обои темы</Typography>
+      <SettingSection title="Обои чатов" hint="Применяются ко всем чатам, в которых не установлены свои." />
+      <SettingRow label="Текущие обои темы" hint={title}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <Box className={baseClass} aria-hidden sx={{
+            width: 56, height: 40, borderRadius: 1.5, flexShrink: 0,
+            border: `1px solid ${theme.border}`, bgcolor: theme.bgHover,
+            backgroundImage: stockUrl ? `url(${stockUrl})` : undefined,
+            backgroundSize: 'cover', backgroundPosition: 'center',
+          }} />
+          <Button variant="contained" onClick={() => setOpen(true)}
+            sx={{ bgcolor: theme.accent, textTransform: 'none', borderRadius: 2, '&:hover': { bgcolor: theme.accent } }}>
+            🖼️ Открыть обои
+          </Button>
         </Box>
-      </Box>
-      <Button variant="contained" onClick={() => setOpen(true)}
-        sx={{ bgcolor: theme.accent, textTransform: 'none', borderRadius: 2, '&:hover': { bgcolor: theme.accent } }}>
-        🖼️ Открыть обои
-      </Button>
-      <Alert severity="info" sx={{ mt: 1.5, fontSize: 12 }}>
+      </SettingRow>
+      <PanelNote>
         Базовые фоны тем уже включены в каждую тему — здесь их можно заменить
         на другие стоковые, свои фото или видео. Выбор сохраняется вместе с темой.
-      </Alert>
+      </PanelNote>
       <WallpaperSettingsDialog open={open} onClose={() => setOpen(false)} forceGlobal />
 
-      <Box sx={{ mt: 3, pt: 2.5, borderTop: `1px solid ${theme.border}` }}>
+      <SettingSection title="Обои списка чатов" />
+      <Box sx={{ py: 1.25, borderBottom: `1px solid ${theme.border}` }}>
         <ChatListWallpaperPanel />
       </Box>
     </Box>
@@ -140,153 +165,161 @@ export function WallpaperPanel() {
 
 // ── Звук уведомления по умолчанию ──────────────────────────────────────────────
 export function SoundPanel() {
+  const theme = useThemeStore((s) => s.theme);
   return (
     <Box>
-      <GlobalSoundSettingsContent />
-      <Alert severity="info" sx={{ mt: 1.5, fontSize: 12 }}>
+      <SettingSection title="Звук уведомлений по умолчанию" />
+      <Box sx={{ py: 1.25, borderBottom: `1px solid ${theme.border}` }}>
+        <GlobalSoundSettingsContent />
+      </Box>
+      <PanelNote>
         Звук и громкость сохраняются вместе с темой. Чаты со своими звуками не зависят от этой настройки.
-      </Alert>
+      </PanelNote>
     </Box>
   );
 }
 
-// ── Иконки и стиль интерфейса ──────────────────────────────────────────────────
-export function UiStylePanel() {
+// ── Иконки ─────────────────────────────────────────────────────────────────────
+export function IconsPanel() {
   const theme = useThemeStore((s) => s.theme);
-  const {
-    iconPack, chatShape, chatBorder, chatFill, squircle, uiModes,
-    setIconPack, setUiStyle, setUiMode, setChatShape, setChatBorder, setChatFill, setSquircleRadius,
-  } = useUiPrefsStore();
+  const { iconPack, setIconPack } = useUiPrefsStore();
   return (
     <Box>
-      <PanelTitle>Пак иконок</PanelTitle>
-      <ToggleButtonGroup exclusive fullWidth size="small" value={iconPack}
-        onChange={(_, v) => v && setIconPack(v)}
-        sx={{ mb: 0.5, flexWrap: 'wrap', gap: 0.5 }}>
-        {ICON_PACKS.map((p) => (
-          <ToggleButton key={p.id} value={p.id}
-            sx={{
-              flex: '1 1 45%', textTransform: 'none', color: theme.text,
-              borderColor: theme.border, gap: 1, justifyContent: 'flex-start',
-              '&.Mui-selected': { bgcolor: theme.accent + '25', color: theme.text, borderColor: theme.accent },
-            }}>
-            {/* Превью в стиле самого пака, а не текущего (см. IconPackOverrideContext). */}
-            <IconPackOverrideContext.Provider value={p.id}>
-              <Box component="span" data-icon-preview={p.id} aria-hidden
-                sx={{ display: 'inline-flex', gap: 0.5, color: theme.accent, '& .MuiSvgIcon-root': { fontSize: 20 } }}>
-                <Chat /><Palette /><Settings />
-              </Box>
-            </IconPackOverrideContext.Provider>
-            {p.label}
-          </ToggleButton>
-        ))}
-      </ToggleButtonGroup>
-      <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 2 }}>
-        {ICON_PACKS.find((p) => p.id === iconPack)?.desc}
-      </Typography>
+      <SettingSection title="Пак иконок" hint={ICON_PACKS.find((p) => p.id === iconPack)?.desc} />
+      <Box data-setting-label="Пак иконок" sx={{ py: 1.25, borderBottom: `1px solid ${theme.border}` }}>
+        <ToggleButtonGroup exclusive fullWidth size="small" value={iconPack}
+          onChange={(_, v) => v && setIconPack(v)}
+          aria-label="Пак иконок"
+          sx={choiceGroupSx(theme)}>
+          {ICON_PACKS.map((p) => (
+            <ToggleButton key={p.id} value={p.id}
+              sx={{
+                // Две колонки; превью иконок слева от названия.
+                flex: '1 1 45% !important', gap: 1, justifyContent: 'flex-start',
+                fontSize: '13px !important', py: '7px !important', color: theme.text,
+              }}>
+              {/* Превью в стиле самого пака, а не текущего (см. IconPackOverrideContext). */}
+              <IconPackOverrideContext.Provider value={p.id}>
+                <Box component="span" data-icon-preview={p.id} aria-hidden
+                  sx={{ display: 'inline-flex', gap: 0.5, color: theme.accent, '& .MuiSvgIcon-root': { fontSize: 20 } }}>
+                  <Chat /><Palette /><Settings />
+                </Box>
+              </IconPackOverrideContext.Provider>
+              {p.label}
+            </ToggleButton>
+          ))}
+        </ToggleButtonGroup>
+      </Box>
 
-      <Box sx={{ mb: 2.5, pb: 2, borderBottom: `1px solid ${theme.border}` }}>
+      <SettingSection title="Свои паки" />
+      <Box sx={{ py: 1.25, borderBottom: `1px solid ${theme.border}` }}>
         <CustomIconPacksPanel />
       </Box>
+      <PanelNote>Иконки сохраняются вместе с темой и применяются при её переключении.</PanelNote>
+    </Box>
+  );
+}
 
-      <PanelTitle>Стиль интерфейса</PanelTitle>
-      {/* Радиусы действуют на весь интерфейс: карточки, настройки, меню, пузыри. */}
-      <Box sx={{ mb: 1.5 }}>
-        {([
-          ['surface', 'Скругление углов основного экрана', 'px'],
-          ['profile', 'Скругление плашек профиля', 'px'],
-          ['avatar', 'Скругление аватарок', '%'],
-          ['bubble', 'Скругление сообщений', 'px'],
-        ] as const).map(([key, label, unit]) => (
-          <Box key={key}>
-            <Typography id={`squircle-${key}`} sx={{ fontSize: 13, color: theme.text }}>
-              {label} — {squircle[key]}{unit}
-            </Typography>
-            <SliderWithInput
-              min={SQUIRCLE_LIMITS[key].min} max={SQUIRCLE_LIMITS[key].max} step={1}
-              value={squircle[key]}
-              onChange={(v) => setSquircleRadius(key, v)}
-              aria-labelledby={`squircle-${key}`}
-            />
-          </Box>
-        ))}
-        <Typography sx={{ fontSize: 11, color: theme.textSec }}>
-          Аватарки: 0% — квадрат, 50% — круг. При углах до {SQUIRCLE_SWITCH_RANGE.max}px
-          переключатели тоже становятся квадратными.
-        </Typography>
+// ── Стиль интерфейса ───────────────────────────────────────────────────────────
+// Радиусы действуют на весь интерфейс: карточки, настройки, меню, пузыри.
+const SQUIRCLE_ROWS = [
+  ['surface', 'Скругление углов основного экрана', 'px'],
+  ['profile', 'Скругление плашек профиля', 'px'],
+  ['avatar', 'Скругление аватарок', '%'],
+  ['bubble', 'Скругление сообщений', 'px'],
+  ['nav', 'Скругление нижней панели', 'px'],
+] as const;
+
+export function UiStylePanel() {
+  const theme = useThemeStore((s) => s.theme);
+  const toggleSx = useToggleSx();
+  const {
+    chatShape, chatBorder, chatFill, squircle, uiModes, navOpacity, navHeight,
+    setUiStyle, setUiMode, setChatShape, setChatBorder, setChatFill, setSquircleRadius, setNavOpacity, setNavHeight,
+  } = useUiPrefsStore();
+  // Скругление есть только у «телефонной» панели: на ПК — при стиле «Как на
+  // телефоне», на узком экране (< md) нижняя панель всегда такая.
+  const desktopNavStyle = useUserSettingsStore((s) => s.layout.desktopNavStyle ?? 'compact');
+  const smallScreen = useMediaQuery(useTheme().breakpoints.down('md'));
+  const navRoundable = desktopNavStyle === 'phone' || smallScreen;
+  return (
+    <Box>
+      <SettingSection title="Скругления" hint={`Аватарки: 0% — квадрат, 50% — круг. При углах до ${SQUIRCLE_SWITCH_RANGE.max}px переключатели тоже становятся квадратными.`} />
+      {SQUIRCLE_ROWS.filter(([key]) => key !== 'nav' || navRoundable).map(([key, label, unit]) => (
+        <SettingSlider key={key} label={`${label}, ${unit}`}
+          hint={key === 'nav' ? 'Профиль, музыка, редактор, архив' : undefined}
+          min={SQUIRCLE_LIMITS[key].min} max={SQUIRCLE_LIMITS[key].max} step={1}
+          value={squircle[key]}
+          onChange={(v) => setSquircleRadius(key, v)} />
+      ))}
+      <SettingSlider label="Непрозрачность нижней панели, %"
+        hint="И компактная строка иконок, и «Как на телефоне»"
+        min={NAV_OPACITY_LIMITS.min} max={NAV_OPACITY_LIMITS.max} step={1}
+        value={navOpacity}
+        onChange={(v) => setNavOpacity(v)} />
+      <SettingSlider label="Высота нижней панели, px"
+        hint="Профиль, музыка, редактор, архив — в обоих стилях панели. Ниже 60px — без подписей"
+        min={NAV_HEIGHT_LIMITS.min} max={NAV_HEIGHT_LIMITS.max} step={1}
+        value={navHeight}
+        onChange={(v) => setNavHeight(v)} />
+      <SettingRow label="Сбросить стиль" hint="Вернуть скругления, непрозрачность и высоту панели по умолчанию">
         <Button size="small" startIcon={<RestartAlt />} onClick={() => setUiStyle('default')}
-          sx={{ mt: 0.5, textTransform: 'none', color: theme.textSec }}>
-          Сбросить стиль
+          sx={{ textTransform: 'none', color: theme.textSec }}>
+          Сбросить
         </Button>
-      </Box>
+      </SettingRow>
 
-      <Box sx={{ mb: 2 }}>
-        {UI_MODES.map((m) => (
-          <RowToggle key={m.id} label={m.label} hint={m.desc}
-            checked={uiModes[m.id]} onChange={(v) => setUiMode(m.id, v)} />
-        ))}
-      </Box>
+      <SettingSection title="Режимы" />
+      {UI_MODES.map((m) => (
+        <RowToggle key={m.id} label={m.label} hint={m.desc}
+          checked={uiModes[m.id]} onChange={(v) => setUiMode(m.id, v)} />
+      ))}
 
-      <PanelTitle>Вид чатов</PanelTitle>
-      <ToggleButtonGroup exclusive fullWidth size="small" value={chatShape}
-        onChange={(_, v) => v && setChatShape(v)}
-        sx={{ flexWrap: 'wrap', gap: 0.5 }}>
-        {CHAT_SHAPES.map((d) => (
-          <ToggleButton key={d.id} value={d.id}
-            sx={{
-              // Превью формы карточки прямо на кнопке.
-              borderRadius: `${d.radius}px !important`,
-              flex: '1 1 30%', textTransform: 'none', color: theme.text,
-              borderColor: theme.border,
-              '&.Mui-selected': { bgcolor: theme.accent + '25', color: theme.text, borderColor: theme.accent },
-            }}>
-            {d.label}
-          </ToggleButton>
-        ))}
-      </ToggleButtonGroup>
-      <Typography sx={{ fontSize: 12, color: theme.textSec, mt: 1 }}>
-        {CHAT_SHAPES.find((d) => d.id === chatShape)?.desc}
-      </Typography>
-      <Box sx={{ mt: 1.5 }}>
-        <RowToggle label="Обводка карточек" hint="Выключите, чтобы убрать рамку вокруг чатов совсем"
-          checked={chatBorder} onChange={setChatBorder} />
-        <RowToggle label="Заливка карточек" hint="Выключите — строка станет простой полосой во всю ширину"
-          checked={chatFill} onChange={setChatFill} />
-      </Box>
-      <Alert severity="info" sx={{ mt: 1.5, fontSize: 12 }}>
-        Иконки и стиль сохраняются вместе с темой и применяются при её переключении.
-      </Alert>
+      <SettingSection title="Карточки чатов" />
+      <SettingRow label="Вид чатов" hint={CHAT_SHAPES.find((d) => d.id === chatShape)?.desc} stacked>
+        <ToggleButtonGroup exclusive fullWidth size="small" value={chatShape}
+          onChange={(_, v) => v && setChatShape(v)}
+          sx={{ ...toggleSx, gap: 0.5 }}>
+          {CHAT_SHAPES.map((d) => (
+            <ToggleButton key={d.id} value={d.id}
+              sx={{
+                // Превью формы карточки прямо на кнопке (радиус — через
+                // переменную, её читает общий вид группы choiceGroupSx).
+                '--vera-choice-radius': `${d.radius}px`,
+                flex: '1 1 30%',
+              }}>
+              {d.label}
+            </ToggleButton>
+          ))}
+        </ToggleButtonGroup>
+      </SettingRow>
+      <RowToggle label="Обводка карточек" hint="Выключите, чтобы убрать рамку вокруг чатов совсем"
+        checked={chatBorder} onChange={setChatBorder} />
+      <RowToggle label="Заливка карточек" hint="Выключите — строка станет простой полосой во всю ширину"
+        checked={chatFill} onChange={setChatFill} />
+      <PanelNote>Стиль сохраняется вместе с темой и применяется при её переключении.</PanelNote>
     </Box>
   );
 }
 
 // ── Анимации ───────────────────────────────────────────────────────────────────
 export function AnimationsPanel() {
-  const theme = useThemeStore((s) => s.theme);
   const { enabled: animEnabled, set: setAnim, setAll: setAllAnims } = useAnimStore();
   const allAnimsOn = ANIM_GROUPS.every((g) => animEnabled[g.key]);
   return (
     <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-        <Box sx={{ minWidth: 0 }}>
-          <Typography sx={{ fontSize: 14, color: theme.text }}>Анимации интерфейса</Typography>
-          <Typography sx={{ fontSize: 12, color: theme.textSec }}>
-            Плавные микровзаимодействия в стиле Apple
-          </Typography>
-        </Box>
-        <Switch checked={allAnimsOn} onChange={(e) => setAllAnims(e.target.checked)} />
-      </Box>
-      <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 1 }}>
-        Выключите только те, которые не нравятся, — остальные продолжат работать.
-      </Typography>
+      <SettingSection title="Общее" />
+      <RowToggle label="Все анимации интерфейса" hint="Плавные микровзаимодействия в стиле Apple"
+        checked={allAnimsOn} onChange={setAllAnims} />
+      <SettingSection title="По отдельности" hint="Выключите только те, которые не нравятся, — остальные продолжат работать." />
       {ANIM_GROUPS.map((g) => (
         <RowToggle key={g.key} label={`${g.emoji} ${g.label}`} hint={g.desc}
           checked={!!animEnabled[g.key]} onChange={(v) => setAnim(g.key, v)} />
       ))}
-      <Alert severity="info" sx={{ mt: 1, fontSize: 12 }}>
+      <PanelNote>
         Набор анимаций сохраняется вместе с темой. Если в системе включен режим Reduce Motion,
         все анимации автоматически отключаются.
-      </Alert>
+      </PanelNote>
     </Box>
   );
 }
@@ -297,69 +330,93 @@ export function AppearancePanel() {
   const s = useUserSettingsStore();
   return (
     <Box>
-      <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Яркость</Typography>
-      <SliderWithInput min={0.5} max={1.5} step={0.05} value={s.brightness}
+      <SettingSection title="Экран" />
+      <SettingSlider label="Яркость, %" min={0.5} max={1.5} step={0.05} value={s.brightness}
         onChange={(v) => s.set('brightness', v)}
         valueLabelDisplay="auto" scale={100} />
-      <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
-        <TextFields fontSize="small" /> Масштаб текста
-      </Typography>
-      <SliderWithInput min={0.8} max={1.6} step={0.05} value={s.textScale}
+      <SettingSlider label="Масштаб текста, %" min={0.8} max={1.6} step={0.05} value={s.textScale}
         onChange={(v) => s.set('textScale', v)}
         valueLabelDisplay="auto" scale={100} />
-      <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5, display: 'flex', alignItems: 'center', gap: 1 }}>
-        <TextFields fontSize="small" /> Шрифт всего приложения
-      </Typography>
-      <FontPicker
-        value={s.globalFontFamily}
-        onChange={(value) => s.set('globalFontFamily', value)}
-        baseOptions={APP_FONT_OPTIONS}
-        manage
-        ariaLabel="Шрифт всего приложения"
-        hint="Меняет весь текст: кнопки, меню, заголовки, настройки и сообщения. Применяется сразу и сохраняется. Выбранный шрифт имеет приоритет над шрифтами чатов; «По умолчанию» возвращает индивидуальные настройки."
+
+      <SettingSection title="Шрифт" />
+      <Box data-setting-label="Шрифт всего приложения" sx={{ py: 1.25, borderBottom: `1px solid ${theme.border}` }}>
+        <Typography sx={{ fontSize: 14, color: theme.text, mb: 1 }}>Шрифт всего приложения</Typography>
+        <FontPicker
+          value={s.globalFontFamily}
+          onChange={(value) => s.set('globalFontFamily', value)}
+          baseOptions={APP_FONT_OPTIONS}
+          manage
+          ariaLabel="Шрифт всего приложения"
+          hint="Меняет весь текст: кнопки, меню, заголовки, настройки и сообщения. Применяется сразу и сохраняется. Выбранный шрифт имеет приоритет над шрифтами чатов; «По умолчанию» возвращает индивидуальные настройки."
+        />
+      </Box>
+      <PanelNote>Яркость, масштаб и шрифт сохраняются вместе с темой. Часы на обоях — во вкладке «Часы».</PanelNote>
+    </Box>
+  );
+}
+
+// ── Часы и календарь на обоях ──────────────────────────────────────────────────
+export function ClockPanel() {
+  const theme = useThemeStore((s) => s.theme);
+  const s = useUserSettingsStore();
+  const toggleSx = useToggleSx();
+  const off = !s.wallClockEnabled;
+  return (
+    <Box>
+      <SettingSection title="Часы" />
+      <RowToggle
+        label="Обои с календарём и часами"
+        hint="Дата и время поверх фона чата — шрифт берётся из темы/чата"
+        checked={s.wallClockEnabled}
+        onChange={(v) => s.set('wallClockEnabled', v)}
       />
-{/* ── Обои с календарём и часами ── */}
-      <Box sx={{ mt: 2 }}>
-        <RowToggle
-          label="Обои с календарём и часами"
-          hint="Дата и время поверх фона чата — шрифт берётся из темы/чата"
-          checked={s.wallClockEnabled}
-          onChange={(v) => s.set('wallClockEnabled', v)}
+      <RowToggle
+        label="Отодвигать сообщения из-под часов (Ex)"
+        hint="Экспериментально: сообщения уходят вбок. Функция ещё дорабатывается, возможны сбои"
+        checked={s.wallClockAvoid}
+        disabled={!s.wallClockEnabled}
+        onChange={(v) => s.set('wallClockAvoid', v)}
+      />
+
+      <SettingSection title="Где показывать часы" />
+      {([['dialogs', 'Диалоги'], ['board', 'Доски'], ['groups', 'Группы'], ['channels', 'Каналы']] as const).map(([kind, label]) => (
+        <RowToggle key={kind} label={label} disabled={off}
+          checked={s.wallClockChats?.[kind] !== false}
+          onChange={(v) => s.set('wallClockChats', { dialogs: true, board: true, groups: true, channels: true, ...s.wallClockChats, [kind]: v })}
         />
-        <RowToggle
-          label="Отодвигать сообщения из-под часов (Ex)"
-          hint="Экспериментально: сообщения уходят вбок. Функция ещё дорабатывается, возможны сбои"
-          checked={s.wallClockAvoid}
-          disabled={!s.wallClockEnabled}
-          onChange={(v) => s.set('wallClockAvoid', v)}
-        />
-        <Typography sx={{ fontSize: 13, mt: 1 }}>Показывать часы и календарь</Typography>
-        {([['dialogs', 'Диалоги'], ['board', 'Доски'], ['groups', 'Группы'], ['channels', 'Каналы']] as const).map(([kind, label]) => (
-          <RowToggle key={kind} label={label}
-            checked={s.wallClockChats?.[kind] !== false}
-            onChange={(v) => s.set('wallClockChats', { dialogs: true, board: true, groups: true, channels: true, ...s.wallClockChats, [kind]: v })}
-          />
-        ))}
-        <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 1, mb: 0.5 }}>
-          Расположение на обоях
-        </Typography>
+      ))}
+
+      <SettingSection title="Расположение" />
+      {/* Сетка 3×3 повторяет экран: сверху / по середине / снизу × слева / центр / справа. */}
+      <SettingRow label="Расположение на обоях" disabled={off}
+        hint="Часы идут поверх любых обоев чата; сверху и снизу добавлен отступ, чтобы не мешать шапке и полю ввода.">
         <ToggleButtonGroup
-          exclusive size="small" fullWidth
+          exclusive size="small" disabled={off}
           value={s.wallClockPos}
           onChange={(_, v: WallClockPos | null) => { if (v) s.set('wallClockPos', v); }}
+          sx={{
+            display: 'grid', gridTemplateColumns: 'repeat(3, 44px)', gap: 0.5,
+            '& .MuiToggleButton-root': {
+              fontSize: 16, py: 0.25, color: theme.textSec,
+              border: `1px solid ${theme.border} !important`, borderRadius: '6px !important', m: 0,
+              '&.Mui-selected': { bgcolor: theme.accent + '25', color: theme.text, borderColor: `${theme.accent} !important` },
+            },
+          }}
         >
-          <ToggleButton value="center">По середине</ToggleButton>
-          <ToggleButton value="top">Сверху</ToggleButton>
-          <ToggleButton value="bottom">Снизу</ToggleButton>
+          <ToggleButton value="topLeft" aria-label="Сверху слева" title="Сверху слева">↖</ToggleButton>
+          <ToggleButton value="top" aria-label="Сверху" title="Сверху">↑</ToggleButton>
+          <ToggleButton value="topRight" aria-label="Сверху справа" title="Сверху справа">↗</ToggleButton>
+          <ToggleButton value="middleLeft" aria-label="По середине слева" title="По середине слева">←</ToggleButton>
+          <ToggleButton value="center" aria-label="По середине" title="По середине">•</ToggleButton>
+          <ToggleButton value="middleRight" aria-label="По середине справа" title="По середине справа">→</ToggleButton>
+          <ToggleButton value="bottomLeft" aria-label="Снизу слева" title="Снизу слева">↙</ToggleButton>
+          <ToggleButton value="bottom" aria-label="Снизу" title="Снизу">↓</ToggleButton>
+          <ToggleButton value="bottomRight" aria-label="Снизу справа" title="Снизу справа">↘</ToggleButton>
         </ToggleButtonGroup>
-        <Typography sx={{ fontSize: 11, color: theme.textSec, mt: 0.5 }}>
-          Часы идут поверх любых обоев чата; сверху и снизу добавлен отступ, чтобы не мешать шапке и полю ввода.
-        </Typography>
-        <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5 }}>
-          Где стоит дата
-        </Typography>
+      </SettingRow>
+      <SettingRow label="Где стоит дата" disabled={off} wide>
         <ToggleButtonGroup
-          exclusive size="small" fullWidth
+          exclusive size="small" fullWidth disabled={off} sx={toggleSx}
           value={s.wallClockDatePos}
           onChange={(_, v: WallClockDatePos | null) => { if (v) s.set('wallClockDatePos', v); }}
         >
@@ -368,23 +425,32 @@ export function AppearancePanel() {
           <ToggleButton value="left">Слева</ToggleButton>
           <ToggleButton value="right">Справа</ToggleButton>
         </ToggleButtonGroup>
-        <FormControlLabel
-          sx={{ mt: 1.5, alignItems: 'center' }}
-          control={
-            <Switch
-              size="small" checked={s.wallClockSeconds}
-              onChange={(e) => s.set('wallClockSeconds', e.target.checked)}
-            />
-          }
-          label={<Typography sx={{ fontSize: 13, color: theme.textSec }}>Показывать секунды</Typography>}
+      </SettingRow>
+
+      <SettingSection title="Размеры" />
+      <SettingSlider label="Размер времени, %" disabled={off}
+        min={0.6} max={1.6} step={0.05} value={s.wallClockTimeScale}
+        onChange={(v) => s.set('wallClockTimeScale', v)}
+        valueLabelDisplay="auto" scale={100}
+      />
+      <SettingSlider label="Размер даты, %" disabled={off}
+        min={0.6} max={1.6} step={0.05} value={s.wallClockDateScale}
+        onChange={(v) => s.set('wallClockDateScale', v)}
+        valueLabelDisplay="auto" scale={100}
+      />
+
+      <SettingSection title="Секунды" />
+      <SettingRow label="Показывать секунды" disabled={off}>
+        <Switch
+          checked={s.wallClockSeconds} disabled={off} inputProps={{ 'aria-label': 'Показывать секунды' }}
+          onChange={(e) => s.set('wallClockSeconds', e.target.checked)}
         />
-        {s.wallClockSeconds && (
-          <>
-            <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 1, mb: 0.5 }}>
-              Где стоят секунды
-            </Typography>
+      </SettingRow>
+      {s.wallClockSeconds && (
+        <>
+          <SettingRow label="Где стоят секунды" disabled={off} stacked>
             <ToggleButtonGroup
-              exclusive size="small" fullWidth
+              exclusive size="small" fullWidth disabled={off} sx={toggleSx}
               value={s.wallClockSecondsPos}
               onChange={(_, v: WallClockSecondsPos | null) => { if (v) s.set('wallClockSecondsPos', v); }}
             >
@@ -397,30 +463,96 @@ export function AppearancePanel() {
               <ToggleButton value="bottomLeft">Снизу слева</ToggleButton>
               <ToggleButton value="bottomRight">Снизу справа</ToggleButton>
             </ToggleButtonGroup>
-            <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5 }}>Размер секунд</Typography>
-            <SliderWithInput
-              min={0.6} max={1.6} step={0.05} value={s.wallClockSecondsScale}
-              onChange={(v) => s.set('wallClockSecondsScale', v)}
-              valueLabelDisplay="auto" scale={100}
-            />
-          </>
-        )}
-        <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5 }}>Размер времени</Typography>
-        <SliderWithInput
-          min={0.6} max={1.6} step={0.05} value={s.wallClockTimeScale}
-          onChange={(v) => s.set('wallClockTimeScale', v)}
-          valueLabelDisplay="auto" scale={100}
+          </SettingRow>
+          <SettingSlider label="Размер секунд, %" disabled={off}
+            min={0.6} max={1.6} step={0.05} value={s.wallClockSecondsScale}
+            onChange={(v) => s.set('wallClockSecondsScale', v)}
+            valueLabelDisplay="auto" scale={100}
+          />
+        </>
+      )}
+
+      <SettingSection title="Свой HUD" />
+      <SettingRow label="Свой HUD вместо часов" disabled={off} wide>
+        <ToggleButtonGroup
+          exclusive size="small" fullWidth disabled={off} sx={toggleSx}
+          value={s.wallClockHudMode || 'builtin'}
+          onChange={(_, v: WallClockHudMode | null) => { if (v) s.set('wallClockHudMode', v); }}
+        >
+          <ToggleButton value="builtin">Встроенные</ToggleButton>
+          <ToggleButton value="html">Свой HTML</ToggleButton>
+          <ToggleButton value="url">Ссылка</ToggleButton>
+        </ToggleButtonGroup>
+      </SettingRow>
+      {s.wallClockHudMode === 'html' && (
+        <Box sx={{ py: 1.25, borderBottom: `1px solid ${theme.border}` }}>
+          <TextField
+            fullWidth multiline minRows={4} maxRows={12} size="small"
+            label="HTML / CSS / JS"
+            value={s.wallClockHudHtml || ''}
+            onChange={(e) => s.set('wallClockHudHtml', e.target.value.slice(0, WALL_CLOCK_HUD_HTML_MAX))}
+            placeholder={HUD_HTML_EXAMPLE}
+            helperText={`${(s.wallClockHudHtml || '').length} / ${WALL_CLOCK_HUD_HTML_MAX}. Код работает в изолированном окне без доступа к приложению. Каждую секунду приходит сообщение { type: 'vera-clock', now, locale, color, colorSec, fontFamily }.`}
+            inputProps={{ spellCheck: false, style: { fontFamily: 'monospace', fontSize: 12 } }}
+          />
+        </Box>
+      )}
+      {s.wallClockHudMode === 'url' && (
+        <Box sx={{ py: 1.25, borderBottom: `1px solid ${theme.border}` }}>
+          <TextField
+            fullWidth size="small"
+            label="Ссылка на HUD"
+            placeholder="https://example.com/clock.html"
+            value={s.wallClockHudUrl || ''}
+            onChange={(e) => s.set('wallClockHudUrl', e.target.value.slice(0, 2048))}
+            error={!!(s.wallClockHudUrl || '').trim() && !normalizeHudUrl(s.wallClockHudUrl)}
+            helperText={(s.wallClockHudUrl || '').trim() && !normalizeHudUrl(s.wallClockHudUrl)
+              ? 'Нужна ссылка http:// или https://'
+              : 'Сторонний сайт видит ваш IP. Многие сайты запрещают встраивание, тогда будет пусто.'}
+          />
+        </Box>
+      )}
+      {s.wallClockHudMode && s.wallClockHudMode !== 'builtin' && (
+        <SettingSlider label="Высота HUD, px" disabled={off}
+          min={WALL_CLOCK_HUD_HEIGHT_LIMITS.min} max={WALL_CLOCK_HUD_HEIGHT_LIMITS.max} step={10}
+          value={s.wallClockHudHeight}
+          onChange={(v) => s.set('wallClockHudHeight', v)}
+          valueLabelDisplay="auto"
         />
-        <Typography sx={{ fontSize: 13, color: theme.textSec, mt: 2, mb: 0.5 }}>Размер даты</Typography>
-        <SliderWithInput
-          min={0.6} max={1.6} step={0.05} value={s.wallClockDateScale}
-          onChange={(v) => s.set('wallClockDateScale', v)}
-          valueLabelDisplay="auto" scale={100}
-        />
-      </Box>
-      <Alert severity="info" sx={{ mt: 1.5, fontSize: 12 }}>
-        Яркость, масштаб и шрифт сохраняются вместе с темой.
-      </Alert>
+      )}
+      <PanelNote>Часы и HUD сохраняются вместе с темой.</PanelNote>
+    </Box>
+  );
+}
+
+// ── Сообщения ──────────────────────────────────────────────────────────────────
+export function MessagesPanel() {
+  const s = useUserSettingsStore();
+  return (
+    <Box>
+      <SettingSection title="Пузыри сообщений"
+        hint="Применяются к чатам без собственных настроек. Для отдельного чата: ⋮ → Настройки отображения." />
+      <BubbleSettingsControls variant="rows" value={{
+        enabled: s.layout.bubbleEnabled ?? true,
+        maxWidth: s.layout.messageMaxWidth,
+        textSize: s.layout.bubbleTextSize ?? 15,
+        padding: s.layout.bubblePadding ?? 6,
+        wallAlign: s.layout.bubbleWallAlign ?? false,
+        metaPos: normalizeMetaPos(s.layout.bubbleMetaPos),
+      }} onChange={patch => {
+        if (patch.wallAlign !== undefined) s.setLayout('bubbleWallAlign', patch.wallAlign);
+        if (patch.metaPos !== undefined) s.setLayout('bubbleMetaPos', patch.metaPos);
+        if (patch.enabled !== undefined) s.setLayout('bubbleEnabled', patch.enabled);
+        if (patch.maxWidth !== undefined) s.setLayout('messageMaxWidth', patch.maxWidth);
+        if (patch.textSize !== undefined) s.setLayout('bubbleTextSize', patch.textSize);
+        if (patch.padding !== undefined) s.setLayout('bubblePadding', patch.padding);
+      }} />
+
+      <SettingSection title="Лента" />
+      <ChoiceRow label="Плашка даты в ленте сообщений"
+        value={s.chatDateAlign ?? 'center'} onChange={(v) => s.set('chatDateAlign', v as ChatDateAlign)}
+        items={[['left', 'Слева'], ['center', 'По центру'], ['right', 'Справа']]} />
+      <PanelNote>Всё вместе сохраняется в теме.</PanelNote>
     </Box>
   );
 }
@@ -436,113 +568,66 @@ export function LayoutPanel() {
     window.addEventListener('resize', update);
     return () => window.removeEventListener('resize', update);
   }, []);
-  const effectiveSidebarWidth = Math.min(s.layout.sidebarWidth, sidebarWidthMax);
-  const toggles = (value: string, onChange: (v: string) => void, items: [string, string][]) => (
-    <ToggleButtonGroup exclusive size="small" fullWidth value={value} onChange={(_, v) => v && onChange(v)}>
-      {items.map(([val, label]) => <ToggleButton key={val} value={val}>{label}</ToggleButton>)}
-    </ToggleButtonGroup>
-  );
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-      <Button variant="contained" onClick={() => setDesignerOpen(true)}
-        sx={{ bgcolor: theme.accent, textTransform: 'none', borderRadius: 2, '&:hover': { bgcolor: theme.accent } }}>
-        🎨 Открыть визуальный конструктор
-      </Button>
+    <Box>
+      <SettingSection title="Конструктор" />
+      <SettingRow label="Визуальный конструктор" hint="Перетаскивайте панели мышью — изменения видны сразу">
+        <Button variant="contained" onClick={() => setDesignerOpen(true)}
+          sx={{ bgcolor: theme.accent, textTransform: 'none', borderRadius: 2, '&:hover': { bgcolor: theme.accent } }}>
+          🎨 Открыть
+        </Button>
+      </SettingRow>
 
-      <Box>
-        <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Сторона панели чатов (десктоп)</Typography>
-        {toggles(s.layout.sidebarSide, (v) => s.setLayout('sidebarSide', v as SidePos),
-          [['left', 'Слева'], ['right', 'Справа'], ['top', 'Сверху'], ['bottom', 'Снизу']])}
-      </Box>
+      <SettingSection title="Расположение панелей" />
+      <ChoiceRow label="Сторона панели чатов (десктоп)"
+        value={s.layout.sidebarSide} onChange={(v) => s.setLayout('sidebarSide', v as SidePos)}
+        items={[['left', 'Слева'], ['right', 'Справа'], ['top', 'Сверху'], ['bottom', 'Снизу']]} />
+      <ChoiceRow label="Нижняя навигация (мобильный)"
+        value={s.layout.mobileNavPos} onChange={(v) => s.setLayout('mobileNavPos', v as VertPos)}
+        items={[['bottom', 'Снизу'], ['top', 'Сверху']]} />
+      <ChoiceRow label="Нижняя панель сайдбара (десктоп)"
+        hint="«Как на телефоне» — парящая плашка с подписями под иконками. Скругление углов — во вкладке «Стиль»."
+        value={s.layout.desktopNavStyle ?? 'compact'} onChange={(v) => s.setLayout('desktopNavStyle', v as DesktopNavStyle)}
+        items={[['compact', 'Компактная'], ['phone', 'Как на телефоне']]} />
+      <ChoiceRow label="Плеер"
+        hint="«Слева» и «Справа» — отдельная панель у края окна. «В инфопанели» — внутри панели информации о чате."
+        value={s.layout.playerPos} onChange={(v) => s.setLayout('playerPos', v as PlayerPos)}
+        items={[['bottom', 'Снизу'], ['top', 'Сверху'], ['left', 'Слева'], ['right', 'Справа'], ['info', 'В инфопанели']]} />
+      <ChoiceRow label="Шапка чата"
+        value={s.layout.chatHeaderPos} onChange={(v) => s.setLayout('chatHeaderPos', v as VertPos)}
+        items={[['top', 'Сверху'], ['bottom', 'Снизу']]} />
+      <ChoiceRow label="Поле ввода чата"
+        value={s.layout.chatInputPos} onChange={(v) => s.setLayout('chatInputPos', v as VertPos)}
+        items={[['bottom', 'Снизу'], ['top', 'Сверху']]} />
 
-      <Box>
-        <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Нижняя навигация (мобильный)</Typography>
-        {toggles(s.layout.mobileNavPos, (v) => s.setLayout('mobileNavPos', v as VertPos),
-          [['bottom', 'Снизу'], ['top', 'Сверху']])}
-      </Box>
+      <SettingSection title="Размеры" />
+      <ChoiceRow label="Плотность интерфейса"
+        value={s.layout.density} onChange={(v) => s.setLayout('density', v as Density)}
+        items={[['compact', 'Компактно'], ['cozy', 'Обычно'], ['roomy', 'Просторно']]} />
+      <SettingSlider label="Скругление углов окна чата и панелей, px"
+        min={0} max={28} step={1} value={s.layout.radius}
+        onChange={(v) => s.setLayout('radius', v)} />
+      <SettingSlider label="Ширина боковой панели, px"
+        hint="Панель чатов можно также перетаскивать за правый край мышью — ширина сохранится."
+        min={200} max={sidebarWidthMax} step={5} value={Math.min(s.layout.sidebarWidth, sidebarWidthMax)}
+        onChange={(v) => s.setLayout('sidebarWidth', v)} />
 
-      <Box>
-        <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Плеер</Typography>
-        {toggles(s.layout.playerPos, (v) => s.setLayout('playerPos', v as PlayerPos),
-          [['bottom', 'Снизу'], ['top', 'Сверху'], ['left', 'Слева'], ['right', 'Справа']])}
-      </Box>
-
-      <Box>
-        <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Шапка чата</Typography>
-        {toggles(s.layout.chatHeaderPos, (v) => s.setLayout('chatHeaderPos', v as VertPos),
-          [['top', 'Сверху'], ['bottom', 'Снизу']])}
-      </Box>
-
-      <Box>
-        <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Поле ввода чата</Typography>
-        {toggles(s.layout.chatInputPos, (v) => s.setLayout('chatInputPos', v as VertPos),
-          [['bottom', 'Снизу'], ['top', 'Сверху']])}
-      </Box>
-
-      <Box>
-        <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Плотность интерфейса</Typography>
-        {toggles(s.layout.density, (v) => s.setLayout('density', v as Density),
-          [['compact', 'Компактно'], ['cozy', 'Обычно'], ['roomy', 'Просторно']])}
-      </Box>
-
-      <Box>
-        <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
-          Скругление углов окна чата и панелей — {s.layout.radius}px
-        </Typography>
-        <SliderWithInput min={0} max={28} step={1} value={s.layout.radius}
-          onChange={(v) => s.setLayout('radius', v)} />
-      </Box>
-
-      <Box>
-        <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
-          Пузыри сообщений по умолчанию для всех чатов
-        </Typography>
-        <BubbleSettingsControls value={{
-          enabled: s.layout.bubbleEnabled ?? true,
-          maxWidth: s.layout.messageMaxWidth,
-          textSize: s.layout.bubbleTextSize ?? 15,
-          padding: s.layout.bubblePadding ?? 6,
-          wallAlign: s.layout.bubbleWallAlign ?? false,
-          metaPos: normalizeMetaPos(s.layout.bubbleMetaPos),
-        }} onChange={patch => {
-          if (patch.wallAlign !== undefined) s.setLayout('bubbleWallAlign', patch.wallAlign);
-          if (patch.metaPos !== undefined) s.setLayout('bubbleMetaPos', patch.metaPos);
-          if (patch.enabled !== undefined) s.setLayout('bubbleEnabled', patch.enabled);
-          if (patch.maxWidth !== undefined) s.setLayout('messageMaxWidth', patch.maxWidth);
-          if (patch.textSize !== undefined) s.setLayout('bubbleTextSize', patch.textSize);
-          if (patch.padding !== undefined) s.setLayout('bubblePadding', patch.padding);
-        }} />
-        <Typography sx={{ fontSize: 11, color: theme.textSec }}>
-          Применяются к чатам без собственных настроек. Для отдельного чата: ⋮ → Настройки отображения.
-        </Typography>
-      </Box>
-
-      <Box>
-        <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>
-          Ширина боковой панели — {effectiveSidebarWidth}px
-        </Typography>
-        <SliderWithInput min={200} max={sidebarWidthMax} step={5} value={Math.min(s.layout.sidebarWidth, sidebarWidthMax)}
-          onChange={(v) => s.setLayout('sidebarWidth', v)} />
-      </Box>
-
+      <SettingSection title="Список чатов" />
       <RowToggle label="Показывать вкладки (Диалоги / Архив / Группы)"
         checked={s.layout.showTabs} onChange={(v) => s.setLayout('showTabs', v)} />
       <RowToggle label="Показывать аватары в списке чатов"
         checked={s.layout.showAvatarsInList} onChange={(v) => s.setLayout('showAvatarsInList', v)} />
 
-      <Alert severity="info" sx={{ fontSize: 12 }}>
-        Панель чатов можно также перетаскивать за правый край мышью — ширина сохранится.
-        Всё вместе сохраняется в теме.
-      </Alert>
-      <Button variant="outlined" startIcon={<RestartAlt />} onClick={() => s.resetLayout()}
-        sx={{ color: theme.text, borderColor: theme.border, textTransform: 'none' }}>
-        Сбросить макет по умолчанию
-      </Button>
+      <SettingSection title="Сброс" />
+      <SettingRow label="Сбросить макет" hint="Вернуть расположение и размеры по умолчанию">
+        <Button variant="outlined" startIcon={<RestartAlt />} onClick={() => s.resetLayout()}
+          sx={{ color: theme.text, borderColor: theme.border, textTransform: 'none' }}>
+          Сбросить макет по умолчанию
+        </Button>
+      </SettingRow>
+      <PanelNote>Всё вместе сохраняется в теме. Пузыри сообщений и плашка даты — во вкладке «Сообщения».</PanelNote>
 
       <LayoutDesignerDialog open={designerOpen} onClose={() => setDesignerOpen(false)} />
     </Box>
   );
 }
-
-
-

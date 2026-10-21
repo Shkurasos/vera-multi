@@ -10,6 +10,7 @@ import { useChatSoundStore, type ChatSoundSetting } from './chatSoundStore';
 import { useUiPrefsStore, type IconPack, type UiStyle, type ChatShape, type SquircleRadii, type UiModes } from './uiPrefsStore';
 import { useAnimStore, type AnimKey } from './animStore';
 import { useUserSettingsStore, type LayoutSettings, type WallClockPos, type WallClockDatePos, type WallClockSecondsPos } from './userSettingsStore';
+import { normalizeWallClockPos } from './userSettingsStore';
 
 export type ThemeFinish = 'solid' | 'glass' | 'matte' | 'metal';
 
@@ -46,7 +47,7 @@ export interface ThemeSettings {
   /** Звук уведомлений по умолчанию. */
   sound?: { globalSound: ChatSoundSetting | null; globalVolume: number };
   /** Иконки и стиль интерфейса. */
-  ui?: { iconPack: IconPack; customPack?: string | null; uiStyle: UiStyle; chatShape: ChatShape; chatBorder: boolean; chatFill: boolean; squircle?: Partial<SquircleRadii>; uiModes?: Partial<UiModes> };
+  ui?: { iconPack: IconPack; customPack?: string | null; uiStyle: UiStyle; chatShape: ChatShape; chatBorder: boolean; chatFill: boolean; squircle?: Partial<SquircleRadii>; uiModes?: Partial<UiModes>; navOpacity?: number; navHeight?: number };
   /** Включённые группы анимаций. */
   animations?: Partial<Record<AnimKey, boolean>>;
   /**
@@ -1748,7 +1749,7 @@ export function snapshotThemeSettings(): ThemeSettings {
     ui: {
       iconPack: ui.iconPack, customPack: ui.customPack, uiStyle: ui.uiStyle, chatShape: ui.chatShape,
       chatBorder: ui.chatBorder, chatFill: ui.chatFill, squircle: { ...ui.squircle },
-      uiModes: { ...ui.uiModes },
+      uiModes: { ...ui.uiModes }, navOpacity: ui.navOpacity, navHeight: ui.navHeight,
     },
     animations: { ...anim.enabled },
     appearance: {
@@ -1844,7 +1845,7 @@ export function applyThemeSettings(s?: ThemeSettings) {
       // setUiStyle разложил старый стиль-кнопку на радиусы и режимы; явные
       // значения снимка (новые темы) идут поверх.
       if (s.ui.squircle) {
-        for (const key of ['surface', 'avatar', 'bubble', 'profile'] as const) {
+        for (const key of ['surface', 'avatar', 'bubble', 'profile', 'nav'] as const) {
           if (typeof s.ui.squircle[key] === 'number') ui.setSquircleRadius(key, s.ui.squircle[key]);
         }
       }
@@ -1853,6 +1854,9 @@ export function applyThemeSettings(s?: ThemeSettings) {
           if (typeof s.ui.uiModes[key] === 'boolean') ui.setUiMode(key, s.ui.uiModes[key]);
         }
       }
+      // setUiStyle выше уже вернул 100% — у старых тем поля нет.
+      if (typeof s.ui.navOpacity === 'number') ui.setNavOpacity(s.ui.navOpacity);
+      if (typeof s.ui.navHeight === 'number') ui.setNavHeight(s.ui.navHeight);
     }
     if (s.animations) useAnimStore.getState().setEnabledMap(s.animations);
     if (s.appearance) {
@@ -1872,7 +1876,7 @@ export function applyThemeSettings(s?: ThemeSettings) {
         if (typeof s.appearance.wallClock.enabled === 'boolean') {
           us.set('wallClockEnabled', s.appearance.wallClock.enabled);
         }
-        us.set('wallClockPos', s.appearance.wallClock.pos);
+        us.set('wallClockPos', normalizeWallClockPos(s.appearance.wallClock.pos));
         if (s.appearance.wallClock.datePos !== undefined) {
           us.set('wallClockDatePos', s.appearance.wallClock.datePos);
         }

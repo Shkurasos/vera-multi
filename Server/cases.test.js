@@ -122,12 +122,12 @@ test('reaction case rewards all exist in the reaction skin catalog', () => {
 test('case catalog contains the requested marketplace prices', () => {
   const prices = Object.fromEntries(catalog.map(({ id, price }) => [id, price]));
   assert.deepEqual(prices, {
-    'case-ashes': 20,
+    'case-ashes': 300,
     'case-base': 20,
-    'case-myths': 20,
-    'case-nightmares': 20,
+    'case-myths': 400,
+    'case-nightmares': 500,
     'case-signal': 100,
-    'case-street': 100,
+    'case-street': 500,
     'case-culture': 100,
     'case-elements': 500,
     'case-eclipse': 500,

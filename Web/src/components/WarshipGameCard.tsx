@@ -206,7 +206,7 @@ export default function WarshipGameCard({ attachment, messageId }: { attachment:
         <Button
           size="small" variant="text" onClick={() => setGameOpen(true)}
           sx={{ textTransform: 'none', fontSize: 12, color: theme.textSec, alignSelf: 'flex-start' }}
-        >Посмотреть поля</Button>
+        >Смотреть результаты</Button>
       )}
       {payload.state === 'finished' && !payload.result && (
         <Typography sx={{ mt: 1, fontSize: 11.5, color: theme.textSec, fontStyle: 'italic' }}>

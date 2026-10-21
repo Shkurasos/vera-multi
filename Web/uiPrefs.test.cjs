@@ -30,6 +30,17 @@ function loadUiPrefs() {
         };
       }
       if (name === 'zustand/middleware') return { persist: (factory) => factory };
+      // Чистый модуль без зависимостей: транспилируем и отдаём как есть.
+      if (name === '../utils/colorAlpha') {
+        const sub = { exports: {} };
+        vm.runInContext(
+          ts.transpileModule(fs.readFileSync(path.join(__dirname, 'src/utils/colorAlpha.ts'), 'utf8'), {
+            compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS },
+          }).outputText,
+          vm.createContext({ exports: sub.exports, module: sub }),
+        );
+        return sub.exports;
+      }
       throw new Error('unexpected require: ' + name);
     },
   });
@@ -50,6 +61,7 @@ function loadUiPrefs() {
     modes: context.exports.UI_MODES,
     switchStyleFor: context.exports.switchStyleFor,
     html: context.document.documentElement,
+    exports: context.exports,
   };
 }
 
@@ -226,7 +238,7 @@ test('стиль интерфейса: ползунки + три независ�
   const s0 = store.getState();
   assert.equal(s0.uiStyle, 'squircle');
   assert.deepEqual({ ...s0.uiModes }, { glass: false, flat: false, compact: false });
-  assert.deepEqual({ ...s0.squircle }, { surface: 12, avatar: 50, bubble: 14, profile: 12 });
+  assert.deepEqual({ ...s0.squircle }, { surface: 12, avatar: 50, bubble: 14, profile: 12, nav: 54 });
   for (const m of modes) assert.equal(html.attrs[`data-ui-${m.id}`], 'off');
 
   // Режимы включаются независимо и не трогают радиусы.
@@ -235,7 +247,7 @@ test('стиль интерфейса: ползунки + три независ�
   assert.equal(html.attrs['data-ui-glass'], 'on');
   assert.equal(html.attrs['data-ui-flat'], 'off');
   assert.equal(html.attrs['data-ui-compact'], 'on');
-  assert.deepEqual({ ...store.getState().squircle }, { surface: 12, avatar: 50, bubble: 14, profile: 12 });
+  assert.deepEqual({ ...store.getState().squircle }, { surface: 12, avatar: 50, bubble: 14, profile: 12, nav: 54 });
 });
 
 test('старые стили-кнопки раскладываются на ползунки и режимы', () => {
@@ -246,15 +258,15 @@ test('старые стили-кнопки раскладываются на п�
 
   s.setUiStyle('rounded');
   assert.equal(store.getState().uiStyle, 'squircle', 'хранится как «свои значения»');
-  assert.deepEqual({ ...store.getState().squircle }, { surface: 24, avatar: 50, bubble: 26, profile: 24 });
+  assert.deepEqual({ ...store.getState().squircle }, { surface: 24, avatar: 50, bubble: 26, profile: 24, nav: 56 });
 
   s.setUiStyle('square');
-  assert.deepEqual({ ...store.getState().squircle }, { surface: 4, avatar: 12, bubble: 4, profile: 4 });
+  assert.deepEqual({ ...store.getState().squircle }, { surface: 4, avatar: 12, bubble: 4, profile: 4, nav: 4 });
 
   s.setUiStyle('glass');
   assert.equal(store.getState().uiModes.glass, true);
   assert.equal(html.attrs['data-ui-glass'], 'on');
-  assert.deepEqual({ ...store.getState().squircle }, { surface: 12, avatar: 50, bubble: 14, profile: 12 });
+  assert.deepEqual({ ...store.getState().squircle }, { surface: 12, avatar: 50, bubble: 14, profile: 12, nav: 54 });
 
   // «Полускруглённый» оставляет текущие ползунки.
   s.setSquircleRadius('surface', 9);
@@ -315,7 +327,7 @@ test('полускруглённый: три независимых радиус
   s.setSquircleRadius('surface', 20);
   s.setSquircleRadius('avatar', 999);
   s.setSquircleRadius('bubble', -5);
-  assert.deepEqual({ ...store.getState().squircle }, { surface: 20, avatar: 50, bubble: 0, profile: 12 });
+  assert.deepEqual({ ...store.getState().squircle }, { surface: 20, avatar: 50, bubble: 0, profile: 12, nav: 54 });
   assert.equal(props['--vera-sq-radius'], '20px');
   // Профиль — свой ползунок, основной экран его не трогает.
   assert.equal(props['--vera-profile-radius'], '12px');
@@ -328,7 +340,7 @@ test('полускруглённый: три независимых радиус
 
   // Ползунки независимы: изменение одного не трогает остальные.
   s.setSquircleRadius('bubble', 14);
-  assert.deepEqual({ ...store.getState().squircle }, { surface: 20, avatar: 50, bubble: 14, profile: 12 });
+  assert.deepEqual({ ...store.getState().squircle }, { surface: 20, avatar: 50, bubble: 14, profile: 12, nav: 54 });
 
   const mainSource = fs.readFileSync(path.join(__dirname, 'src/main.tsx'), 'utf8');
   assert.ok(mainSource.includes('UI_STYLE_SQUIRCLE_TARGETS'));
@@ -378,4 +390,39 @@ test('карточка чата размечена для настройки и 
     sidebar.includes('data-vera-chat-row'),
     'ListItem чата должен нести метку data-vera-chat-row',
   );
+});
+
+test('высота нижней панели: ползунок в границах, сброс стиля, тема и CSS-переменная', () => {
+  const { store, exports: ex } = loadUiPrefs();
+  const L = ex.NAV_HEIGHT_LIMITS;
+  // По умолчанию — прежние 70px, вид не меняется.
+  assert.equal(L.def, 70);
+  assert.equal(store.getState().navHeight, 70);
+  store.getState().setNavHeight(84.4);
+  assert.equal(store.getState().navHeight, 84);
+  store.getState().setNavHeight(1);
+  assert.equal(store.getState().navHeight, L.min);
+  store.getState().setNavHeight(999);
+  assert.equal(store.getState().navHeight, L.max);
+  store.getState().setNavHeight('мусор');
+  assert.equal(store.getState().navHeight, L.def);
+  store.getState().setNavHeight(90);
+  store.getState().setUiStyle('default');
+  assert.equal(store.getState().navHeight, L.def, '«Сбросить стиль» возвращает высоту');
+
+  const read = (p) => fs.readFileSync(path.join(__dirname, p), 'utf8');
+  const ui = read('src/store/uiPrefsStore.ts');
+  assert.ok(ui.includes("'--vera-nav-height'"), 'высота уходит в CSS-переменную');
+  const mobile = read('src/components/MobileBottomNav.tsx');
+  assert.ok(mobile.includes('minHeight: navHeight'), 'мобильная панель берёт высоту из стора');
+  assert.ok(mobile.includes('height: navHeight - 12'), 'кнопки растут вместе с панелью');
+  const desk = read('src/components/SidebarNavButtons.tsx');
+  assert.ok(desk.includes('height: navHeight - 16'), 'панель «как на телефоне» на ПК тоже');
+  const call = read('src/components/CallMiniBar.tsx');
+  assert.ok(call.includes('var(--vera-nav-height'), 'плашка звонка встаёт над панелью любой высоты');
+  const theme = read('src/store/themeStore.ts');
+  assert.ok(theme.includes('navHeight: ui.navHeight'), 'высота сохраняется в теме');
+  assert.ok(theme.includes('ui.setNavHeight(s.ui.navHeight)'), 'и применяется из темы');
+  const panels = read('src/components/ThemeSettingsPanels.tsx');
+  assert.ok(panels.includes('label="Высота нижней панели, px"'), 'ползунок в редакторе');
 });

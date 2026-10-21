@@ -19,6 +19,10 @@ import { useChatPrefsStore } from '../store/chatPrefsStore';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore, getFinishStyles, type Theme } from '../store/themeStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
+import {
+  UI_NAV_RADIUS, navPanelBackground, useUiPrefsStore,
+  compactNavPanelPx, compactNavButtonPx, compactNavIconPx, compactNavBackground,
+} from '../store/uiPrefsStore';
 import { useDraftsStore } from '../store/draftsStore';
 import { useSidebarViewStore } from '../store/sidebarViewStore';
 import { useChatBgPrefsStore } from '../store/chatBgPrefsStore';
@@ -42,6 +46,8 @@ import { Chat, User } from '../types';
 import ContextMenu from './ContextMenu';
 import VeraLogo from './VeraLogo';
 import MusicLibrary from './MusicLibrary';
+import SidebarNavButtons from './SidebarNavButtons';
+import SidebarNavDock from './SidebarNavDock';
 import StarIcon from './StarIcon';
 import { membranePressSx, motion } from '../styles/motion';
 
@@ -76,6 +82,14 @@ const TABS: { id: SidebarTab; label: string }[] = [
 ];
 
 const SIDEBAR_MIN = 72;
+/** Ширина одной кнопки нижней панели в строке иконок (IconButton 40 + gap 4). */
+const NAV_ICON_PX = 44;
+/** Поля строки иконок (p: 1 с обеих сторон). */
+const NAV_COMPACT_CHROME_PX = 16;
+/** Минимум на кнопку с подписью: «Редактор» мельче не читается. */
+const NAV_PHONE_ITEM_MIN_PX = 60;
+/** Отступы «телефонной» плашки: mx: 1 + px: 1 с обеих сторон. */
+const NAV_PHONE_CHROME_PX = 32;
 
 /**
  * Строка списка чатов — вынесена в отдельный memo-компонент.
@@ -251,6 +265,8 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   const archiveView = useSidebarViewStore((s) => s.archiveView);
   const setArchiveView = useSidebarViewStore((s) => s.setArchiveView);
   const toggleArchiveView = useSidebarViewStore((s) => s.toggleArchiveView);
+  const navOpacity = useUiPrefsStore((s) => s.navOpacity);
+  const navHeight = useUiPrefsStore((s) => s.navHeight);
   const [search, setSearch] = useState('');
   const [channelsFound, setChannelsFound] = useState<Pick<Chat, 'id' | 'name' | 'avatarUrl'>[]>([]);
   useEffect(() => {
@@ -781,22 +797,68 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
         ))}
       </List>
 
-      <Box sx={{ p: 1, borderTop: `1px solid ${theme.border}`, display: mobile ? 'none' : 'flex', gap: .5, justifyContent: open ? 'space-between' : 'center', flexWrap: 'wrap', position: 'relative', zIndex: 1, background: 'rgba(0,0,0,0.18)', backdropFilter: 'blur(18px)' }}>
-        <Tooltip title="Профиль"><IconButton onClick={() => navigate('/profile')} sx={{ color: theme.textSec, ...membranePressSx }}><AccountCircle /></IconButton></Tooltip>
-        <Tooltip title="Моя музыка и плейлисты"><IconButton onClick={() => setMusicOpen(true)} sx={{ color: theme.textSec, ...membranePressSx }}><LibraryMusic /></IconButton></Tooltip>
-        <Tooltip title="Редактор тем"><IconButton onClick={() => setThemeEditorOpen(true)} sx={{ color: theme.textSec, ...membranePressSx }}><Palette /></IconButton></Tooltip>
-        <Tooltip title={archiveView ? 'Назад к чатам' : 'Архив'}>
-          <IconButton
-            onClick={toggleArchiveView}
-            sx={{ color: archiveView ? theme.accent : theme.textSec, ...membranePressSx }}
-          >
-            <Archive />
-          </IconButton>
-        </Tooltip>
-        {user?.isAdmin && (
-          <Tooltip title="Bug Bounty Tools"><IconButton onClick={() => navigate('/admin')} sx={{ color: theme.textSec, ...membranePressSx }}><Security /></IconButton></Tooltip>
-        )}
-      </Box>
+      {(() => {
+        // Сколько кнопок в панели: четыре своих + «Bug Bounty» у админа.
+        const navCount = 4 + (user?.isAdmin ? 1 : 0);
+        // В горизонтальном сайдбаре ширина = ширина окна, места хватает всегда.
+        const wide = horizontal || mobile;
+        // «Как на телефоне» — парящая плашка с подписями. Если сайдбар сузили так,
+        // что подписи не влезают, показываем обычную строку иконок.
+        const phoneFits = wide || sidebarWidth >= NAV_PHONE_CHROME_PX + 4 * NAV_PHONE_ITEM_MIN_PX
+          + (user?.isAdmin ? NAV_ICON_PX : 0);
+        const phoneNav = (layout.desktopNavStyle ?? 'compact') === 'phone' && open && !horizontal && phoneFits;
+        // Компактная строка иконок тоже следует ползунку «Высота нижней панели».
+        const compactBtn = compactNavButtonPx(navHeight);
+        const compactBtnSx = { width: compactBtn, height: compactBtn, '& .MuiSvgIcon-root': { fontSize: compactNavIconPx(navHeight) } };
+        // Если иконки не влезают в одну строку (узкий сайдбар), ставим их столбиком.
+        // NAV_ICON_PX − 40 = зазор между кнопками.
+        const compactFits = wide || sidebarWidth >= NAV_COMPACT_CHROME_PX + navCount * (compactBtn + NAV_ICON_PX - 40);
+        // На телефоне вместо этой панели — MobileBottomNav.
+        if (mobile) return null;
+        return (
+          // Панель вынесена порталом над питомцем (SidebarNavDock): изнутри
+          // сайдбара никакой zIndex не поднимет её выше слоя питомца.
+          <SidebarNavDock
+            slotSx={phoneNav ? { mx: 1, mb: 1, mt: .5 } : undefined}
+            panelSx={phoneNav ? {
+            display: 'flex', alignItems: 'center', justifyContent: 'space-around',
+            gap: .5, flexWrap: 'nowrap',
+            px: 1, py: .75,
+            borderRadius: UI_NAV_RADIUS,
+            ...navPanelBackground(theme.bgSidebar, theme.bg, navOpacity),
+            backdropFilter: 'blur(22px) saturate(1.35)',
+            border: `1px solid ${theme.border}`,
+            boxShadow: '0 -6px 26px rgba(0,0,0,.28), 0 8px 24px rgba(0,0,0,.24)',
+          } : {
+            // В строку — ровно высота с ползунка; столбиком высота от числа кнопок.
+            ...(compactFits ? { px: 1, py: 0, height: compactNavPanelPx(navHeight) } : { p: 1 }),
+            borderTop: `1px solid ${theme.border}`, display: 'flex', gap: .5,
+            flexDirection: compactFits ? 'row' : 'column',
+            alignItems: 'center',
+            justifyContent: compactFits ? (open ? 'space-between' : 'center') : 'flex-start',
+            flexWrap: 'nowrap',
+            // Ползунок «Непрозрачность нижней панели»: 100% — прежний фон.
+            background: compactNavBackground(navOpacity), backdropFilter: 'blur(18px)',
+          }}>
+            {/* Порядок кнопок меняется перетаскиванием мышкой (SidebarNavButtons). */}
+            <SidebarNavButtons
+              variant={phoneNav ? 'phone' : 'compact'}
+              color={theme.textSec}
+              accent={theme.accent}
+              items={{
+                profile: { title: 'Профиль', label: 'Профиль', icon: <AccountCircle />, onClick: () => navigate('/profile') },
+                music: { title: 'Моя музыка и плейлисты', label: 'Музыка', icon: <LibraryMusic />, onClick: () => setMusicOpen(true) },
+                editor: { title: 'Редактор тем', label: 'Редактор', icon: <Palette />, onClick: () => setThemeEditorOpen(true) },
+                archive: { title: archiveView ? 'Назад к чатам' : 'Архив', label: archiveView ? 'Чаты' : 'Архив', icon: <Archive />, onClick: toggleArchiveView, active: archiveView },
+              }}
+            />
+            {user?.isAdmin && (
+              // order: кнопки выше расставлены CSS-свойством order, эта всегда последняя.
+              <Tooltip title="Bug Bounty Tools"><IconButton onClick={() => navigate('/admin')} sx={{ color: theme.textSec, order: 100, flexShrink: 0, ...membranePressSx, ...(phoneNav ? {} : compactBtnSx) }}><Security /></IconButton></Tooltip>
+            )}
+          </SidebarNavDock>
+        );
+      })()}
 
       {contextMenu && (
         <ContextMenu

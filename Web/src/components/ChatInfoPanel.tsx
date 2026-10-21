@@ -27,6 +27,7 @@ import {
   CHAT_AVATAR_PRESETS, ChatAvatarPreset, presetBackground, renderChatAvatarPreset,
 } from '../services/chatAvatarPresets';
 import { BOARD_COMMANDS, stripKindCommand } from '../utils/deskBoard';
+import { ImageViewer } from './MessageBubble';
 
 /** Слоты «моих скинов» для инфопанели: store-ключ, applyKey каталога, подпись. */
 const CHAT_SKIN_SLOTS = [
@@ -173,7 +174,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
     const newestFirst = [...mediaMessages].sort((a, b) =>
       (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0));
     newestFirst.forEach((message) => (message.attachments || []).forEach((attachment: MessageAttachment) => {
-      if (attachment.fileUrl && attachment.mimeType !== 'application/x-vera-group-invite') {
+      if (attachment.fileUrl && attachment.mimeType !== 'application/x-vera-group-invite' && attachment.mimeType !== 'application/x-vera-call') {
         const key = attachment.id || `${message.id}:${attachment.fileUrl}`;
         if (!unique.has(key)) unique.set(key, attachment);
       }
@@ -196,6 +197,14 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
     /^https?:|^blob:|^data:(?:image|audio|video)\//i.test(url)
       ? url
       : `${window.location.origin}${url.startsWith('/') ? '' : '/'}${url}`;
+
+  // Полные URL всех фото чата в порядке новизны — галерея для листания
+  // в полноэкранном просмотре (тот же лайтбокс, что и в переписке).
+  const photoGallery = useMemo(
+    () => mediaGroups[0].map((item) => resolveMediaUrl(item.fileUrl)),
+    [mediaGroups],
+  );
+
   const formatFileSize = (size?: number) => {
     if (!size) return '';
     if (size < 1024) return `${size} B`;
@@ -807,9 +816,18 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
                 const url = resolveMediaUrl(item.fileUrl);
                 const name = item.fileName || 'Вложение';
                 if (mediaTab === 0) {
-                  return <Box key={item.id} component="a" href={url} target="_blank" rel="noreferrer" sx={{ display: 'block', aspectRatio: '1', overflow: 'hidden', borderRadius: 1.5, bgcolor: theme.bgHover }}>
-                    <Box component="img" src={resolveMediaUrl(item.thumbnailUrl || item.fileUrl)} alt={name} sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                  </Box>;
+                  // Фото открывается тем же лайтбоксом, что и в переписке:
+                  // зум, поворот (R), листание стрелками по всем фото чата.
+                  return (
+                    <ImageViewer
+                      key={item.id}
+                      src={resolveMediaUrl(item.thumbnailUrl || item.fileUrl)}
+                      border={theme.border}
+                      tile
+                      gallery={photoGallery}
+                      index={mediaGroups[0].indexOf(item)}
+                    />
+                  );
                 }
                 if (mediaTab === 1) {
                   return <Box key={item.id} sx={{ bgcolor: theme.bgHover, borderRadius: 1.5, p: 0.75 }}><Box component="video" src={url} controls preload="metadata" sx={{ width: '100%', height: 150, objectFit: 'contain', display: 'block' }} /></Box>;
@@ -1009,6 +1027,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
             </Box>
           </>
         )}
+        {/* Хост плеера для режима «В инфопанели»: плеер встраивается в низ панели. */}
         <div ref={onPlayerHost} />
       </Box>
 

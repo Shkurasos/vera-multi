@@ -24,14 +24,22 @@ export default function CallMiniBar() {
 
   return (
     <Box sx={{
-      position: 'fixed', bottom: 12, left: 12, zIndex: 9997,
+      position: 'fixed', zIndex: 9997,
+      // По центру, а не в левом углу: там плашка перекрывала нижнюю навигацию
+      // и кнопку «Чаты». На десктопе — сверху, на мобильном — над навигацией.
+      left: '50%', transform: 'translateX(-50%)',
+      top: { xs: 'auto', md: 12 },
+      // Над нижней панелью: её высота настраивается (--vera-nav-height) + 8px отступа.
+      bottom: { xs: 'calc(var(--vera-nav-height, 70px) + 8px + env(safe-area-inset-bottom))', md: 'auto' },
       bgcolor: '#1e1f22', color: '#fff',
       border: '1px solid #2b2d31', borderRadius: 2,
-      px: 1.5, py: 1, display: 'flex', alignItems: 'center', gap: 1.5,
+      px: 1.5, py: 1, display: 'flex', alignItems: 'center', gap: { xs: 1, sm: 1.5 },
       boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-      minWidth: 260,
+      // Не шире экрана: раньше minWidth 260 плюс кнопки вылезали за узкий
+      // вьюпорт и появлялась горизонтальная прокрутка страницы.
+      boxSizing: 'border-box', maxWidth: 'calc(100vw - 16px)', overflow: 'hidden',
     }}>
-      <Box sx={{ display: 'flex', gap: 0.5 }}>
+      <Box sx={{ display: 'flex', gap: 0.5, flexShrink: 0 }}>
         <CallTile
           size="mini" isLocal displayName={meName} avatarUrl={me?.avatarUrl}
           camOn={false} micOn={local.mic} deaf={local.deaf} speaking={local.speaking}
@@ -56,7 +64,8 @@ export default function CallMiniBar() {
         )}
       </Box>
 
-      <Box sx={{ flex: 1, minWidth: 0 }}>
+      {/* Подсказка «Голос подключён» прячем на узких экранах — там важнее кнопки. */}
+      <Box sx={{ flex: 1, minWidth: 0, display: { xs: 'none', sm: 'block' } }}>
         <Typography sx={{ fontSize: 12, color: '#22c55e', fontWeight: 600 }}>Голос подключён</Typography>
         <Typography sx={{ fontSize: 11, color: '#b5bac1' }}>{peerList.length + 1} чел.</Typography>
       </Box>
@@ -77,7 +86,7 @@ export default function CallMiniBar() {
         </IconButton>
       </Tooltip>
       <Tooltip title="Завершить">
-        <IconButton size="small" onClick={leaveCall} sx={{ color: '#ef4444' }}>
+        <IconButton size="small" onClick={() => leaveCall()} sx={{ color: '#ef4444' }}>
           <CallEnd fontSize="small" />
         </IconButton>
       </Tooltip>

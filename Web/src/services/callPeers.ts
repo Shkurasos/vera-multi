@@ -5,6 +5,7 @@
 import { getSocket } from './socket';
 import { useCallStore, CALL_ICE_SERVERS, CallKind } from '../store/callStore';
 import { useAuthStore } from '../store/authStore';
+import { stopRingback, playCallAccept, playCallDecline } from './callSounds';
 
 interface PeerConn {
   pc: RTCPeerConnection;
@@ -24,6 +25,11 @@ let localStream: MediaStream | null = null;
 let localScreen: MediaStream | null = null;
 let localVA: (() => void) | null = null;
 let boundSocket: ReturnType<typeof getSocket> | null = null;
+/** Звук «принято» сыгран хотя бы раз в этом звонке (чтобы не дублировать). */
+let acceptSoundPlayed = false;
+
+/** Звонок принят (кнопка «Принять») — звук уже сыгран, не дублируем при коннекте. */
+export function primeAcceptSound() { acceptSoundPlayed = true; }
 
 function myId(): string | null {
   return useAuthStore.getState().user?.id || null;
@@ -37,10 +43,21 @@ function isPolite(otherId: string): boolean {
 
 async function ensureLocalStream(kind: CallKind): Promise<MediaStream> {
   if (localStream) return localStream;
-  const constraints: MediaStreamConstraints = kind === 'video'
-    ? { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: { width: 640, height: 480 } }
-    : { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false };
-  const s = await navigator.mediaDevices.getUserMedia(constraints);
+  const video = kind === 'video' ? { width: 640, height: 480 } : false;
+  const baseAudio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  // Сохранённый пользователем микрофон (ПКМ по кнопке микрофона в звонке).
+  const savedInput = useCallStore.getState().audioInputId;
+  let s: MediaStream;
+  try {
+    s = await navigator.mediaDevices.getUserMedia({
+      audio: savedInput ? { ...baseAudio, deviceId: { exact: savedInput } } : baseAudio,
+      video,
+    });
+  } catch (e) {
+    if (!savedInput) throw e;
+    // Устройство недоступно (выключено/отключено) — берём системное по умолчанию.
+    s = await navigator.mediaDevices.getUserMedia({ audio: baseAudio, video });
+  }
   localStream = s;
   useCallStore.getState()._setLocalStream(s);
   localVA = attachVoiceActivity(s, '__local__');
@@ -130,6 +147,13 @@ function createPeer(otherId: string): PeerConn {
 
   pc.onconnectionstatechange = () => {
     useCallStore.getState()._setPeer(otherId, { connection: pc.connectionState as any });
+    // Первое соединствие установлено — звонок «принят»: гудки включаться
+    // больше не должны, звук принятия играет один раз на звонок.
+    if (pc.connectionState === 'connected' && !acceptSoundPlayed) {
+      acceptSoundPlayed = true;
+      stopRingback();
+      playCallAccept();
+    }
   };
 
   pc.onnegotiationneeded = async () => {
@@ -178,6 +202,7 @@ export async function attachRoom(chatId: string, kind: CallKind): Promise<void> 
   bindSocketHandlers();
   currentChatId = chatId;
   currentKind = kind;
+  acceptSoundPlayed = false;
   await ensureLocalStream(kind);
   const s = getSocket();
   if (!s) throw new Error('Socket not connected');
@@ -190,6 +215,8 @@ export function detachRoom(): void {
     conn.vaCleanup?.();
   }
   peers.clear();
+  stopRingback();
+  acceptSoundPlayed = false;
   if (localStream) { localStream.getTracks().forEach((t) => t.stop()); localStream = null; useCallStore.getState()._setLocalStream(null); }
   if (localScreen) { localScreen.getTracks().forEach((t) => t.stop()); localScreen = null; useCallStore.getState()._setLocalScreenStream(null); }
   localVA?.(); localVA = null;
@@ -205,6 +232,22 @@ export async function addOrReplaceVideoTrack(track: MediaStreamTrack): Promise<v
       conn.senders.set('video', sender);
     }
   }
+}
+
+/** Заменить аудио-трек на всех пиров (смена микрофона на лету) + переподключить VA. */
+export async function replaceAudioTrack(track: MediaStreamTrack): Promise<void> {
+  for (const [, conn] of peers) {
+    const existing = conn.senders.get('audio');
+    if (existing) await existing.replaceTrack(track);
+    else if (localStream) {
+      const sender = conn.pc.addTrack(track, localStream);
+      conn.senders.set('audio', sender);
+    }
+  }
+  // Локальный детектор активности говорящего слушает поток — пересоздаём его
+  // на новом треке, иначе индикатор «говорю» перестанет реагировать.
+  localVA?.(); localVA = null;
+  if (localStream) localVA = attachVoiceActivity(localStream, '__local__');
 }
 
 export async function removeVideoTrack(): Promise<void> {
@@ -260,6 +303,8 @@ export function bindSocketHandlers(): void {
       boundSocket.off('callroom:ended');
       boundSocket.off('callroom:started');
       boundSocket.off('callroom:ring');
+      boundSocket.off('callroom:ring-declined');
+      boundSocket.off('callroom:active-rooms');
     } catch {}
   }
   boundSocket = s;
@@ -308,6 +353,20 @@ export function bindSocketHandlers(): void {
   s.on('callroom:ring', (r: any) => {
     if (useCallStore.getState().activeChatId) return;
     useCallStore.getState()._setRing(r);
+  });
+
+  // Собеседник отклонил вызов: гудки включаться больше не будут, звонок снимаем.
+  s.on('callroom:ring-declined', ({ chatId }: { chatId: string }) => {
+    if (currentChatId !== chatId) return;
+    stopRingback();
+    playCallDecline();
+    useCallStore.getState().leaveCall({ silent: true });
+  });
+
+  // Полный список активных звонков в чатах пользователя (присылает сервер
+  // при каждом подключении) — плашка в чате видна сразу после перезагрузки.
+  s.on('callroom:active-rooms', ({ rooms }: { rooms: Array<{ chatId: string; kind: CallKind; starterId?: string }> }) => {
+    useCallStore.getState()._setActiveRooms(rooms || []);
   });
 }
 

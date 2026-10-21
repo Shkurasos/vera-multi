@@ -12,7 +12,16 @@
 import { useEffect, useState, useRef, useLayoutEffect } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
-import { useUserSettingsStore, type WallClockPos } from '../store/userSettingsStore';
+import {
+  useUserSettingsStore, normalizeHudUrl, WALL_CLOCK_HUD_HEIGHT_LIMITS, type WallClockPos,
+  normalizeWallClockPos, wallClockAnchor,
+} from '../store/userSettingsStore';
+
+/**
+ * Базовые стили своего HUD: прозрачный фон и без полос прокрутки, чтобы под
+ * ним были видны обои. Свои стили пользователя идут после и могут перекрыть.
+ */
+const HUD_BASE_STYLE = '<style>html,body{margin:0;padding:0;background:transparent;overflow:hidden;height:100%}</style>';
 import { useChatFontStore } from '../store/chatFontStore';
 import { useClockLayout } from '../store/wallClockLayout';
 
@@ -43,9 +52,18 @@ interface WallClockOverlayProps {
  * перекрыли бы надписи.
  */
 function placeStyles(pos: WallClockPos) {
-  const base = { position: 'absolute' as const, left: 0, right: 0, textAlign: 'center' as const };
-  if (pos === 'top') return { ...base, top: { xs: 76, md: 88 } };
-  if (pos === 'bottom') return { ...base, bottom: { xs: 104, md: 92 } };
+  // Положение — это две независимые оси. По вертикали: отступ сверху, снизу
+  // или вся высота (центрирует alignItems обёртки). По горизонтали: к какому
+  // краю прижимает justifyContent; у краёв — отступ, чтобы цифры не липли к рамке.
+  const { v, h } = wallClockAnchor(pos);
+  const justifyContent = h === 'left' ? 'flex-start' : h === 'right' ? 'flex-end' : 'center';
+  const textAlign = h === 'left' ? 'left' as const : h === 'right' ? 'right' as const : 'center' as const;
+  const base = {
+    position: 'absolute' as const, left: 0, right: 0, textAlign, justifyContent,
+    px: h === 'center' ? 0 : { xs: 1, md: 3 },
+  };
+  if (v === 'top') return { ...base, top: { xs: 76, md: 88 } };
+  if (v === 'bottom') return { ...base, bottom: { xs: 104, md: 92 } };
   return { ...base, top: 0, bottom: 0 };
 }
 
@@ -56,7 +74,8 @@ export default function WallClockOverlay({ chatId, fontFamily: fallbackFontFamil
   const chatFont = useChatFontStore((s) => (chatId ? s.perChatFonts[chatId] : undefined));
   const fontFamily = chatFont || fallbackFontFamily;
   const enabled = useUserSettingsStore((s) => s.wallClockEnabled && s.wallClockChats?.[chatKind] !== false);
-  const pos = useUserSettingsStore((s) => s.wallClockPos);
+  // Старые снимки и темы могут хранить неизвестное значение — тогда по середине.
+  const pos = normalizeWallClockPos(useUserSettingsStore((s) => s.wallClockPos));
   const timeScale = useUserSettingsStore((s) => s.wallClockTimeScale);
   const dateScale = useUserSettingsStore((s) => s.wallClockDateScale);
   const datePos = useUserSettingsStore((s) => s.wallClockDatePos);
@@ -64,6 +83,18 @@ export default function WallClockOverlay({ chatId, fontFamily: fallbackFontFamil
   const secondsPos = useUserSettingsStore((s) => s.wallClockSecondsPos);
   const secondsScale = useUserSettingsStore((s) => s.wallClockSecondsScale);
   const language = useUserSettingsStore((s) => s.language);
+  // Свой HUD: HTML или ссылка вместо встроенных цифр.
+  const hudMode = useUserSettingsStore((s) => s.wallClockHudMode);
+  const hudHtml = useUserSettingsStore((s) => s.wallClockHudHtml) || '';
+  const hudUrlRaw = useUserSettingsStore((s) => s.wallClockHudUrl) || '';
+  const hudHeightRaw = useUserSettingsStore((s) => s.wallClockHudHeight);
+  const hudUrl = hudMode === 'url' ? normalizeHudUrl(hudUrlRaw) : null;
+  const hud = (hudMode === 'html' && !!hudHtml.trim()) || !!hudUrl;
+  const hudHeight = Math.min(
+    WALL_CLOCK_HUD_HEIGHT_LIMITS.max,
+    Math.max(WALL_CLOCK_HUD_HEIGHT_LIMITS.min, Number.isFinite(hudHeightRaw) ? hudHeightRaw : 160),
+  );
+  const hudFrameRef = useRef<HTMLIFrameElement>(null);
   const [now, setNow] = useState(() => new Date());
 
   // Тик раз в секунду. Компонент изолирован (свой слой), поэтому обновление
@@ -116,10 +147,50 @@ export default function WallClockOverlay({ chatId, fontFamily: fallbackFontFamil
       window.removeEventListener('resize', publish);
       setRect(null);
     };
-  }, [enabled, avoid, pos, timeScale, dateScale, secondsScale, showSeconds, datePos, secondsPos]);
+  }, [enabled, avoid, pos, timeScale, dateScale, secondsScale, showSeconds, datePos, secondsPos, hud, hudHeight]);
+
+  // Каждую секунду отправляем HUD текущее время и цвета темы. HUD может их
+  // использовать (window.addEventListener('message', ...)) или считать время сам.
+  // targetOrigin '*': у sandbox-iframe без allow-same-origin origin "null".
+  useEffect(() => {
+    if (!enabled || !hud) return;
+    hudFrameRef.current?.contentWindow?.postMessage({
+      type: 'vera-clock',
+      now: now.getTime(),
+      locale: DATE_LOCALES[language] || 'ru-RU',
+      color, colorSec, fontFamily,
+    }, '*');
+  }, [enabled, hud, now, language, color, colorSec, fontFamily]);
 
   // All hooks must run even when a theme disables the clock.
   if (!enabled) return null;
+
+  if (hud) {
+    // Ссылка на тот же origin, что и приложение, с allow-same-origin получила
+    // бы доступ к родителю — поэтому same-origin включаем только для чужих сайтов.
+    const sameOriginUrl = !!hudUrl && new URL(hudUrl).origin === window.location.origin;
+    const sandbox = hudUrl && !sameOriginUrl ? 'allow-scripts allow-same-origin' : 'allow-scripts';
+    return (
+      <Box aria-hidden sx={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none', userSelect: 'none' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', ...placeStyles(pos) }}>
+          <Box ref={blockRef} data-clock-ink="" sx={{ width: 'min(100%, 520px)', height: hudHeight }}>
+            <iframe
+              ref={hudFrameRef}
+              title="HUD часов"
+              tabIndex={-1}
+              sandbox={sandbox}
+              referrerPolicy="no-referrer"
+              {...(hudUrl ? { src: hudUrl } : { srcDoc: HUD_BASE_STYLE + hudHtml })}
+              style={{
+                width: '100%', height: '100%', border: 0, display: 'block',
+                background: 'transparent', colorScheme: 'normal', pointerEvents: 'none',
+              }}
+            />
+          </Box>
+        </Box>
+      </Box>
+    );
+  }
 
   // Кегль умножаем на масштаб из настроек, но по разному для телефона и десктопа:
   // базовые кегли различаются вдвое, и общий множитель масштабировал бы их

@@ -14,6 +14,9 @@
  *            подсмотреть чужие корабли. Каждый игрок получает свой «вид»
  *            через GET /state, ходит через POST /fire; после хода в комнату
  *            чата уходит warship:update (без секретных данных).
+ *            После accept идёт фаза 'placement': каждый игрок сам ставит
+ *            свои корабли (POST /place, вертикально или горизонтально).
+ *            Бой ('battle') начинается, когда флоты прислали оба.
  * Карточка обновляется у всех через message:edited и переживает перезагрузку.
  *
  * Финиш записывает в карточку и в текст сообщения итог: победителя, время
@@ -62,6 +65,52 @@ const shipSunk = (cells, shots) => cells.every(([r, c]) => shots[cellKey(r, c)])
 const fleetSunk = (fleet, shots) => fleet.every((cells) => shipSunk(cells, shots));
 const opponentOf = (game, userId) => game.players.find((id) => id !== userId);
 const shotCount = (shots) => Object.keys(shots || {}).length;
+/** Фаза дуэли. У игр, начатых до ручной расстановки, поля нет — они уже в бою. */
+const phaseOf = (game) => game.phase || 'battle';
+
+/**
+ * Проверить флот, присланный игроком. Возвращает нормализованный флот
+ * (клетки каждого корабля по порядку) или null, если расстановка нечестная:
+ * состав не как в FLEET, корабль кривой или с разрывом, выходит за поле,
+ * корабли пересекаются или касаются (даже углами).
+ */
+function normalizeFleet(raw) {
+  if (!Array.isArray(raw) || raw.length !== FLEET.length) return null;
+  const ships = [];
+  for (const ship of raw) {
+    if (!Array.isArray(ship) || ship.length < 1 || ship.length > BOARD) return null;
+    const cells = [];
+    for (const cell of ship) {
+      if (!Array.isArray(cell) || cell.length !== 2) return null;
+      const [r, c] = cell;
+      if (!Number.isInteger(r) || !Number.isInteger(c) || r < 0 || r >= BOARD || c < 0 || c >= BOARD) return null;
+      cells.push([r, c]);
+    }
+    cells.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const horizontal = cells.every(([r]) => r === cells[0][0]);
+    const vertical = cells.every(([, c]) => c === cells[0][1]);
+    if (!horizontal && !vertical) return null;
+    for (let i = 1; i < cells.length; i++) {
+      const [pr, pc] = cells[i - 1];
+      const [r, c] = cells[i];
+      if (horizontal ? c !== pc + 1 : r !== pr + 1) return null;
+    }
+    ships.push(cells);
+  }
+  const sizes = ships.map((s) => s.length).sort((a, b) => b - a);
+  const expected = [...FLEET].sort((a, b) => b - a);
+  if (sizes.some((s, i) => s !== expected[i])) return null;
+  const owner = new Map();
+  ships.forEach((cells, idx) => { for (const [r, c] of cells) owner.set(cellKey(r, c), idx); });
+  for (let idx = 0; idx < ships.length; idx++)
+    for (const [r, c] of ships[idx])
+      for (let dr = -1; dr <= 1; dr++)
+        for (let dc = -1; dc <= 1; dc++) {
+          const other = owner.get(cellKey(r + dr, c + dc));
+          if (other !== undefined && other !== idx) return null;
+        }
+  return ships;
+}
 
 /**
  * Выстрел shooter по флоту соперника. Возвращает 'miss' | 'hit' | 'sunk'
@@ -86,18 +135,25 @@ function pvpView(game, userId, payload) {
   const opp = opponentOf(game, userId);
   const myShots = game.shots[userId];
   const enemyShots = game.shots[opp];
+  const phase = phaseOf(game);
+  // Во время расстановки флота может ещё не быть (null) — ни своего, ни чужого.
+  const myFleet = game.fleets[userId];
+  const oppFleet = game.fleets[opp];
   return {
     mode: 'pvp',
-    myShips: game.fleets[userId].map((cells) => ({ cells, sunk: shipSunk(cells, enemyShots) })),
+    phase,
+    myReady: !!myFleet,
+    opponentReady: !!oppFleet,
+    myShips: (myFleet || []).map((cells) => ({ cells, sunk: shipSunk(cells, enemyShots) })),
     myShots,
     enemyShots,
-    myTurn: !game.winnerId && game.turn === userId,
+    myTurn: phase === 'battle' && !game.winnerId && game.turn === userId,
     over: !!game.winnerId,
     winnerId: game.winnerId || null,
     opponentId: opp,
     opponentName: opp === payload.creatorId ? payload.creatorName : (payload.acceptedByName || 'Соперник'),
-    enemyShipsLeft: game.fleets[opp].filter((cells) => !shipSunk(cells, myShots)).length,
-    myShipsLeft: game.fleets[userId].filter((cells) => !shipSunk(cells, enemyShots)).length,
+    enemyShipsLeft: oppFleet ? oppFleet.filter((cells) => !shipSunk(cells, myShots)).length : FLEET.length,
+    myShipsLeft: myFleet ? myFleet.filter((cells) => !shipSunk(cells, enemyShots)).length : FLEET.length,
     myShotsCount: shotCount(myShots),
     enemyShotsCount: shotCount(enemyShots),
     startedAt: game.startedAt,
@@ -278,16 +334,18 @@ function registerWarships({ app, getDb, auth, saveDb, io }) {
       startedAt: new Date().toISOString(),
     };
     if (payload.mode === 'pvp') {
-      // Флоты расставляет сервер; первым ходит случайный игрок.
+      // Флоты игроки расставляют сами (POST /place). Первый ход и старт
+      // таймера — когда готовы оба.
       const players = [payload.creatorId, req.userId];
       if (!db.warshipGames || typeof db.warshipGames !== 'object') db.warshipGames = {};
       db.warshipGames[msg.id] = {
         players,
-        fleets: { [players[0]]: randomFleet(), [players[1]]: randomFleet() },
+        phase: 'placement',
+        fleets: { [players[0]]: null, [players[1]]: null },
         shots: { [players[0]]: {}, [players[1]]: {} },
-        turn: players[Math.random() < 0.5 ? 0 : 1],
+        turn: null,
         winnerId: null,
-        startedAt: Date.now(),
+        startedAt: null,
         finishedAt: null,
       };
     }
@@ -319,7 +377,8 @@ function registerWarships({ app, getDb, auth, saveDb, io }) {
       finishedAt: new Date(game.finishedAt).toISOString(),
       result: {
         winner: 'player', winnerId, winnerName,
-        durationMs: game.finishedAt - game.startedAt,
+        // Сдача во время расстановки — бой не начинался.
+        durationMs: game.startedAt ? game.finishedAt - game.startedAt : 0,
         shots: shotCount(game.shots[winnerId]),
         ...(surrendered ? { surrendered: true } : {}),
       },
@@ -341,12 +400,38 @@ function registerWarships({ app, getDb, auth, saveDb, io }) {
     res.json(pvpView(ctx.game, req.userId, ctx.payload));
   });
 
+  // POST /api/warships/:messageId/place { ships } — своя расстановка флота.
+  // ships — массив кораблей, корабль — массив клеток [r, c]. После отправки
+  // флот зафиксирован; когда готовы оба, начинается бой.
+  app.post('/api/warships/:messageId/place', auth, (req, res) => {
+    const ctx = pvpContext(req, res);
+    if (!ctx) return;
+    const { game, msg } = ctx;
+    if (game.winnerId) return res.status(409).json({ message: 'Игра уже закончена' });
+    if (phaseOf(game) !== 'placement') return res.status(409).json({ message: 'Бой уже идёт' });
+    if (game.fleets[req.userId]) return res.status(409).json({ message: 'Флот уже расставлен' });
+    const fleet = normalizeFleet(req.body?.ships);
+    if (!fleet) {
+      return res.status(400).json({ message: 'Неверная расстановка: нужен полный флот, корабли не должны касаться' });
+    }
+    game.fleets[req.userId] = fleet;
+    if (game.players.every((id) => game.fleets[id])) {
+      game.phase = 'battle';
+      game.turn = game.players[Math.random() < 0.5 ? 0 : 1];
+      game.startedAt = Date.now();
+    }
+    try { saveDb(); } catch { /* остаёмся в памяти */ }
+    notifyPvp(msg, game);
+    res.json(pvpView(game, req.userId, ctx.payload));
+  });
+
   // POST /api/warships/:messageId/fire { r, c } — выстрел в дуэли.
   app.post('/api/warships/:messageId/fire', auth, (req, res) => {
     const ctx = pvpContext(req, res);
     if (!ctx) return;
     const { game, msg } = ctx;
     if (game.winnerId) return res.status(409).json({ message: 'Игра уже закончена' });
+    if (phaseOf(game) !== 'battle') return res.status(409).json({ message: 'Корабли ещё расставляются' });
     if (game.turn !== req.userId) return res.status(409).json({ message: 'Сейчас ход соперника' });
     const r = Number(req.body?.r);
     const c = Number(req.body?.c);
@@ -427,6 +512,7 @@ module.exports = {
   formatDuration,
   resultSummary,
   randomFleet,
+  normalizeFleet,
   applyShot,
   pvpView,
   FLEET,

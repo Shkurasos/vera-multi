@@ -6,6 +6,10 @@
 import { create } from 'zustand';
 import { getSocket } from '../services/socket';
 import { registerAccountStore } from '../services/storeSyncSimple';
+import { useChatStore } from './chatStore';
+import {
+  startRingback, stopRingback, playCallAccept, playCallDecline, playCallHangup,
+} from '../services/callSounds';
 
 export type CallKind = 'audio' | 'video';
 
@@ -51,15 +55,24 @@ interface CallStoreState {
   localScreenStream: MediaStream | null;
   ring: RingState | null;
   activeRooms: Record<string, { kind: CallKind; starterId?: string }>;
+  /** Выбранный микрофон (deviceId; null — системное по умолчанию). */
+  audioInputId: string | null;
+  /** Выбранное устройство вывода звука звонка (null — по умолчанию). */
+  audioOutputId: string | null;
 
   startCall: (chatId: string, kind: CallKind) => Promise<void>;
   joinCall: (chatId: string, kind: CallKind) => Promise<void>;
-  leaveCall: () => void;
+  /** Выход из звонка. opts.silent — без звука снятия (его уже сыграли иначе). */
+  leaveCall: (opts?: { silent?: boolean }) => void;
   toggleMic: () => void;
   toggleCam: () => Promise<void>;
   toggleDeaf: () => void;
   toggleScreen: () => Promise<void>;
   setMinimized: (v: boolean) => void;
+  /** Сменить микрофон на лету: трек заменяется и у всех собеседников. */
+  setAudioInput: (deviceId: string | null) => Promise<void>;
+  /** Куда выводить звук звонка (применяется в CallAudioSink через setSinkId). */
+  setAudioOutput: (deviceId: string | null) => void;
   acceptRing: () => Promise<void>;
   declineRing: () => void;
 
@@ -70,6 +83,8 @@ interface CallStoreState {
   _setActiveRoom: (chatId: string, v: { kind: CallKind; starterId?: string } | null) => void;
   _setLocalStream: (s: MediaStream | null) => void;
   _setLocalScreenStream: (s: MediaStream | null) => void;
+  /** Полный список активных звонков (с сервера при подключении). */
+  _setActiveRooms: (rooms: Array<{ chatId: string; kind: CallKind; starterId?: string }>) => void;
 }
 
 export const CALL_ICE_SERVERS: RTCConfiguration = {
@@ -80,6 +95,17 @@ export const CALL_ICE_SERVERS: RTCConfiguration = {
     { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
   ],
 };
+
+// Выбор устройств звука персональный и аппаратно-зависимый — храним локально,
+// без серверной синхронизации.
+const LS_AUDIO_INPUT = 'vera_call_audio_input';
+const LS_AUDIO_OUTPUT = 'vera_call_audio_output';
+function readDeviceId(key: string): string | null {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function writeDeviceId(key: string, value: string | null) {
+  try { value ? localStorage.setItem(key, value) : localStorage.removeItem(key); } catch {}
+}
 
 
 export const useCallStore = create<CallStoreState>((set, get) => ({
@@ -93,8 +119,16 @@ export const useCallStore = create<CallStoreState>((set, get) => ({
   localScreenStream: null,
   ring: null,
   activeRooms: {},
+  audioInputId: readDeviceId(LS_AUDIO_INPUT),
+  audioOutputId: readDeviceId(LS_AUDIO_OUTPUT),
 
-  async startCall(chatId, kind) { await get().joinCall(chatId, kind); },
+  async startCall(chatId, kind) {
+    await get().joinCall(chatId, kind);
+    // Личный звонок: слушаем гудки, пока собеседник не примет вызов.
+    // Групповые звонки без «принятия» — там участники заходят сами.
+    const chat = useChatStore.getState().chats.find((c) => c.id === chatId);
+    if (chat?.type === 'direct' || chat?.type === 'private') startRingback();
+  },
 
   async joinCall(chatId, kind) {
     const { attachRoom } = await import('../services/callPeers');
@@ -112,11 +146,15 @@ export const useCallStore = create<CallStoreState>((set, get) => ({
     if (s) s.emit('callroom:state', { chatId, patch: { cam } });
   },
 
-  leaveCall() {
+  leaveCall(opts) {
     const s = getSocket();
     const chatId = get().activeChatId;
+    stopRingback();
     if (chatId && s) s.emit('callroom:leave', { chatId });
     import('../services/callPeers').then(({ detachRoom }) => detachRoom());
+    // Звук снятия трубки — только если звонок реально был и его не просили
+    // промолчать (например, при отклонении вызова звонящим).
+    if (chatId && !opts?.silent) playCallHangup();
     set({
       activeChatId: null, peers: {}, minimized: false,
       localStream: null, localScreenStream: null,
@@ -181,10 +219,44 @@ export const useCallStore = create<CallStoreState>((set, get) => ({
 
   setMinimized(v) { set({ minimized: v }); },
 
+  async setAudioInput(deviceId) {
+    writeDeviceId(LS_AUDIO_INPUT, deviceId);
+    set({ audioInputId: deviceId });
+    const { localStream, local } = get();
+    if (!localStream) return; // вне звонка — выбор просто запомнится
+    const audio: MediaTrackConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+    if (deviceId) audio.deviceId = { exact: deviceId };
+    let fresh: MediaStream;
+    try {
+      fresh = await navigator.mediaDevices.getUserMedia({ audio, video: false });
+    } catch (e) {
+      console.warn('setAudioInput: device unavailable', e);
+      return;
+    }
+    const newTrack = fresh.getAudioTracks()[0];
+    if (!newTrack) return;
+    // Микрофон мог быть выключен — сохраняем текущее состояние.
+    newTrack.enabled = local.mic;
+    // Меняем трек прямо в потоке: srcObject у тайлов и VA остаются валидными.
+    localStream.getAudioTracks().forEach((t) => { t.stop(); localStream.removeTrack(t); });
+    localStream.addTrack(newTrack);
+    const { replaceAudioTrack } = await import('../services/callPeers');
+    await replaceAudioTrack(newTrack);
+  },
+
+  setAudioOutput(deviceId) {
+    writeDeviceId(LS_AUDIO_OUTPUT, deviceId);
+    set({ audioOutputId: deviceId });
+  },
+
   async acceptRing() {
     const r = get().ring;
     if (!r) return;
     set({ ring: null });
+    // Звук принятия — сразу; дубля при коннекте пира не будет (флаг в callPeers).
+    playCallAccept();
+    const { primeAcceptSound } = await import('../services/callPeers');
+    primeAcceptSound();
     await get().joinCall(r.chatId, r.kind);
   },
 
@@ -192,7 +264,10 @@ export const useCallStore = create<CallStoreState>((set, get) => ({
     const r = get().ring;
     if (!r) return;
     const s = getSocket();
-    if (s) s.emit('callroom:leave', { chatId: r.chatId });
+    // Сервер уведомит звонящего (callroom:ring-declined) — тот перестанет
+    // слушать гудки, выйдет из комнаты и услышит «отклонено».
+    if (s) s.emit('callroom:decline', { chatId: r.chatId });
+    playCallDecline();
     set({ ring: null });
   },
 
@@ -223,6 +298,14 @@ export const useCallStore = create<CallStoreState>((set, get) => ({
   },
   _setLocalStream(s) { set({ localStream: s }); },
   _setLocalScreenStream(s) { set({ localScreenStream: s }); },
+  _setActiveRooms(rooms) {
+    const next: Record<string, { kind: CallKind; starterId?: string }> = {};
+    for (const r of rooms || []) {
+      if (!r || !r.chatId) continue;
+      next[r.chatId] = { kind: r.kind === 'video' ? 'video' : 'audio', starterId: r.starterId };
+    }
+    set({ activeRooms: next });
+  },
 }));
 
 registerAccountStore('calls', useCallStore);

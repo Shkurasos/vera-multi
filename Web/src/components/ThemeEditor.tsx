@@ -8,14 +8,22 @@ import { communityThemesApi, CommunityTheme } from '../services/api';
 import { useShopStore } from '../store/shopStore';
 import VpIcon from './VpIcon';
 import {
-  WallpaperPanel, SoundPanel, UiStylePanel, AnimationsPanel, AppearancePanel, LayoutPanel,
+  WallpaperPanel, SoundPanel, IconsPanel, UiStylePanel, AnimationsPanel, AppearancePanel, ClockPanel, MessagesPanel, LayoutPanel,
   ThemeSettingsLayer,
 } from './ThemeSettingsPanels';
 import { autoBubbleGradient, regenerateAutoGradient, bubbleBackground } from '../utils/bubbleGradient';
+import {
+  TAB_GROUPS, SETTINGS_TABS, TAB_LABELS, searchSettings, findSettingElement,
+  type SettingsTabId, type SettingsIndexEntry,
+} from '../utils/themeEditorSearch';
+import { UI_MODES } from '../store/uiPrefsStore';
+import { readableTextOn } from '../utils/contrast';
+import { ANIM_GROUPS } from '../store/animStore';
 
 // ─── Последняя вкладка редактора ──────────────────────────────────────────────
-type EditorTab = 'theme' | 'community' | 'wallpaper' | 'sound' | 'ui' | 'anim' | 'look' | 'layout';
-const EDITOR_TABS: readonly EditorTab[] = ['theme', 'community', 'wallpaper', 'sound', 'ui', 'anim', 'look', 'layout'];
+// Список и группы вкладок — в utils/themeEditorSearch.ts (там же индекс поиска).
+type EditorTab = SettingsTabId;
+const EDITOR_TABS: readonly EditorTab[] = SETTINGS_TABS;
 const LAST_TAB_KEY = 'vera-theme-editor-tab';
 function readLastEditorTab(): EditorTab {
   try {
@@ -24,6 +32,12 @@ function readLastEditorTab(): EditorTab {
   } catch {}
   return 'theme';
 }
+
+/** Строки панелей, которые строятся из сторов, — тоже ищутся. */
+const DYNAMIC_SEARCH_ENTRIES: readonly SettingsIndexEntry[] = [
+  ...UI_MODES.map((m) => ({ tab: 'ui' as const, label: m.label, keywords: `режим ${m.desc}` })),
+  ...ANIM_GROUPS.map((g) => ({ tab: 'anim' as const, label: `${g.emoji} ${g.label}`, keywords: `анимация ${g.desc}` })),
+];
 
 // ─── SVG паттерны ─────────────────────────────────────────────────────────────
 function svgUrl(content: string) {
@@ -253,14 +267,14 @@ function CommunityThemesPanel({
   };
 
   return <div>
-    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Community Themes</div>
+    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Темы комьюнити</div>
     <div style={{ fontSize: 12, opacity: .65, marginBottom: 12 }}>Публикуйте тему вместе с превью, обоями или шрифтом.</div>
     <div style={{ display: 'grid', gap: 7, marginBottom: 16 }}>
       <input value={name} onChange={e => setName(e.target.value)} placeholder="Название темы" style={{ padding: 8, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.bgInput, color: theme.text }} />
       <input value={description} onChange={e => setDescription(e.target.value)} placeholder="Описание" style={{ padding: 8, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.bgInput, color: theme.text }} />
       <label style={{ fontSize: 12 }}>Превью <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={e => setPreview(e.target.files?.[0])} /></label>
       <label style={{ fontSize: 12 }}>Фото или шрифт <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,.ttf,.otf,.woff,.woff2" onChange={e => setAsset(e.target.files?.[0])} /></label>
-      <button disabled={busy || !name.trim()} onClick={() => void upload()} style={{ padding: '8px 12px', border: 0, borderRadius: 7, background: theme.accent, color: '#fff', cursor: 'pointer' }}>Опубликовать текущую тему</button>
+      <button disabled={busy || !name.trim()} onClick={() => void upload()} style={{ padding: '8px 12px', border: 0, borderRadius: 7, background: theme.accent, color: readableTextOn(theme.accent), cursor: 'pointer' }}>Опубликовать текущую тему</button>
     </div>
     <div style={{ display: 'flex', gap: 7, marginBottom: 12 }}>
       <input value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void load(); }} placeholder="Поиск по каталогу" style={{ flex: 1, padding: 8, borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.bgInput, color: theme.text }} />
@@ -345,6 +359,39 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
       try { localStorage.setItem(LAST_TAB_KEY, next); } catch {}
     }
   }, [isChat]);
+
+  // ── Поиск по настройкам ──────────────────────────────────────────────────
+  // Выбор результата открывает нужную вкладку, а после её отрисовки строка
+  // находится по подписи, прокручивается в центр и коротко подсвечивается.
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchActive, setSearchActive] = useState(0);
+  const [pendingJump, setPendingJump] = useState<SettingsIndexEntry | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const searchResults = React.useMemo(
+    () => (isChat ? [] : searchSettings(searchQuery, DYNAMIC_SEARCH_ENTRIES)),
+    [searchQuery, isChat],
+  );
+  const jumpTo = useCallback((entry: SettingsIndexEntry) => {
+    setTab(entry.tab);
+    setPendingJump(entry);
+    setSearchOpen(false);
+  }, [setTab]);
+  useEffect(() => {
+    if (!pendingJump || pendingJump.tab !== tab) return;
+    // Панель могла ещё не отрисоваться — ждём кадр.
+    const raf = requestAnimationFrame(() => {
+      const el = findSettingElement(bodyRef.current, pendingJump.label);
+      setPendingJump(null);
+      if (!el) return;
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      el.animate?.(
+        [{ backgroundColor: theme.accent + '33' }, { backgroundColor: 'transparent' }],
+        { duration: 1400, easing: 'ease-out' },
+      );
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [pendingJump, tab, theme.accent]);
 
   const handleAiGenerate = async () => {
     const desc = aiPrompt.trim();
@@ -532,47 +579,115 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
   const sameAsActive = !isChat && draft.id === themeId;
 
   // ── Навигация ─────────────────────────────────────────────────────────────
-  const TABS: [typeof tab, string][] = [
-    ['theme', 'Тема'], ['community', 'Community Themes'], ['wallpaper', 'Обои'], ['sound', 'Звук'],
-    ['ui', 'Иконки и стиль'], ['anim', 'Анимации'], ['look', 'Внешний вид'], ['layout', 'Макет'],
-  ];
-  // Разделы — горизонтальной полосой сверху, как в настройках CS2: заглавные
-  // буквы, активный раздел в акцентном прямоугольнике, разделители «|».
-  // Так весь список настроек всегда на виду и не нужно метаться между
-  // левой колонкой и содержимым.
+  // Разделы — горизонтальной полосой сверху, как в настройках CS2, но
+  // сгруппированы: «Темы | Оформление | Интерфейс | Звук». Группы разделены
+  // вертикальной чертой и подписаны мелким текстом, вкладки внутри группы
+  // идут плотно. Справа — поиск по всем настройкам.
   // Контент — колонкой по центру, с ограничением по ширине: на широком
   // экране строки растягивались бы в бесконечность, а в CS2 список настроек
   // занимает аккуратную среднюю полосу.
   const editorContent: React.CSSProperties = { flex: 1, minWidth: 0, width: '100%', maxWidth: 1080, margin: '0 auto' };
+  const tabGroups = isChat ? [{ title: 'Тема', tabs: [['theme', 'Тема']] as const }] : TAB_GROUPS;
+  const tabButton = (id: EditorTab, label: string) => (
+    <button
+      key={id}
+      onClick={() => setTab(id)}
+      aria-pressed={tab === id}
+      style={{
+        border: 'none', cursor: 'pointer', padding: '7px 12px', borderRadius: 6,
+        background: tab === id ? theme.accent : 'transparent',
+        // На светлом акценте белые буквы сливаются — берём читаемый цвет.
+        color: tab === id ? readableTextOn(theme.accent) : theme.textSec,
+        fontSize: 12, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase',
+        fontFamily: 'inherit', whiteSpace: 'nowrap', lineHeight: 1.2,
+        transition: 'background .15s, color .15s',
+      }}
+      onMouseEnter={e => { if (tab !== id) e.currentTarget.style.color = theme.text; }}
+      onMouseLeave={e => { if (tab !== id) e.currentTarget.style.color = theme.textSec; }}
+    >{label}</button>
+  );
+  const searchBox = !isChat && (
+    <div style={{ position: 'relative', flex: '0 1 280px', minWidth: 180 }}>
+      <input
+        type="search"
+        role="combobox"
+        aria-expanded={searchOpen && searchQuery.trim() !== ''}
+        aria-controls="theme-editor-search-results"
+        aria-label="Поиск по настройкам"
+        placeholder="🔍 Поиск настройки…"
+        value={searchQuery}
+        onChange={e => { setSearchQuery(e.target.value); setSearchOpen(true); setSearchActive(0); }}
+        onFocus={() => setSearchOpen(true)}
+        // Задержка — чтобы клик по результату успел сработать до закрытия.
+        onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
+        onKeyDown={e => {
+          if (e.key === 'ArrowDown') { e.preventDefault(); setSearchActive(i => Math.min(i + 1, searchResults.length - 1)); }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); setSearchActive(i => Math.max(i - 1, 0)); }
+          else if (e.key === 'Enter' && searchResults[searchActive]) { e.preventDefault(); jumpTo(searchResults[searchActive]); }
+          else if (e.key === 'Escape') { setSearchQuery(''); setSearchOpen(false); }
+        }}
+        style={{ ...inputStyle, padding: '7px 11px', borderRadius: 8 }}
+      />
+      {searchOpen && searchQuery.trim() !== '' && (
+        <div
+          id="theme-editor-search-results"
+          role="listbox"
+          style={{
+            position: 'absolute', top: 'calc(100% + 4px)', right: 0, left: 0, zIndex: 5,
+            maxHeight: 360, overflowY: 'auto', padding: 4, borderRadius: 8,
+            background: theme.bgSidebar, border: '1px solid ' + theme.border,
+            boxShadow: '0 12px 32px rgba(0,0,0,0.45)',
+          }}
+        >
+          {searchResults.length === 0 && (
+            <div style={{ padding: '8px 10px', fontSize: 12.5, opacity: 0.6 }}>Ничего не найдено</div>
+          )}
+          {searchResults.map((r, i) => (
+            <div
+              key={r.tab + r.label}
+              role="option"
+              aria-selected={i === searchActive}
+              onMouseDown={e => { e.preventDefault(); jumpTo(r); }}
+              onMouseEnter={() => setSearchActive(i)}
+              style={{
+                display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline',
+                padding: '7px 10px', borderRadius: 6, cursor: 'pointer',
+                background: i === searchActive ? theme.bgHover : 'transparent',
+              }}
+            >
+              <span style={{ fontSize: 13, color: theme.text, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
+              <span style={{ fontSize: 11, color: theme.textSec, flexShrink: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{TAB_LABELS[r.tab]}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
   const nav = (
-    <nav style={{
-      flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center',
-      gap: 4, padding: '10px 16px 8px', borderBottom: '1px solid ' + theme.border,
+    <nav aria-label="Разделы редактора" style={{
+      flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'stretch',
+      gap: 6, padding: '8px 16px', borderBottom: '1px solid ' + theme.border,
       background: 'rgba(0,0,0,0.18)',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
-        {(!isChat ? TABS : ([['theme', 'Тема']] as [typeof tab, string][])).map(([id, label], i) => (
-          <React.Fragment key={id}>
-            {i > 0 && <span aria-hidden style={{ color: theme.textSec, opacity: 0.35, margin: '0 10px', fontSize: 12, userSelect: 'none' }}>|</span>}
-            <button
-              onClick={() => setTab(id)}
-              style={{
-                border: 'none', cursor: 'pointer', padding: '8px 14px', borderRadius: 6,
-                background: tab === id ? theme.accent : 'transparent',
-                color: tab === id ? '#fff' : theme.textSec,
-                fontSize: 12.5, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase',
-                fontFamily: 'inherit', whiteSpace: 'nowrap', lineHeight: 1.2,
-                transition: 'background .15s, color .15s',
-              }}
-              onMouseEnter={e => { if (tab !== id) e.currentTarget.style.color = theme.text; }}
-              onMouseLeave={e => { if (tab !== id) e.currentTarget.style.color = theme.textSec; }}
-            >{label}</button>
-          </React.Fragment>
-        ))}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'stretch', flexWrap: 'wrap', rowGap: 6, minWidth: 0 }}>
+          {tabGroups.map((g, gi) => (
+            <div key={g.title} role="group" aria-label={g.title} style={{
+              display: 'flex', flexDirection: 'column', gap: 2, padding: '0 10px',
+              borderLeft: gi > 0 ? '1px solid ' + theme.border : 'none',
+            }}>
+              <span aria-hidden style={{ fontSize: 10, color: theme.textSec, opacity: 0.6, letterSpacing: '0.08em', textTransform: 'uppercase', paddingLeft: 12, userSelect: 'none' }}>{g.title}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+                {g.tabs.map(([id, label]) => tabButton(id, label))}
+              </div>
+            </div>
+          ))}
+        </div>
+        {searchBox}
       </div>
       {!isChat && (
-        <div style={{ fontSize: 11, lineHeight: 1.4, opacity: 0.5, textAlign: 'center', maxWidth: 720 }}>
-          Обои, звук, иконки, анимации, внешний вид и макет — настройки этой темы. У каждой темы свои.
+        <div style={{ fontSize: 11, lineHeight: 1.4, opacity: 0.5, textAlign: 'center' }}>
+          Оформление, интерфейс и звук — настройки этой темы. У каждой темы свои.
         </div>
       )}
     </nav>
@@ -627,7 +742,7 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
 
         {nav}
 
-        <div style={plateBody}>
+        <div style={plateBody} ref={bodyRef}>
          <div style={editorContent}>
          {tab === 'theme' && (
          <>
@@ -743,7 +858,7 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
               style={{
                 padding: '6px 16px', borderRadius: 7, border: 'none',
                 background: aiLoading ? theme.bgHover : theme.accent,
-                color: '#fff', fontSize: 13, fontWeight: 600,
+                color: aiLoading ? theme.text : readableTextOn(theme.accent), fontSize: 13, fontWeight: 600,
                 cursor: aiLoading ? 'wait' : 'pointer',
                 opacity: aiPrompt.trim() ? 1 : 0.5,
               }}
@@ -856,16 +971,19 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
               <span style={{ fontSize: 14.5, opacity: 0.92, paddingTop: 5 }}>Рисунки</span>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, justifyContent: 'flex-end', maxWidth: 420 }}>
                 {PATTERN_LIST.filter(p => p.id !== 'none').map(p => (
+                  // Переключение — через onChange самой галочки. Раньше стоял
+                  // onClick на <label>: клик по подписи браузер дублирует на
+                  // галочку, обработчик срабатывал дважды и выбор тут же
+                  // отменялся — по названию рисунок не выбирался.
                   <label
                     key={p.id}
-                    onClick={() => togglePattern(p.id)}
                     style={{
                       ...patternBtnBase,
                       background: patternIds.includes(p.id) ? theme.accent : theme.bgHover,
-                      color: patternIds.includes(p.id) ? '#fff' : theme.text,
+                      color: patternIds.includes(p.id) ? readableTextOn(theme.accent) : theme.text,
                       borderColor: patternIds.includes(p.id) ? theme.accent : theme.border,
                     }}
-                  ><input type="checkbox" checked={patternIds.includes(p.id)} readOnly /> {p.label}</label>
+                  ><input type="checkbox" checked={patternIds.includes(p.id)} onChange={() => togglePattern(p.id)} /> {p.label}</label>
                 ))}
               </div>
             </div>
@@ -1097,9 +1215,12 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
           <ThemeSettingsLayer>
             {tab === 'wallpaper' && <WallpaperPanel />}
             {tab === 'sound' && <SoundPanel />}
+            {tab === 'icons' && <IconsPanel />}
             {tab === 'ui' && <UiStylePanel />}
             {tab === 'anim' && <AnimationsPanel />}
             {tab === 'look' && <AppearancePanel />}
+            {tab === 'clock' && <ClockPanel />}
+            {tab === 'messages' && <MessagesPanel />}
             {tab === 'layout' && <LayoutPanel />}
           </ThemeSettingsLayer>
         )}
@@ -1130,7 +1251,7 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
             onClick={handleSave}
             style={{
               padding: '9px 22px', borderRadius: 6, border: 'none',
-              background: theme.accent, color: '#fff',
+              background: theme.accent, color: readableTextOn(theme.accent),
               cursor: 'pointer', fontSize: 12, fontWeight: 700,
               letterSpacing: '0.06em', textTransform: 'uppercase', fontFamily: 'inherit',
             }}

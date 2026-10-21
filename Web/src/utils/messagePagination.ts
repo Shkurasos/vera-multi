@@ -9,7 +9,7 @@
  */
 
 /** Размер страницы, запрашиваемой у сервера при прокрутке вверх. */
-export const OLDER_PAGE_SIZE = 50;
+export const OLDER_PAGE_SIZE = 80;
 
 /** За сколько сообщений до верха начинаем догрузку (требование: 20–30). */
 export const PREFETCH_AHEAD_MESSAGES = 25;

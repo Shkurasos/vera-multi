@@ -424,15 +424,40 @@ export const warshipsApi = {
     api.post(`/warships/${encodeURIComponent(messageId)}/finish`, result),
   state: (messageId: string) =>
     api.get<WarshipDuelView>(`/warships/${encodeURIComponent(messageId)}/state`),
+  /** Отправить свою расстановку: корабль — массив клеток [r, c]. */
+  place: (messageId: string, ships: [number, number][][]) =>
+    api.post<WarshipDuelView>(`/warships/${encodeURIComponent(messageId)}/place`, { ships }),
   fire: (messageId: string, r: number, c: number) =>
     api.post<{ outcome: 'miss' | 'hit' | 'sunk'; view: WarshipDuelView }>(`/warships/${encodeURIComponent(messageId)}/fire`, { r, c }),
   surrender: (messageId: string) =>
     api.post(`/warships/${encodeURIComponent(messageId)}/surrender`),
 };
 
+/**
+ * Крестики-нолики (/tic-tac-toe): сессия-карточка в чате. Состояние партии
+ * лежит в payload карточки, каждый ход проверяет сервер.
+ */
+export const ticTacToeApi = {
+  create: (chatId: string) =>
+    api.post(`/messages/${encodeURIComponent(chatId)}/tictactoe`, {}),
+  accept: (messageId: string) =>
+    api.post(`/tictactoe/${encodeURIComponent(messageId)}/accept`),
+  decline: (messageId: string) =>
+    api.post(`/tictactoe/${encodeURIComponent(messageId)}/decline`),
+  /** Ход в клетку 0..8 (слева направо, сверху вниз). */
+  move: (messageId: string, cell: number) =>
+    api.post(`/tictactoe/${encodeURIComponent(messageId)}/move`, { cell }),
+};
+
 /** Вид дуэли глазами текущего игрока (чужой флот сервер не отдаёт). */
 export interface WarshipDuelView {
   mode: 'pvp';
+  /** 'placement' — игроки расставляют корабли, 'battle' — идёт бой. */
+  phase: 'placement' | 'battle';
+  /** Я уже отправил свою расстановку. */
+  myReady: boolean;
+  /** Соперник уже отправил свою расстановку (его клетки не раскрываются). */
+  opponentReady: boolean;
   myShips: Array<{ cells: [number, number][]; sunk: boolean }>;
   /** Мои выстрелы по сопернику: «r,c» → исход. */
   myShots: Record<string, 'miss' | 'hit' | 'sunk'>;
@@ -447,7 +472,8 @@ export interface WarshipDuelView {
   myShipsLeft: number;
   myShotsCount: number;
   enemyShotsCount: number;
-  startedAt: number;
+  /** Начало боя; null, пока идёт расстановка. */
+  startedAt: number | null;
   finishedAt: number | null;
 }
 

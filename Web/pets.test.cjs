@@ -112,8 +112,11 @@ test('pet docks to each wall, leaves the wall on drag, and chooses one wall at c
   for (const [position, expected, wall] of [
     [{ x: 3, y: 50 }, { x: 0, y: 50 }, 'left'],
     [{ x: 97, y: 50 }, { x: 100, y: 50 }, 'right'],
-    [{ x: 50, y: 8 }, { x: 50, y: 0 }, 'top'],
-    [{ x: 50, y: 92 }, { x: 50, y: 100 }, 'bottom'],
+    [{ x: 50, y: 3 }, { x: 50, y: 0 }, 'top'],
+    [{ x: 50, y: 97 }, { x: 50, y: 100 }, 'bottom'],
+    // Верх/низ липнут слабее: рядом со стеной питомец лишь упирается в неё.
+    [{ x: 50, y: 8 }, { x: 50, y: 10 }, null],
+    [{ x: 50, y: 92 }, { x: 50, y: 90 }, null],
     [{ x: -20, y: -20 }, { x: 0, y: 10 }, 'left'],
   ]) {
     const actual = dockPet(position, 100, 1000, 500);

@@ -11,6 +11,7 @@
  * сообщения (остальные не смонтированы).
  */
 import { create } from 'zustand';
+import type { WallClockPos } from './userSettingsStore';
 
 export interface ClockRect {
   top: number;
@@ -18,7 +19,7 @@ export interface ClockRect {
   left: number;
   right: number;
   /** Положение блока: от него зависит, в какую сторону отодвигать. */
-  pos: 'center' | 'top' | 'bottom';
+  pos: WallClockPos;
 }
 
 interface ClockLayoutState {

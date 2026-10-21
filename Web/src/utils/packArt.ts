@@ -1,5 +1,5 @@
 import { THEMED_PACKS } from '../store/themedPacks';
-import { collectionArtwork, DRAGON_ART } from './collectionArt';
+import { DRAGON_ART } from './collectionArt';
 // Hand-authored silhouettes: every pack remains recognizable without its palette.
 export const PACK_ART: Record<string, { story: string; path: string; illustration?: string }> = Object.fromEntries([
   ...THEMED_PACKS.map(p => [p.id, p.story, p.path]),
@@ -44,5 +44,5 @@ export const PACK_ART: Record<string, { story: string; path: string; illustratio
   ['r-infinity', 'Infinity · две орбиты без начала и конца', 'M50 50C13 5 2 79 31 71C47 68 57 26 74 29C103 21 87 95 50 50ZM20 19L24 28M78 76L82 85M77 13V23M72 18H82'],
   ['r-cult', '8-bit · трофей из аркадного автомата', 'M30 16H70V28H82V52H70V64H58V76H70V86H30V76H42V64H30V52H18V28H30ZM30 28V47H38V54H62V47H70V28M42 30H58V42H42Z'],
 ].map(([id, story, path]) => [`pack-${id}`, { story, path,
-  illustration: id === 'games-dragon' ? DRAGON_ART : collectionArtwork(id, path),
+  illustration: id === 'games-dragon' ? DRAGON_ART : undefined,
 }]));

@@ -105,8 +105,9 @@ test('randomFleet: классический флот, корабли прямы�
   }
 });
 
-/** Дуэль в личке a↔b: создать, принять, вернуть хелперы. */
-function startDuel() {
+/** Дуэль в личке a↔b: создать, принять, расставить флоты, вернуть хелперы. */
+function startDuel({ place = true } = {}) {
+  const { randomFleet } = require('./warships');
   const env = setup('direct', ['a', 'b']);
   // Клиент может прислать что угодно — сервер берёт собеседника из участников чата.
   const created = env.call('/api/messages/:chatId/warship', 'a', { chatId: 'c' }, { inviteeId: 'g' });
@@ -115,7 +116,12 @@ function startDuel() {
   const game = env.db.warshipGames[messageId];
   const fire = (userId, r, c) => env.call('/api/warships/:messageId/fire', userId, { messageId }, { r, c });
   const state = (userId) => env.call('GET /api/warships/:messageId/state', userId, { messageId });
-  return { ...env, created, accepted, messageId, game, fire, state };
+  const placeFleet = (userId, ships) => env.call('/api/warships/:messageId/place', userId, { messageId }, { ships });
+  if (place) {
+    assert.equal(placeFleet('a', randomFleet()).code, 200);
+    assert.equal(placeFleet('b', randomFleet()).code, 200);
+  }
+  return { ...env, created, accepted, messageId, game, fire, state, placeFleet };
 }
 
 test('дуэль: режим pvp в личке, приглашённый — собеседник', () => {
@@ -197,3 +203,104 @@ test('дуэль: сдача отдаёт победу сопернику', () =
   assert.match(res.data.content, /alice победил .* соперник сдался/);
   assert.equal(call('/api/warships/:messageId/surrender', 'a', { messageId }).code, 409);
 });
+
+test('дуэль: после accept — расстановка, стрелять нельзя, чужой флот не виден', () => {
+  const { randomFleet } = require('./warships');
+  const { game, fire, state, placeFleet, emitted } = startDuel({ place: false });
+  assert.equal(game.phase, 'placement');
+  assert.equal(game.fleets.a, null);
+  assert.equal(game.turn, null);
+  let view = state('a').data;
+  assert.equal(view.phase, 'placement');
+  assert.equal(view.myReady, false);
+  assert.equal(view.opponentReady, false);
+  assert.deepEqual(view.myShips, []);
+  assert.equal(view.myTurn, false);
+  assert.equal(fire('a', 0, 0).code, 409, 'до боя не стреляют');
+
+  // a расставился — ждёт b; b видит, что a готов, но не видит его клеток.
+  const fleetA = randomFleet();
+  assert.equal(placeFleet('a', fleetA).code, 200);
+  assert.equal(emitted.at(-1).ev, 'warship:update');
+  assert.equal(JSON.stringify(emitted.at(-1).data).includes('fleets'), false);
+  assert.equal(game.phase, 'placement');
+  assert.equal(placeFleet('a', randomFleet()).code, 409, 'перерасставить после «Готово» нельзя');
+  view = state('b').data;
+  assert.equal(view.opponentReady, true);
+  assert.equal(view.myReady, false);
+  assert.equal(JSON.stringify(view).includes(JSON.stringify(fleetA)), false);
+  assert.equal(state('a').data.myShips.length, 10);
+
+  // b расставился — бой.
+  assert.equal(placeFleet('b', randomFleet()).code, 200);
+  assert.equal(game.phase, 'battle');
+  assert.ok(['a', 'b'].includes(game.turn));
+  assert.ok(game.startedAt > 0);
+  assert.equal(state(game.turn).data.myTurn, true);
+  assert.equal(placeFleet('b', randomFleet()).code, 409, 'бой уже идёт');
+});
+
+test('дуэль: свой флот можно ставить и вертикально, и горизонтально', () => {
+  const { game, placeFleet } = startDuel({ place: false });
+  // Ручная раскладка: 4 и 3 вертикально, остальное горизонтально; клетки вразнобой.
+  const ships = [
+    [[3, 0], [0, 0], [2, 0], [1, 0]],   // 4, вертикально, перемешан
+    [[0, 2], [1, 2], [2, 2]],           // 3, вертикально
+    [[0, 4], [0, 5], [0, 6]],           // 3
+    [[2, 4], [2, 5]],                   // 2
+    [[0, 8], [0, 9]],                   // 2
+    [[4, 4], [4, 5]],                   // 2
+    [[9, 9]], [[9, 0]], [[6, 0]], [[9, 5]],
+  ];
+  assert.equal(placeFleet('a', ships).code, 200);
+  assert.deepEqual(game.fleets.a[0], [[0, 0], [1, 0], [2, 0], [3, 0]], 'клетки упорядочены');
+});
+
+test('normalizeFleet отклоняет нечестную расстановку', () => {
+  const { normalizeFleet, randomFleet } = require('./warships');
+  const ok = [
+    [[0, 0], [1, 0], [2, 0], [3, 0]],
+    [[0, 2], [1, 2], [2, 2]], [[0, 4], [0, 5], [0, 6]],
+    [[2, 4], [2, 5]], [[0, 8], [0, 9]], [[4, 4], [4, 5]],
+    [[9, 9]], [[9, 0]], [[6, 0]], [[9, 5]],
+  ];
+  assert.ok(normalizeFleet(ok));
+  assert.ok(normalizeFleet(randomFleet()));
+  const clone = () => JSON.parse(JSON.stringify(ok));
+  const bad = {
+    'не массив': 'x',
+    'не хватает корабля': ok.slice(1),
+    'лишний корабль': [...clone(), [[7, 7]]],
+    'не тот состав (два 4-палубных)': (() => { const f = clone(); f[1] = [[0, 2], [1, 2], [2, 2], [3, 2]]; return f; })(),
+    'изогнутый': (() => { const f = clone(); f[1] = [[0, 2], [1, 2], [1, 3]]; return f; })(),
+    'с разрывом': (() => { const f = clone(); f[2] = [[0, 4], [0, 5], [0, 7]]; return f; })(),
+    'за полем': (() => { const f = clone(); f[6] = [[10, 9]]; return f; })(),
+    'дробная клетка': (() => { const f = clone(); f[6] = [[1.5, 9]]; return f; })(),
+    'пересечение': (() => { const f = clone(); f[6] = [[0, 0]]; return f; })(),
+    'касание бортом': (() => { const f = clone(); f[6] = [[0, 1]]; return f; })(),
+    'касание углом': (() => { const f = clone(); f[6] = [[4, 1]]; return f; })(),
+  };
+  for (const [name, fleet] of Object.entries(bad)) assert.equal(normalizeFleet(fleet), null, name);
+});
+
+test('дуэль: сдача во время расстановки', () => {
+  const { call, messageId, card, fire } = startDuel({ place: false });
+  const res = call('/api/warships/:messageId/surrender', 'a', { messageId });
+  assert.equal(res.code, 200);
+  assert.equal(card(res.data).result.winnerId, 'b');
+  assert.equal(card(res.data).result.durationMs, 0);
+  assert.equal(fire('b', 0, 0).code, 409);
+});
+
+test('дуэль: старая игра без phase считается уже начатой', () => {
+  const { game, fire, state } = startDuel({ place: false });
+  // Так выглядели игры до ручной расстановки.
+  const { randomFleet } = require('./warships');
+  delete game.phase;
+  game.fleets = { a: randomFleet(), b: randomFleet() };
+  game.turn = 'a';
+  game.startedAt = Date.now();
+  assert.equal(state('a').data.phase, 'battle');
+  assert.equal(fire('a', 0, 0).code, 200);
+});
+

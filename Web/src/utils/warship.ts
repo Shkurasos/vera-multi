@@ -124,9 +124,15 @@ export function allSunk(ships: Ship[]): boolean {
   return ships.every((s) => s.sunk);
 }
 
-export function newGame(now: number = Date.now()): GameState {
+/**
+ * Новая партия против ИИ. playerShips — флот, который игрок расставил сам;
+ * без него (старое поведение) флот игрока ставится случайно.
+ */
+export function newGame(now: number = Date.now(), playerShips?: Ship[]): GameState {
   return {
-    playerShips: randomFleet(),
+    playerShips: playerShips
+      ? playerShips.map((s) => ({ cells: s.cells.map(([r, c]) => [r, c] as Cell), sunk: false }))
+      : randomFleet(),
     enemyShips: randomFleet(),
     playerShots: new Map(),
     enemyShots: new Map(),
@@ -248,7 +254,7 @@ export interface DuelViewLike {
   over: boolean;
   winnerId: string | null;
   myShotsCount: number;
-  startedAt: number;
+  startedAt: number | null;
 }
 
 /**
@@ -266,6 +272,54 @@ export function duelToGameState(view: DuelViewLike, myId: string): GameState {
     over: view.over,
     winner: view.over ? (view.winnerId === myId ? 'player' : 'enemy') : null,
     shotsByPlayer: view.myShotsCount,
-    startedAt: view.startedAt,
+    startedAt: view.startedAt ?? Date.now(),
   };
+}
+
+// ── Ручная расстановка флота ──
+
+/** Клетки корабля длины size с носом в (r, c): вправо (horizontal) или вниз. */
+export function shipCellsAt(r: number, c: number, size: number, horizontal: boolean): Cell[] {
+  const cells: Cell[] = [];
+  for (let i = 0; i < size; i++) cells.push(horizontal ? [r, c + i] : [r + i, c]);
+  return cells;
+}
+
+/** Можно ли поставить корабль: в пределах поля и не касается уже стоящих (даже углом). */
+export function canPlaceShip(ships: Ship[], cells: Cell[]): boolean {
+  if (!cells.length || !cells.every(([r, c]) => inBounds(r, c))) return false;
+  const blocked = blockedCells(ships);
+  return cells.every(([r, c]) => !blocked.has(key(r, c)));
+}
+
+/**
+ * Какие корабли ещё не поставлены — в порядке FLEET (крупные первыми).
+ * Сравниваем по составу: убираем из FLEET по одному размеру за каждый корабль.
+ */
+export function remainingSizes(ships: Ship[]): number[] {
+  const left = [...FLEET];
+  for (const ship of ships) {
+    const i = left.indexOf(ship.cells.length);
+    if (i >= 0) left.splice(i, 1);
+  }
+  return left;
+}
+
+/** Флот полный и честный: состав как в FLEET, корабли прямые, сплошные, не касаются. */
+export function isValidFleet(ships: Ship[]): boolean {
+  if (ships.length !== FLEET.length || remainingSizes(ships).length) return false;
+  for (let i = 0; i < ships.length; i++) {
+    const cells = [...ships[i].cells].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const horizontal = cells.every(([r]) => r === cells[0][0]);
+    const vertical = cells.every(([, c]) => c === cells[0][1]);
+    if (!horizontal && !vertical) return false;
+    for (let j = 1; j < cells.length; j++) {
+      const [pr, pc] = cells[j - 1];
+      const [r, c] = cells[j];
+      if (horizontal ? c !== pc + 1 : r !== pr + 1) return false;
+    }
+    const others = ships.filter((_, k) => k !== i);
+    if (!canPlaceShip(others, cells)) return false;
+  }
+  return true;
 }

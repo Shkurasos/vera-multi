@@ -93,7 +93,9 @@ test('свой пак сохраняется в теме и не сбрасыв�
 test('редактор картинки: шахматка под прозрачностью, обрезка и рисование', () => {
   const editor = read('src/components/IconImageEditor.tsx');
   assert.ok(editor.includes('CHECKER_BG'), 'серая шахматка');
-  assert.ok(editor.includes("'destination-out'"), 'ластик стирает до прозрачности');
+  // Штрихи (и ластик) рисует utils/iconDrawing.ts — см. iconDrawing.test.cjs.
+  assert.ok(editor.includes('renderIconStroke'), 'штрихи рисует общий модуль');
+  assert.ok(read('src/utils/iconDrawing.ts').includes("'destination-out'"), 'ластик стирает до прозрачности');
   assert.ok(editor.includes("touchAction: 'none'"), 'рисование пальцем не крутит страницу');
   assert.ok(editor.includes('passive: false'), 'колесо масштабирует фото, а не диалог');
   assert.ok(editor.includes("toDataURL('image/png')"), 'PNG сохраняет прозрачность');

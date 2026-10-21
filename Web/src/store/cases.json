@@ -402,7 +402,7 @@
       "street-neon",
       "street-crown"
     ],
-    "price": 100,
+    "price": 500,
     "rewards": [
       {
         "key": "street-tag",
@@ -509,183 +509,183 @@
   },
   {
     "id": "case-myths",
-    "name": "Мифы и легенды",
+    "name": "Древние реликвии",
     "color": "#d7a84a",
     "mark": "M18 82H82M26 82V38H42V82M58 82V38H74V82M18 38H82L50 18ZM35 30H65",
     "packs": [
-      "myths-icarus",
-      "myths-medusa",
-      "myths-minotaur",
-      "myths-fenrir",
-      "myths-odyssey",
-      "myths-valkyrie",
-      "myths-phoenix",
-      "myths-excalibur",
-      "myths-olympus",
-      "myths-grail"
+      "myths-crown",
+      "myths-shield",
+      "myths-scepter",
+      "myths-tome",
+      "myths-orb",
+      "myths-chalice",
+      "myths-key",
+      "myths-lantern",
+      "myths-ring",
+      "myths-staff"
     ],
-    "price": 20,
+    "price": 400,
     "rewards": [
       {
-        "key": "myths-icarus",
+        "key": "myths-crown",
         "weight": 100
       },
       {
-        "key": "myths-medusa",
+        "key": "myths-shield",
         "weight": 80
       },
       {
-        "key": "myths-minotaur",
+        "key": "myths-scepter",
         "weight": 64
       },
       {
-        "key": "myths-fenrir",
+        "key": "myths-tome",
         "weight": 51
       },
       {
-        "key": "myths-odyssey",
+        "key": "myths-orb",
         "weight": 41
       },
       {
-        "key": "myths-valkyrie",
+        "key": "myths-chalice",
         "weight": 100
       },
       {
-        "key": "myths-phoenix",
+        "key": "myths-key",
         "weight": 80
       },
       {
-        "key": "myths-excalibur",
+        "key": "myths-lantern",
         "weight": 64
       },
       {
-        "key": "myths-olympus",
+        "key": "myths-ring",
         "weight": 51
       },
       {
-        "key": "myths-grail",
+        "key": "myths-staff",
         "weight": 41
       }
     ]
   },
   {
     "id": "case-nightmares",
-    "name": "Кошмары",
-    "color": "#d96b8a",
-    "mark": "M50 18C28 18 15 32 15 50C15 68 28 82 50 82C72 82 85 68 85 50C85 32 72 18 50 18ZM50 32C39 32 32 40 32 50C32 60 39 68 50 68C61 68 68 60 68 50C68 40 61 32 50 32ZM42 45L46 49M58 45L54 49M42 57Q50 63 58 57",
+    "name": "Космос",
+    "color": "#6a5acd",
+    "mark": "M50 14L56 38L80 32L62 52L72 76L50 64L28 76L38 52L20 32L44 38ZM50 14V86M14 50H86",
     "packs": [
-      "nightmare-whisper",
-      "nightmare-mirror",
-      "nightmare-doll",
-      "nightmare-hall",
-      "nightmare-sleepwalker",
-      "nightmare-mouth",
-      "nightmare-eyes",
-      "nightmare-crow",
-      "nightmare-puppet",
-      "nightmare-abyss"
+      "nightmare-nova",
+      "nightmare-comet",
+      "nightmare-orbit",
+      "nightmare-nebula",
+      "nightmare-galaxy",
+      "nightmare-moon",
+      "nightmare-void",
+      "nightmare-aurora",
+      "nightmare-meteor",
+      "nightmare-supernova"
     ],
-    "price": 20,
+    "price": 500,
     "rewards": [
       {
-        "key": "nightmare-whisper",
+        "key": "nightmare-nova",
         "weight": 100
       },
       {
-        "key": "nightmare-mirror",
+        "key": "nightmare-comet",
         "weight": 80
       },
       {
-        "key": "nightmare-doll",
+        "key": "nightmare-orbit",
         "weight": 64
       },
       {
-        "key": "nightmare-hall",
+        "key": "nightmare-nebula",
         "weight": 51
       },
       {
-        "key": "nightmare-sleepwalker",
+        "key": "nightmare-galaxy",
         "weight": 41
       },
       {
-        "key": "nightmare-mouth",
+        "key": "nightmare-moon",
         "weight": 100
       },
       {
-        "key": "nightmare-eyes",
+        "key": "nightmare-void",
         "weight": 80
       },
       {
-        "key": "nightmare-crow",
+        "key": "nightmare-aurora",
         "weight": 64
       },
       {
-        "key": "nightmare-puppet",
+        "key": "nightmare-meteor",
         "weight": 51
       },
       {
-        "key": "nightmare-abyss",
+        "key": "nightmare-supernova",
         "weight": 41
       }
     ]
   },
   {
     "id": "case-ashes",
-    "name": "Пепел",
-    "color": "#e1845a",
-    "mark": "M50 14C36 31 28 39 30 54C31 64 39 70 50 72C61 70 69 64 70 54C72 39 64 31 50 14ZM50 42C43 50 41 56 46 62C48 64 52 64 54 62C59 56 57 50 50 42ZM22 80H78M30 86H70",
+    "name": "Кристаллы",
+    "color": "#9370db",
+    "mark": "M50 10L66 30L59 79L43 87L33 30ZM50 10L48 35L43 87M33 30L48 35L66 30",
     "packs": [
-      "ashes-ember",
-      "ashes-cinder",
-      "ashes-smoke",
-      "ashes-forge",
-      "ashes-phoenix",
-      "ashes-charcoal",
-      "ashes-ruins",
-      "ashes-volcano",
-      "ashes-scorch",
-      "ashes-afterglow"
+      "ashes-amethyst",
+      "ashes-emerald",
+      "ashes-ruby",
+      "ashes-sapphire",
+      "ashes-diamond",
+      "ashes-topaz",
+      "ashes-quartz",
+      "ashes-opal",
+      "ashes-obsidian",
+      "ashes-moonstone"
     ],
-    "price": 20,
+    "price": 300,
     "rewards": [
       {
-        "key": "ashes-ember",
+        "key": "ashes-amethyst",
         "weight": 100
       },
       {
-        "key": "ashes-cinder",
+        "key": "ashes-emerald",
         "weight": 80
       },
       {
-        "key": "ashes-smoke",
+        "key": "ashes-ruby",
         "weight": 64
       },
       {
-        "key": "ashes-forge",
+        "key": "ashes-sapphire",
         "weight": 51
       },
       {
-        "key": "ashes-phoenix",
+        "key": "ashes-diamond",
         "weight": 41
       },
       {
-        "key": "ashes-charcoal",
+        "key": "ashes-topaz",
         "weight": 100
       },
       {
-        "key": "ashes-ruins",
+        "key": "ashes-quartz",
         "weight": 80
       },
       {
-        "key": "ashes-volcano",
+        "key": "ashes-opal",
         "weight": 64
       },
       {
-        "key": "ashes-scorch",
+        "key": "ashes-obsidian",
         "weight": 51
       },
       {
-        "key": "ashes-afterglow",
+        "key": "ashes-moonstone",
         "weight": 41
       }
     ]
@@ -699,11 +699,26 @@
     "packs": [],
     "price": 1000,
     "rewards": [
-      { "key": "pet-cat", "weight": 2 },
-      { "key": "pet-fox", "weight": 100 },
-      { "key": "pet-bunny", "weight": 70 },
-      { "key": "pet-pixel", "weight": 10 },
-      { "key": "pet-phoenix", "weight": 35 }
+      {
+        "key": "pet-cat",
+        "weight": 2
+      },
+      {
+        "key": "pet-fox",
+        "weight": 100
+      },
+      {
+        "key": "pet-bunny",
+        "weight": 70
+      },
+      {
+        "key": "pet-pixel",
+        "weight": 10
+      },
+      {
+        "key": "pet-phoenix",
+        "weight": 35
+      }
     ]
   },
   {
@@ -715,11 +730,26 @@
     "packs": [],
     "price": 2000,
     "rewards": [
-      { "key": "pet-spider", "weight": 100 },
-      { "key": "pet-bear", "weight": 70 },
-      { "key": "pet-snake", "weight": 35 },
-      { "key": "pet-pumpkin", "weight": 10 },
-      { "key": "pet-jellyfish", "weight": 3 }
+      {
+        "key": "pet-spider",
+        "weight": 100
+      },
+      {
+        "key": "pet-bear",
+        "weight": 70
+      },
+      {
+        "key": "pet-snake",
+        "weight": 35
+      },
+      {
+        "key": "pet-pumpkin",
+        "weight": 10
+      },
+      {
+        "key": "pet-jellyfish",
+        "weight": 3
+      }
     ]
   },
   {
@@ -732,11 +762,26 @@
     "packs": [],
     "price": 2000,
     "rewards": [
-      { "key": "pet-panda", "weight": 100 },
-      { "key": "pet-hedgehog", "weight": 70 },
-      { "key": "pet-squirrel", "weight": 35 },
-      { "key": "pet-pixel-dragon", "weight": 10 },
-      { "key": "pet-bat", "weight": 3 }
+      {
+        "key": "pet-panda",
+        "weight": 100
+      },
+      {
+        "key": "pet-hedgehog",
+        "weight": 70
+      },
+      {
+        "key": "pet-squirrel",
+        "weight": 35
+      },
+      {
+        "key": "pet-pixel-dragon",
+        "weight": 10
+      },
+      {
+        "key": "pet-bat",
+        "weight": 3
+      }
     ]
   },
   {
@@ -748,56 +793,206 @@
     "packs": [],
     "price": 300,
     "rewards": [
-      { "key": "rx-neon-like", "weight": 100 },
-      { "key": "rx-neon-heart", "weight": 100 },
-      { "key": "rx-neon-fire", "weight": 20 },
-      { "key": "rx-neon-laugh", "weight": 100 },
-      { "key": "rx-neon-wow", "weight": 50 },
-      { "key": "rx-neon-sad", "weight": 50 },
-      { "key": "rx-neon-angry", "weight": 20 },
-      { "key": "rx-neon-party", "weight": 6 },
-      { "key": "rx-neon-dislike", "weight": 50 },
-      { "key": "rx-neon-star", "weight": 2 },
-      { "key": "rx-gold-like", "weight": 100 },
-      { "key": "rx-gold-heart", "weight": 100 },
-      { "key": "rx-gold-fire", "weight": 20 },
-      { "key": "rx-gold-laugh", "weight": 100 },
-      { "key": "rx-gold-wow", "weight": 50 },
-      { "key": "rx-gold-sad", "weight": 50 },
-      { "key": "rx-gold-angry", "weight": 20 },
-      { "key": "rx-gold-party", "weight": 6 },
-      { "key": "rx-gold-dislike", "weight": 50 },
-      { "key": "rx-gold-star", "weight": 2 },
-      { "key": "rx-pixel-like", "weight": 100 },
-      { "key": "rx-pixel-heart", "weight": 100 },
-      { "key": "rx-pixel-fire", "weight": 20 },
-      { "key": "rx-pixel-laugh", "weight": 100 },
-      { "key": "rx-pixel-wow", "weight": 50 },
-      { "key": "rx-pixel-sad", "weight": 50 },
-      { "key": "rx-pixel-angry", "weight": 20 },
-      { "key": "rx-pixel-party", "weight": 6 },
-      { "key": "rx-pixel-dislike", "weight": 50 },
-      { "key": "rx-pixel-star", "weight": 2 },
-      { "key": "rx-cosmos-like", "weight": 100 },
-      { "key": "rx-cosmos-heart", "weight": 100 },
-      { "key": "rx-cosmos-fire", "weight": 20 },
-      { "key": "rx-cosmos-laugh", "weight": 100 },
-      { "key": "rx-cosmos-wow", "weight": 50 },
-      { "key": "rx-cosmos-sad", "weight": 50 },
-      { "key": "rx-cosmos-angry", "weight": 20 },
-      { "key": "rx-cosmos-party", "weight": 6 },
-      { "key": "rx-cosmos-dislike", "weight": 50 },
-      { "key": "rx-cosmos-star", "weight": 2 },
-      { "key": "rx-candy-like", "weight": 100 },
-      { "key": "rx-candy-heart", "weight": 100 },
-      { "key": "rx-candy-fire", "weight": 20 },
-      { "key": "rx-candy-laugh", "weight": 100 },
-      { "key": "rx-candy-wow", "weight": 50 },
-      { "key": "rx-candy-sad", "weight": 50 },
-      { "key": "rx-candy-angry", "weight": 20 },
-      { "key": "rx-candy-party", "weight": 6 },
-      { "key": "rx-candy-dislike", "weight": 50 },
-      { "key": "rx-candy-star", "weight": 2 }
+      {
+        "key": "rx-neon-like",
+        "weight": 100
+      },
+      {
+        "key": "rx-neon-heart",
+        "weight": 100
+      },
+      {
+        "key": "rx-neon-fire",
+        "weight": 20
+      },
+      {
+        "key": "rx-neon-laugh",
+        "weight": 100
+      },
+      {
+        "key": "rx-neon-wow",
+        "weight": 50
+      },
+      {
+        "key": "rx-neon-sad",
+        "weight": 50
+      },
+      {
+        "key": "rx-neon-angry",
+        "weight": 20
+      },
+      {
+        "key": "rx-neon-party",
+        "weight": 6
+      },
+      {
+        "key": "rx-neon-dislike",
+        "weight": 50
+      },
+      {
+        "key": "rx-neon-star",
+        "weight": 2
+      },
+      {
+        "key": "rx-gold-like",
+        "weight": 100
+      },
+      {
+        "key": "rx-gold-heart",
+        "weight": 100
+      },
+      {
+        "key": "rx-gold-fire",
+        "weight": 20
+      },
+      {
+        "key": "rx-gold-laugh",
+        "weight": 100
+      },
+      {
+        "key": "rx-gold-wow",
+        "weight": 50
+      },
+      {
+        "key": "rx-gold-sad",
+        "weight": 50
+      },
+      {
+        "key": "rx-gold-angry",
+        "weight": 20
+      },
+      {
+        "key": "rx-gold-party",
+        "weight": 6
+      },
+      {
+        "key": "rx-gold-dislike",
+        "weight": 50
+      },
+      {
+        "key": "rx-gold-star",
+        "weight": 2
+      },
+      {
+        "key": "rx-pixel-like",
+        "weight": 100
+      },
+      {
+        "key": "rx-pixel-heart",
+        "weight": 100
+      },
+      {
+        "key": "rx-pixel-fire",
+        "weight": 20
+      },
+      {
+        "key": "rx-pixel-laugh",
+        "weight": 100
+      },
+      {
+        "key": "rx-pixel-wow",
+        "weight": 50
+      },
+      {
+        "key": "rx-pixel-sad",
+        "weight": 50
+      },
+      {
+        "key": "rx-pixel-angry",
+        "weight": 20
+      },
+      {
+        "key": "rx-pixel-party",
+        "weight": 6
+      },
+      {
+        "key": "rx-pixel-dislike",
+        "weight": 50
+      },
+      {
+        "key": "rx-pixel-star",
+        "weight": 2
+      },
+      {
+        "key": "rx-cosmos-like",
+        "weight": 100
+      },
+      {
+        "key": "rx-cosmos-heart",
+        "weight": 100
+      },
+      {
+        "key": "rx-cosmos-fire",
+        "weight": 20
+      },
+      {
+        "key": "rx-cosmos-laugh",
+        "weight": 100
+      },
+      {
+        "key": "rx-cosmos-wow",
+        "weight": 50
+      },
+      {
+        "key": "rx-cosmos-sad",
+        "weight": 50
+      },
+      {
+        "key": "rx-cosmos-angry",
+        "weight": 20
+      },
+      {
+        "key": "rx-cosmos-party",
+        "weight": 6
+      },
+      {
+        "key": "rx-cosmos-dislike",
+        "weight": 50
+      },
+      {
+        "key": "rx-cosmos-star",
+        "weight": 2
+      },
+      {
+        "key": "rx-candy-like",
+        "weight": 100
+      },
+      {
+        "key": "rx-candy-heart",
+        "weight": 100
+      },
+      {
+        "key": "rx-candy-fire",
+        "weight": 20
+      },
+      {
+        "key": "rx-candy-laugh",
+        "weight": 100
+      },
+      {
+        "key": "rx-candy-wow",
+        "weight": 50
+      },
+      {
+        "key": "rx-candy-sad",
+        "weight": 50
+      },
+      {
+        "key": "rx-candy-angry",
+        "weight": 20
+      },
+      {
+        "key": "rx-candy-party",
+        "weight": 6
+      },
+      {
+        "key": "rx-candy-dislike",
+        "weight": 50
+      },
+      {
+        "key": "rx-candy-star",
+        "weight": 2
+      }
     ]
   }
 ]

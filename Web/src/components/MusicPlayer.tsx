@@ -126,10 +126,12 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
   const isDesktop = useMediaQuery('(min-width: 701px)');
   const [queueFilter, setQueueFilter] = useState('');
   const [sideResizing, setSideResizing] = useState(false);
-  // Боковой режим: плеер становится панелью стандартной ширины,
-  // которую можно двигать точно так же, как панель чатов.
-  const showSidePanel = isDesktop && (playerPos === 'left' || playerPos === 'right');
-  const embedded = showSidePanel && playerPos === 'right';
+  // Боковые режимы: плеер становится панелью стандартной ширины.
+  // «Слева» и «Справа» — отдельная фиксированная панель у края окна, её
+  // можно двигать точно так же, как панель чатов. «В инфопанели» — та же
+  // панель, встроенная в низ инфопанели чата (портал в sideHost).
+  const showSidePanel = isDesktop && (playerPos === 'left' || playerPos === 'right' || playerPos === 'info');
+  const embedded = showSidePanel && playerPos === 'info';
   const renderSide = (node: React.ReactNode) => embedded
     ? (sideHost ? createPortal(node, sideHost) : null)
     : node;
@@ -585,7 +587,7 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
               onSystemAudioReactiveChange={setSystemAudioReactive}
             />}
           </Box>}
-          {rightTab === 'track' && <Box role="tabpanel" id="music-player-panel-track" aria-labelledby="music-player-tab-track" sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', gap: 1.5, p: 1.5, overflow: 'auto' }}>
+          {rightTab === 'track' && <Box role="tabpanel" id="music-player-panel-track" aria-labelledby="music-player-tab-track" sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'flex-start', gap: 1.5, p: 1.5, overflow: 'auto' }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Box sx={{ width: 52, height: 52, borderRadius: 1.5, bgcolor: theme.bgInput, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
                 {currentTrack.coverUrl ? <img src={currentTrack.coverUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <MusicNote sx={{ color: theme.accent }} />}
@@ -595,19 +597,34 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
                 <Typography sx={{ color: theme.textSec, fontSize: 12 }} noWrap>{currentTrack.artist || 'Неизвестный'}</Typography>
               </Box>
             </Box>
-            <Slider size="small" min={0} max={duration || 1} value={localProgress} onChange={handleSeek} sx={{ color: theme.accent }} />
-            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 0.5 }}>
+            {/* Прогресс с таймингами — как на скрине. */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography sx={{ fontSize: 11, color: theme.textSec, minWidth: 32, textAlign: 'right' }}>{fmt(localProgress)}</Typography>
+              <Slider size="small" min={0} max={duration || 1} value={localProgress} onChange={handleSeek}
+                sx={{ color: theme.accent, flex: 1,
+                  '& .MuiSlider-thumb': { width: 10, height: 10 },
+                  '& .MuiSlider-track': { bgcolor: theme.accent },
+                  '& .MuiSlider-rail': { bgcolor: theme.border } }} />
+              <Typography sx={{ fontSize: 11, color: theme.textSec, minWidth: 32 }}>{fmt(duration)}</Typography>
+            </Box>
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 1 }}>
               <IconButton size="small" onClick={toggleShuffle} sx={{ color: shuffle ? theme.accent : theme.textSec }}><Shuffle /></IconButton>
               <IconButton onClick={prev} sx={{ color: theme.textSec }}><SkipPrevious /></IconButton>
-              <IconButton onClick={togglePlay} sx={{ bgcolor: theme.accent, color: '#fff', '&:hover': { bgcolor: theme.accent } }}>{isPlaying ? <Pause /> : <GraphicEq />}</IconButton>
+              <IconButton onClick={togglePlay} sx={{ bgcolor: theme.accent, color: '#fff', width: 44, height: 44, borderRadius: 2.5, '&:hover': { bgcolor: theme.accent + 'CC' } }}>{isPlaying ? <Pause sx={{ fontSize: 22 }} /> : <GraphicEq sx={{ fontSize: 22 }} />}</IconButton>
               <IconButton onClick={next} sx={{ color: theme.textSec }}><SkipNext /></IconButton>
               <IconButton size="small" onClick={toggleRepeat} sx={{ color: repeat !== 'none' ? theme.accent : theme.textSec }}>{repeat === 'one' ? <RepeatOne /> : <Repeat />}</IconButton>
             </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              {volume === 0 ? <VolumeOff sx={{ color: theme.textSec }} /> : <VolumeUp sx={{ color: theme.textSec }} />}
-              <Slider size="small" min={0} max={1} step={0.01} value={volume} onChange={(_, v) => setVolume((Array.isArray(v) ? v[0] : v) as number)} sx={{ color: theme.accent }} />
+              <IconButton size="small" onClick={() => setVolume(volume === 0 ? 0.8 : 0)} sx={{ color: theme.textSec, p: 0.5 }}>
+                {volume === 0 ? <VolumeOff sx={{ fontSize: 18 }} /> : <VolumeUp sx={{ fontSize: 18 }} />}
+              </IconButton>
+              <Slider size="small" min={0} max={1} step={0.01} value={volume} onChange={(_, v) => setVolume((Array.isArray(v) ? v[0] : v) as number)}
+                sx={{ color: theme.accent, flex: 1,
+                  '& .MuiSlider-thumb': { width: 10, height: 10 },
+                  '& .MuiSlider-track': { bgcolor: theme.accent },
+                  '& .MuiSlider-rail': { bgcolor: theme.border } }} />
             </Box>
-            <Button size="small" startIcon={<QueueMusic />} onClick={(e) => setQueueAnchor(e.currentTarget)} sx={{ color: theme.textSec, textTransform: 'none' }}>Очередь ({queue.length})</Button>
+            <Button size="small" fullWidth startIcon={<QueueMusic />} onClick={(e) => setQueueAnchor(e.currentTarget)} sx={{ color: theme.textSec, textTransform: 'none', justifyContent: 'center' }}>Очередь ({queue.length})</Button>
           </Box>}
         </Box>
       )}

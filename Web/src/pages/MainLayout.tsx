@@ -192,8 +192,8 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
   // ����������� ����� ������ �������� ������� ����.
   let bottomPad = '0px';
   let topPad = '0px';
-  const sidePlayer = !isMobile && playerPos === 'left';
-  const effectiveVerticalPos = isMobile && (playerPos === 'left' || playerPos === 'right')
+  const sidePlayer = !isMobile && (playerPos === 'left' || playerPos === 'right');
+  const effectiveVerticalPos = isMobile && (playerPos === 'left' || playerPos === 'right' || playerPos === 'info')
     ? 'bottom'
     : playerPos;
   const maxSidePlayerWidth = Math.max(PLAYER_SIDE_MIN, Math.floor(window.innerWidth / 2));

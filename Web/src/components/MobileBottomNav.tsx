@@ -1,4 +1,4 @@
-import React, { useEffect, useState, lazy, Suspense } from 'react';
+import React, { useEffect, useRef, useState, lazy, Suspense } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Box, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, Button,
@@ -12,17 +12,39 @@ import {
 } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
 import { useSidebarViewStore } from '../store/sidebarViewStore';
+import { useMobileNavStore } from '../store/mobileNavStore';
+import type { NavKey } from '../utils/mobileNav';
+import { UI_NAV_RADIUS, UI_NAV_INNER_RADIUS, NAV_HEIGHT_LIMITS, navPanelBackground, useUiPrefsStore } from '../store/uiPrefsStore';
 import MusicLibrary from './MusicLibrary';
 
 const ThemeEditor = lazy(() => import('./ThemeEditor').then(m => ({ default: m.ThemeEditor })));
 
-const HEIGHT = 70;
-export const MOBILE_NAV = { HEIGHT };
+// Высота панели — ползунок «Высота нижней панели» (uiPrefsStore.navHeight).
+export const MOBILE_NAV = { HEIGHT: NAV_HEIGHT_LIMITS.def };
+/** Ниже этой высоты панели подписи под иконками не влезают — остаются иконки. */
+const LABELS_MIN_HEIGHT = 60;
+
+/** Сколько держать палец, чтобы кнопку можно было двигать. */
+const LONG_PRESS_MS = 450;
+/** Сдвиг пальца до срабатывания, после которого это уже не удержание. */
+const MOVE_TOLERANCE_PX = 10;
+
+interface PressState {
+  key: NavKey;
+  pointerId: number;
+  x: number;
+  y: number;
+  timer: number;
+  dragging: boolean;
+}
 
 export default function MobileBottomNav() {
   const navigate = useNavigate();
   const location = useLocation();
   const { theme } = useThemeStore();
+  const navOpacity = useUiPrefsStore((s) => s.navOpacity);
+  const navHeight = useUiPrefsStore((s) => s.navHeight);
+  const showLabels = navHeight >= LABELS_MIN_HEIGHT;
   // Режим архива общий с сайдбаром: кнопка «Архив» переключает сам список чатов,
   // поэтому и панель, и список должны знать одно и то же состояние.
   const archiveView = useSidebarViewStore((s) => s.archiveView);
@@ -30,6 +52,18 @@ export default function MobileBottomNav() {
   const [musicOpen, setMusicOpen] = useState(false);
   const [themeEditorOpen, setThemeEditorOpen] = useState(false);
   const [hiding, setHiding] = useState(false);
+
+  // Порядок кнопок задаёт пользователь: зажал кнопку и повёл пальцем.
+  const order = useMobileNavStore((s) => s.order);
+  const moveNav = useMobileNavStore((s) => s.move);
+  const [dragKey, setDragKey] = useState<NavKey | null>(null);
+  // Пока кнопку ведут, DOM-порядок заморожен, а места меняются CSS-свойством
+  // `order`. Если React переставит узлы прямо под пальцем, браузер может
+  // потерять касание (pointercancel), и перетаскивание оборвётся.
+  const [frozenOrder, setFrozenOrder] = useState<NavKey[] | null>(null);
+  const press = useRef<PressState | null>(null);
+  const suppressClick = useRef(false);
+  const itemEls = useRef<Partial<Record<NavKey, HTMLElement | null>>>({});
 
   const activePath = location.pathname;
   const isChatSection = activePath === '/';
@@ -61,6 +95,11 @@ export default function MobileBottomNav() {
     };
   }, []);
 
+  // Таймер удержания не должен сработать после размонтирования.
+  useEffect(() => () => {
+    if (press.current) window.clearTimeout(press.current.timer);
+  }, []);
+
   // В открытом чате нижняя навигация не должна перекрывать переписку.
   if (activePath.startsWith('/chat/')) return null;
 
@@ -84,32 +123,113 @@ export default function MobileBottomNav() {
   // случаях она обязана быть видимой.
   const navHidden = hiding || musicOpen || themeEditorOpen;
 
-  const item = (
-    active: boolean,
-    label: string,
-    onClick: () => void,
-    icon: React.ReactNode,
-    badge?: React.ReactNode,
-  ) => (
-    <Box sx={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'center', position: 'relative' }}>
-      <IconButton
-        aria-label={label}
-        onClick={onClick}
+  const items: Record<NavKey, { active: boolean; label: string; onClick: () => void; icon: React.ReactNode }> = {
+    editor: { active: themeEditorOpen, label: 'Редактор', onClick: openThemeEditor, icon: <Palette /> },
+    profile: { active: isActive('/profile'), label: 'Профиль', onClick: openProfile, icon: <AccountCircle /> },
+    music: { active: musicOpen, label: 'Музыка', onClick: openMusic, icon: <LibraryMusic /> },
+    archive: { active: archiveView, label: 'Архив', onClick: toggleArchiveView, icon: <Archive /> },
+  };
+
+  const endPress = () => {
+    const p = press.current;
+    if (!p) return;
+    window.clearTimeout(p.timer);
+    // После перетаскивания браузер всё равно пришлёт click — его надо съесть,
+    // иначе кнопка ещё и откроет свой раздел.
+    if (p.dragging) suppressClick.current = true;
+    press.current = null;
+    setDragKey(null);
+    setFrozenOrder(null);
+  };
+
+  const onPointerDown = (key: NavKey) => (e: React.PointerEvent<HTMLElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (press.current) window.clearTimeout(press.current.timer);
+    suppressClick.current = false;
+    const timer = window.setTimeout(() => {
+      if (!press.current) return;
+      press.current.dragging = true;
+      setFrozenOrder(useMobileNavStore.getState().order);
+      setDragKey(key);
+      try { navigator.vibrate?.(15); } catch { /* вибрации может не быть */ }
+    }, LONG_PRESS_MS);
+    press.current = { key, pointerId: e.pointerId, x: e.clientX, y: e.clientY, timer, dragging: false };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* старые браузеры */ }
+  };
+
+  const onPointerMove = (e: React.PointerEvent<HTMLElement>) => {
+    const p = press.current;
+    if (!p || p.pointerId !== e.pointerId) return;
+    if (!p.dragging) {
+      // Палец уехал до срабатывания удержания — это не long-press.
+      if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > MOVE_TOLERANCE_PX) {
+        window.clearTimeout(p.timer);
+        press.current = null;
+      }
+      return;
+    }
+    // Ищем кнопку, над которой сейчас палец (по горизонтали: панель в одну строку).
+    for (const [k, el] of Object.entries(itemEls.current) as [NavKey, HTMLElement | null][]) {
+      if (!el || k === p.key) continue;
+      const r = el.getBoundingClientRect();
+      if (e.clientX >= r.left && e.clientX <= r.right) {
+        moveNav(p.key, k);
+        break;
+      }
+    }
+  };
+
+  const onItemClick = (onClick: () => void) => () => {
+    if (suppressClick.current) { suppressClick.current = false; return; }
+    onClick();
+  };
+
+  const renderItem = (key: NavKey) => {
+    const { active, label, onClick, icon } = items[key];
+    const dragging = dragKey === key;
+    return (
+      <Box
+        key={key}
+        ref={(el: HTMLElement | null) => { itemEls.current[key] = el; }}
         sx={{
-          width: '100%', maxWidth: 76, height: 58, borderRadius: 2.5,
-          display: 'flex', flexDirection: 'column', gap: 0.25,
-          color: active ? theme.accent : theme.textSec,
-          bgcolor: active ? `${theme.accent}20` : 'transparent',
-          '&:hover': { bgcolor: `${theme.accent}18` },
-          '& .MuiSvgIcon-root': { fontSize: 25 },
+          flex: 1, minWidth: 0, display: 'flex', justifyContent: 'center', position: 'relative',
+          order: order.indexOf(key),
+          zIndex: dragging ? 1 : 0,
         }}
       >
-        {icon}
-        <Box component="span" sx={{ fontSize: 10, lineHeight: 1, whiteSpace: 'nowrap' }}>{label}</Box>
-      </IconButton>
-      {badge}
-    </Box>
-  );
+        <IconButton
+          aria-label={label}
+          aria-grabbed={dragging || undefined}
+          onClick={onItemClick(onClick)}
+          onPointerDown={onPointerDown(key)}
+          onPointerMove={onPointerMove}
+          onPointerUp={endPress}
+          onPointerCancel={endPress}
+          onLostPointerCapture={endPress}
+          // Удержание на Android открывает контекстное меню, на iOS — выноску.
+          onContextMenu={(e) => e.preventDefault()}
+          sx={{
+            // Кнопка = высота панели минус py 0.75 (по 6px): при 70 — прежние 58.
+            width: '100%', maxWidth: 76, height: navHeight - 12, borderRadius: UI_NAV_INNER_RADIUS,
+            display: 'flex', flexDirection: 'column', gap: 0.25,
+            color: active || dragging ? theme.accent : theme.textSec,
+            bgcolor: dragging ? `${theme.accent}33` : active ? `${theme.accent}20` : 'transparent',
+            '&:hover': { bgcolor: `${theme.accent}18` },
+            '& .MuiSvgIcon-root': { fontSize: 25 },
+            // Без этого браузер начнёт прокрутку и оборвёт перетаскивание.
+            touchAction: 'none',
+            userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
+            transform: dragging ? 'scale(1.12)' : 'scale(1)',
+            boxShadow: dragging ? `0 6px 18px rgba(0,0,0,.35), 0 0 0 1px ${theme.accent}66` : 'none',
+            transition: 'transform 150ms ease, box-shadow 150ms ease, background-color 150ms ease',
+          }}
+        >
+          {icon}
+          {showLabels && <Box component="span" sx={{ fontSize: 10, lineHeight: 1, whiteSpace: 'nowrap' }}>{label}</Box>}
+        </IconButton>
+      </Box>
+    );
+  };
 
   if (!isChatSection) {
     return (
@@ -138,11 +258,11 @@ export default function MobileBottomNav() {
           display: { xs: 'flex', md: 'none' },
           position: 'fixed', left: 8, right: 8,
           bottom: 'max(8px, env(safe-area-inset-bottom))',
-          minHeight: HEIGHT, px: 1, py: 0.75,
+          minHeight: navHeight, px: 1, py: 0.75, boxSizing: 'border-box',
           zIndex: 1400, alignItems: 'center', justifyContent: 'space-around', gap: 0.5,
-          borderRadius: 3,
-          bgcolor: theme.bgSidebar,
-          backgroundImage: `linear-gradient(180deg, ${theme.bgSidebar}f5, ${theme.bg}f2)`,
+          // Ползунок «Скругление нижней панели» (стиль интерфейса).
+          borderRadius: UI_NAV_RADIUS,
+          ...navPanelBackground(theme.bgSidebar, theme.bg, navOpacity),
           backdropFilter: 'blur(22px) saturate(1.35)',
           border: `1px solid ${theme.border}`,
           boxShadow: '0 -6px 26px rgba(0,0,0,.28), 0 8px 24px rgba(0,0,0,.24)',
@@ -152,13 +272,10 @@ export default function MobileBottomNav() {
           transition: 'transform 220ms ease, opacity 220ms ease',
         }}
       >
-        {/* Порядок задан пользователем: 1 — редактор, 2 — профиль, 3 — музыка,
-            4 — архив. Пункта «Чаты» нет: панель показывается только на списке
-            чатов, поэтому отдельная кнопка «в чаты» была лишней. */}
-        {item(themeEditorOpen, 'Редактор', openThemeEditor, <Palette />)}
-        {item(isActive('/profile'), 'Профиль', openProfile, <AccountCircle />)}
-        {item(musicOpen, 'Музыка', openMusic, <LibraryMusic />)}
-        {item(archiveView, 'Архив', toggleArchiveView, <Archive />)}
+        {/* По умолчанию: 1 — редактор, 2 — профиль, 3 — музыка, 4 — архив.
+            Порядок меняется удержанием кнопки и сохраняется (mobileNavStore).
+            Пункта «Чаты» нет: панель показывается только на списке чатов. */}
+        {(frozenOrder ?? order).map(renderItem)}
       </Box>
 
       <Dialog open={musicOpen} onClose={closeMusic} fullScreen

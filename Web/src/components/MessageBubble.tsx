@@ -41,6 +41,8 @@ import { messagesApi, voiceApi } from '../services/api';
 import PlaylistMessageCard, { VeraPlaylistPayload } from './PlaylistMessageCard';
 import GroupInviteCard from './GroupInviteCard';
 import WarshipGameCard from './WarshipGameCard';
+import TicTacToeCard from './TicTacToeCard';
+import CallSummaryCard from './CallSummaryCard';
 import ContextMenu from './ContextMenu';
 import ChannelComments from './ChannelComments';
 import { hasGroupRight } from '../services/groupPermissions';
@@ -353,7 +355,8 @@ interface ImageViewerProps {
   onContextMenu?: (e: React.MouseEvent, src: string) => void;
 }
 
-function ImageViewer({ src, border, tile = false, fill = false, gallery, index = 0, onContextMenu }: ImageViewerProps) {
+/** Просмотр картинки: клик открывает полноэкранный лайтбокс (зум, поворот, листание галереи). */
+export function ImageViewer({ src, border, tile = false, fill = false, gallery, index = 0, onContextMenu }: ImageViewerProps) {
   const images = gallery && gallery.length ? gallery : [src];
   const safeIndex = Math.min(Math.max(index, 0), images.length - 1);
   const [idx, setIdx] = useState(safeIndex);
@@ -1725,6 +1728,10 @@ function MessageBubble({
                     <GroupInviteCard attachment={attachment} />
                   ) : attachment.mimeType === 'application/x-vera-warship' ? (
                     <WarshipGameCard attachment={attachment} messageId={message.id} />
+                  ) : attachment.mimeType === 'application/x-vera-tictactoe' ? (
+                    <TicTacToeCard attachment={attachment} messageId={message.id} />
+                  ) : attachment.mimeType === 'application/x-vera-call' ? (
+                    <CallSummaryCard attachment={attachment} />
                   ) : (
                     <DocumentPreview url={attachmentUrl} fileName={attachment.fileName} mimeType={attachment.mimeType} accent={theme.accent} />
                   )}

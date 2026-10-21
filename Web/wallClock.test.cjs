@@ -24,8 +24,8 @@ const clock = read('src/components/WallClockOverlay.tsx');
 test('wallClock объявлен во внешнем виде стора настроек', () => {
   assert.ok(settings.includes('export type WallClockPos'), 'тип положения объявлен');
   assert.ok(
-    /export type WallClockPos = 'center' \| 'top' \| 'bottom';/.test(settings),
-    'положение — по середине / сверху / снизу',
+    /export type WallClockPos =\s*\| 'center' \| 'top' \| 'bottom'\s*\| 'topLeft' \| 'topRight' \| 'middleLeft' \| 'middleRight' \| 'bottomLeft' \| 'bottomRight';/.test(settings),
+    'положение — по середине / сверху / снизу и шесть положений у краёв',
   );
   assert.ok(settings.includes('wallClockEnabled: boolean'), 'тумблер объявлен');
   assert.ok(settings.includes('wallClockPos: WallClockPos'), 'поле положения объявлено');
@@ -64,7 +64,7 @@ test('снимок темы забирает часы, а применение �
   );
   const applyBody = themeStore.slice(themeStore.indexOf('export function applyThemeSettings'));
   assert.ok(applyBody.includes("us.set('wallClockEnabled', s.appearance.wallClock.enabled)"), 'включение применяется');
-  assert.ok(applyBody.includes("us.set('wallClockPos', s.appearance.wallClock.pos)"), 'положение применяется');
+  assert.ok(applyBody.includes("us.set('wallClockPos', normalizeWallClockPos(s.appearance.wallClock.pos))"), 'положение применяется');
 });
 
 test('старые снимки без wallClock не гасят выбор пользователя', () => {
@@ -89,7 +89,7 @@ test('во внешнем виде есть тумблер обоев с кал�
 
 test('во внешнем виде настраивается расположение на обоях', () => {
   assert.ok(panels.includes('Расположение на обоях'), 'заголовок настройки расположения');
-  for (const pos of ['center', 'top', 'bottom']) {
+  for (const pos of ['center', 'top', 'bottom', 'topLeft', 'topRight', 'middleLeft', 'middleRight', 'bottomLeft', 'bottomRight']) {
     assert.ok(panels.includes(`value="${pos}"`), `есть вариант ${pos}`);
   }
   assert.ok(panels.includes("s.set('wallClockPos', v)"), 'выбор положения пишется в стор');
@@ -126,8 +126,8 @@ test('расположение из настройки применяется к
   // Положение задаётся прямо свойствами top/bottom: у «сверху» должен быть
   // top, у «снизу» — bottom. Именно их и путают между собой, поэтому проверяем
   // каждое ветку отдельно, а не «вообще есть отступ».
-  const topBranch = clock.slice(clock.indexOf("if (pos === 'top')"), clock.indexOf("if (pos === 'bottom')"));
-  const bottomBranch = clock.slice(clock.indexOf("if (pos === 'bottom')"), clock.indexOf('return { ...base, top: 0, bottom: 0'));
+  const topBranch = clock.slice(clock.indexOf("if (v === 'top')"), clock.indexOf("if (v === 'bottom')"));
+  const bottomBranch = clock.slice(clock.indexOf("if (v === 'bottom')"), clock.indexOf('return { ...base, top: 0, bottom: 0'));
   assert.match(topBranch, /top: \{ xs: 76, md: 88 \}/, 'сверху — отступ сверху');
   assert.ok(!/bottom:/.test(topBranch), 'сверху нет bottom, иначе блок растянется');
   assert.match(bottomBranch, /bottom: \{ xs: 104, md: 92 \}/, 'снизу — отступ снизу');
@@ -400,4 +400,78 @@ test('часы по середине остаются по середине', ()
   assert.ok(wrapper.includes('alignItems'), 'обёртка центрирует по вертикали');
   assert.ok(wrapper.includes('justifyContent'), 'обёртка центрирует по горизонтали');
   assert.ok(/width: 'fit-content'/.test(clock), 'измеряемый блок подстраивается под содержимое');
+});
+
+// ── Положения у краёв и плашка даты в ленте ──────────────────────────────────
+
+/**
+ * Достаём из исходника чистые функции и выполняем их: так проверяется
+ * поведение, а не только наличие строк. TS-аннотации там простые — их
+ * достаточно вырезать регулярками.
+ */
+function loadAnchor() {
+  const start = settings.indexOf('export const WALL_CLOCK_POSITIONS');
+  const end = settings.indexOf('export type ChatDateAlign');
+  const src = settings.slice(start, end)
+    .replace(/\/\*\*[^]*?\*\//g, '')
+    .replace(/export /g, '')
+    .replace(/: readonly WallClockPos\[\]/g, '')
+    .replace(/\(v: unknown\): WallClockPos/g, '(v)')
+    .replace(/\(pos: WallClockPos\): \{[^}]*\} \{/g, '(pos) {')
+    .replace(/ as WallClockPos/g, '');
+  return new Function(`${src}; return { normalizeWallClockPos, wallClockAnchor, WALL_CLOCK_POSITIONS };`)();
+}
+
+test('девять положений часов раскладываются на две оси', () => {
+  const { wallClockAnchor, WALL_CLOCK_POSITIONS } = loadAnchor();
+  assert.equal(WALL_CLOCK_POSITIONS.length, 9);
+  const expected = {
+    center: ['middle', 'center'], top: ['top', 'center'], bottom: ['bottom', 'center'],
+    topLeft: ['top', 'left'], topRight: ['top', 'right'],
+    middleLeft: ['middle', 'left'], middleRight: ['middle', 'right'],
+    bottomLeft: ['bottom', 'left'], bottomRight: ['bottom', 'right'],
+  };
+  for (const [pos, [v, h]] of Object.entries(expected)) {
+    assert.deepStrictEqual(wallClockAnchor(pos), { v, h }, pos);
+  }
+});
+
+test('неизвестное положение из старой темы — по середине', () => {
+  const { normalizeWallClockPos, wallClockAnchor } = loadAnchor();
+  for (const bad of [undefined, null, '', 'left', 'middle', 42]) {
+    assert.equal(normalizeWallClockPos(bad), 'center', String(bad));
+  }
+  assert.deepStrictEqual(wallClockAnchor('garbage'), { v: 'middle', h: 'center' });
+  assert.ok(clock.includes('normalizeWallClockPos(useUserSettingsStore((s) => s.wallClockPos))'), 'слой нормализует значение');
+  assert.ok(
+    themeStore.includes("us.set('wallClockPos', normalizeWallClockPos(s.appearance.wallClock.pos))"),
+    'применение темы нормализует',
+  );
+});
+
+test('горизонталь положения задаётся justifyContent и перекрывает центр обёртки', () => {
+  const body = clock.slice(clock.indexOf('function placeStyles'), clock.indexOf('export default function'));
+  assert.match(body, /h === 'left' \? 'flex-start' : h === 'right' \? 'flex-end' : 'center'/);
+  assert.match(body, /textAlign, justifyContent/, 'justifyContent уходит в стили обёртки');
+  // В обёртке спред placeStyles идёт ПОСЛЕ justifyContent: 'center', иначе
+  // «слева/справа» перетёр бы центр. Проверяем обе обёртки: цифры и HUD.
+  const spreads = clock.split('...placeStyles(pos)').length - 1;
+  assert.equal(spreads, 2, 'обе обёртки берут положение из placeStyles');
+  for (const m of clock.matchAll(/justifyContent: 'center',\s*\.\.\.placeStyles\(pos\)/g)) assert.ok(m);
+  assert.equal([...clock.matchAll(/justifyContent: 'center',\s*\.\.\.placeStyles\(pos\)/g)].length, 2, 'спред после центра в обеих');
+});
+
+test('плашка даты в ленте выравнивается по настройке', () => {
+  assert.ok(/export type ChatDateAlign = 'left' \| 'center' \| 'right';/.test(settings), 'тип объявлен');
+  assert.ok(settings.includes('chatDateAlign: ChatDateAlign'), 'поле объявлено');
+  assert.ok(/chatDateAlign: 'center',/.test(settings), 'по умолчанию по центру');
+  const syncBlock = settings.slice(settings.indexOf('const SYNC_KEYS'));
+  assert.ok(syncBlock.includes("'chatDateAlign'"), 'едет между устройствами');
+  assert.ok(
+    chat.includes("chatDateAlign === 'left' ? 'flex-start' : chatDateAlign === 'right' ? 'flex-end' : 'center'"),
+    'неизвестное значение — по центру',
+  );
+  assert.ok(chat.includes('justifyContent={dateJustify}'), 'применено к плашке даты');
+  assert.ok(panels.includes("s.set('chatDateAlign', v as ChatDateAlign)"), 'переключатель в настройках');
+  assert.ok(panels.includes("[['left', 'Слева'], ['center', 'По центру'], ['right', 'Справа']]"), 'подписи');
 });

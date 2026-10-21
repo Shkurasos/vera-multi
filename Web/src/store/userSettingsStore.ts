@@ -18,13 +18,33 @@ export type AutoDeleteMonths = 0 | 1 | 3 | 6 | 12; // 0 = отключено
 /* ─── Layout / раскладка интерфейса ─────────────────────────────────── */
 export type SidePos = 'left' | 'right' | 'top' | 'bottom';
 export type VertPos = 'top' | 'bottom';
-/** Позиция развёрнутого плеера: снизу/сверху лентой или правой панелью. */
-export type PlayerPos = VertPos | 'left' | 'right';
+/** Позиция развёрнутого плеера: снизу/сверху лентой, правой панелью или прямо в инфопанели чата. */
+export type PlayerPos = VertPos | 'left' | 'right' | 'info';
 export type Density = 'compact' | 'cozy' | 'roomy';
+/** Вид нижней панели сайдбара на ПК: строка иконок или плашка как на телефоне. */
+export type DesktopNavStyle = 'compact' | 'phone';
 /** Сторона сообщений в чате: auto — свои справа/чужие слева (как обычно), left/right — все с одной стороны. */
 export type MessageAlign = 'auto' | 'left' | 'right';
 /** Положение календаря и часов на обоях чата (внешний вид темы). */
-export type WallClockPos = 'center' | 'top' | 'bottom';
+export type WallClockPos =
+  | 'center' | 'top' | 'bottom'
+  | 'topLeft' | 'topRight' | 'middleLeft' | 'middleRight' | 'bottomLeft' | 'bottomRight';
+export const WALL_CLOCK_POSITIONS: readonly WallClockPos[] = [
+  'center', 'top', 'bottom', 'topLeft', 'topRight', 'middleLeft', 'middleRight', 'bottomLeft', 'bottomRight',
+];
+/** Неизвестное значение (старая тема, чужой снимок) — по середине, а не пустое место. */
+export function normalizeWallClockPos(v: unknown): WallClockPos {
+  return WALL_CLOCK_POSITIONS.includes(v as WallClockPos) ? (v as WallClockPos) : 'center';
+}
+/** Положение раскладывается на две оси: по вертикали и по горизонтали. */
+export function wallClockAnchor(pos: WallClockPos): { v: 'top' | 'middle' | 'bottom'; h: 'left' | 'center' | 'right' } {
+  const p = normalizeWallClockPos(pos);
+  const v = p.startsWith('top') ? 'top' : p.startsWith('bottom') ? 'bottom' : 'middle';
+  const h = p.endsWith('Left') ? 'left' : p.endsWith('Right') ? 'right' : 'center';
+  return { v, h };
+}
+/** Где в ленте стоит плашка даты («Сегодня», «10 февраля»). */
+export type ChatDateAlign = 'left' | 'center' | 'right';
 /** Где стоит дата относительно времени: над ним, под ним, слева или справа. */
 export type WallClockDatePos = 'above' | 'below' | 'left' | 'right';
 /**
@@ -36,12 +56,33 @@ export type WallClockDatePos = 'above' | 'below' | 'left' | 'right';
 export type WallClockSecondsPos =
   | 'above' | 'below' | 'left' | 'right'
   | 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight';
+/**
+ * Чем рисуются часы на обоях: встроенные цифры, свой HTML-HUD или страница по
+ * ссылке. Свой HUD живёт в sandbox-iframe без доступа к приложению.
+ */
+export type WallClockHudMode = 'builtin' | 'html' | 'url';
+/** Лимит своего HTML: весь снимок настроек на сервере ограничен 32 КБ. */
+export const WALL_CLOCK_HUD_HTML_MAX = 12000;
+export const WALL_CLOCK_HUD_HEIGHT_LIMITS = { min: 60, max: 400 } as const;
+
+/** Пропускает только http(s)-ссылки: javascript:, data: и прочее отбрасываем. */
+export function normalizeHudUrl(raw: string): string | null {
+  const v = (raw || '').trim();
+  if (!v) return null;
+  try {
+    const u = new URL(v);
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : null;
+  } catch {
+    return null;
+  }
+}
 
 export interface LayoutSettings {
   sidebarSide: SidePos;        // left | right
   sidebarWidth: number;        // 72px..50% ширины окна
   mobileNavPos: VertPos;       // bottom | top (нижняя навигация на мобильном)
-  playerPos: PlayerPos;        // bottom | top | left | right (место развёрнутого плеера)
+  desktopNavStyle: DesktopNavStyle; // compact | phone (нижняя панель сайдбара на ПК)
+  playerPos: PlayerPos;        // bottom | top | left | right | info: «Слева»/«Справа» — панель у края окна, info — внутри инфопанели чата
   playerWidth: number;         // ширина плеера-панели при боковом playerPos (px)
   chatInfoWidth: number;
   chatHeaderPos: VertPos;      // top | bottom (шапка чата)
@@ -67,6 +108,7 @@ export const defaultLayout: LayoutSettings = {
   sidebarSide: 'left',
   sidebarWidth: 300,
   mobileNavPos: 'bottom',
+  desktopNavStyle: 'compact',
   playerPos: 'bottom',
   playerWidth: 300,
   chatInfoWidth: 300,
@@ -108,7 +150,7 @@ export interface UserSettingsState {
   wallClockChats: Record<'dialogs' | 'board' | 'groups' | 'channels', boolean>;
   // Отодвигать сообщения, перекрывающие часы: перекрывый набор навязаних пузырает сам, а текст лента остаётся на месте.
   wallClockAvoid: boolean;
-  wallClockPos: WallClockPos;      // где на обоях: по середине / сверху / снизу
+  wallClockPos: WallClockPos;      // где на обоях: 3×3 — сверху / по середине / снизу × слева / по центру / справа
   /** Где дата относительно времени: над ним / под ним / слева / справа. */
   wallClockDatePos: WallClockDatePos;
   /** Показывать секунды (по умолчанию выключено — они мелькают и отвлекают). */
@@ -117,6 +159,14 @@ export interface UserSettingsState {
   wallClockSecondsPos: WallClockSecondsPos;
   /** Множитель кегля секунд относительно базового. */
   wallClockSecondsScale: number;
+  /** Свой HUD вместо встроенных часов (личная настройка, в тему не попадает). */
+  wallClockHudMode: WallClockHudMode;
+  wallClockHudHtml: string;
+  wallClockHudUrl: string;
+  /** Высота области HUD в пикселях. */
+  wallClockHudHeight: number;
+  /** Плашка даты в ленте сообщений: слева / по центру / справа. */
+  chatDateAlign: ChatDateAlign;
 
   // Данные и экономия трафика
   autoDownloadMedia: boolean;
@@ -178,6 +228,11 @@ const initial: Omit<UserSettingsState, 'set' | 'reset' | 'setLayout' | 'resetLay
   wallClockAvoid: false,
   wallClockTimeScale: 1,
   wallClockDateScale: 1,
+  wallClockHudMode: 'builtin',
+  wallClockHudHtml: '',
+  wallClockHudUrl: '',
+  wallClockHudHeight: 160,
+  chatDateAlign: 'center',
 
   autoDownloadMedia: true,
   compressUploads: true,
@@ -258,6 +313,8 @@ const SYNC_KEYS: (keyof UserSettingsState)[] = [
   'brightness', 'textScale', 'language',
   'experimentalExternalSites', 'languageCorrectionEnabled', 'languageCorrectionExplain',
   'wallClockEnabled', 'wallClockAvoid', 'wallClockPos', 'wallClockDatePos', 'wallClockSeconds', 'wallClockSecondsPos', 'wallClockSecondsScale', 'wallClockTimeScale', 'wallClockDateScale',
+  'wallClockHudMode', 'wallClockHudHtml', 'wallClockHudUrl', 'wallClockHudHeight',
+  'chatDateAlign',
   'autoDownloadMedia', 'compressUploads', 'streamingHighQuality',
   'inAppSounds', 'inAppVibration', 'vibrationEnabled', 'ledIndicator',
   'popupPreview', 'pinnedPriority',

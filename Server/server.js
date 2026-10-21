@@ -5557,6 +5557,10 @@ if (typeof require === 'function') {
   require('./warships').registerWarships({
     app, getDb: () => db, auth: authMiddleware, saveDb, io,
   });
+  // Крестики-нолики (/tic-tac-toe): состояние партии целиком в карточке.
+  require('./tictactoe').registerTicTacToe({
+    app, getDb: () => db, auth: authMiddleware, saveDb, io,
+  });
 }
 const socketIpCounts = new Map();
 const socketIpHits = new Map();
@@ -5572,6 +5576,10 @@ const wsSendHits = new Map();
 // ─── Discord-style voice rooms (in-memory) ─────────────────────────────────
 // chatId -> Map<userId, { socketId, kind, joinedAt, mic, cam, screen, deaf }>
 const callRooms = new Map();
+// Метаданные комнаты: когда начался звонок, кто инициатор, кто участвовал.
+// Живут вместе с callRooms; по истечении комнаты пишут итоговое сообщение.
+// chatId -> { startedAt, kind, starterId, participants: Set<userId> }
+const callRoomMeta = new Map();
 
 function publicPeerState(_uid, st) {
   return {
@@ -5604,6 +5612,10 @@ function doLeaveRoom(chatId, userId, _socketId) {
   if (room.size === 0) {
     callRooms.delete(chatId);
     io.to(`chat:${chatId}`).emit('callroom:ended', { chatId });
+    // Звонок закончился — сохраняем итоговое сообщение в чат.
+    const meta = callRoomMeta.get(chatId);
+    callRoomMeta.delete(chatId);
+    saveCallSummaryMessage(chatId, meta);
   }
   // Убираем всех сокетов юзера из socket-room этой комнаты.
   const sockets = userSockets.get(userId);
@@ -5611,6 +5623,52 @@ function doLeaveRoom(chatId, userId, _socketId) {
     const s = io.sockets.sockets.get(sid);
     if (s) s.leave(`callroom:${chatId}`);
   });
+}
+
+// Итоговое сообщение о звонке в чат: тип, длительность, участники.
+// Пишем только для «реальных» звонков (двое и более участников) — одинокий
+// заход в комнату итогом не считается.
+function saveCallSummaryMessage(chatId, meta) {
+  if (!meta || (meta.participants?.size || 0) < 2) return;
+  const durationMs = Math.max(0, Date.now() - meta.startedAt);
+  const mins = Math.floor(durationMs / 60000);
+  const secs = Math.floor((durationMs % 60000) / 1000);
+  const durationText = `${mins}:${String(secs).padStart(2, '0')}`;
+  const kindText = meta.kind === 'video' ? 'Видеозвонок' : 'Аудиозвонок';
+  const participants = [...meta.participants].map((uid) => {
+    const u = db.users.find(x => x.id === uid);
+    return {
+      id: uid,
+      name: u ? (`${u.firstName || ''} ${u.lastName || ''}`.trim() || u.username || 'Участник') : 'Участник',
+    };
+  });
+  const message = {
+    id: uuidv4(),
+    chatId,
+    senderId: meta.starterId,
+    text: `📞 ${kindText} · ${durationText}`,
+    content: `📞 ${kindText} · ${durationText}`,
+    replyToId: null,
+    attachments: [{
+      id: uuidv4(),
+      mimeType: 'application/x-vera-call',
+      fileName: 'call',
+      fileUrl: '',
+      fileSize: 0,
+      data: { kind: meta.kind === 'video' ? 'video' : 'audio', durationMs, participants },
+    }],
+    type: 'call',
+    readBy: [...meta.participants],
+    isEdited: false,
+    isPinned: false,
+    isDeleted: false,
+    createdAt: new Date().toISOString(),
+  };
+  message.integrityHash = messageIntegrityHash(message);
+  db.messages.push(message);
+  try { saveDb(); } catch { db.messages = db.messages.filter(x => x !== message); return; }
+  const sender = db.users.find(u => u.id === meta.starterId) || null;
+  io.to(`chat:${chatId}`).emit('message:new', { ...message, sender });
 }
 
 function leaveAllCallRooms(userId, _socketId) {
@@ -5676,6 +5734,18 @@ io.on('connection', (socket) => {
   // Join all user's chats automatically
   const myChatIds = db.chatMembers.filter(m => m.userId === userId).map(m => m.chatId);
   for (const chatId of myChatIds) socket.join(`chat:${chatId}`);
+
+  // Активные звонки в чатах пользователя — чтобы плашка «идёт звонок» с
+  // кнопкой «Присоединиться» появлялась сразу после (пере)загрузки страницы.
+  {
+    const myChatSet = new Set(myChatIds);
+    const activeRoomsList = [];
+    for (const [rChatId, meta] of callRoomMeta.entries()) {
+      if (!myChatSet.has(rChatId) || !callRooms.has(rChatId)) continue;
+      activeRoomsList.push({ chatId: rChatId, kind: meta.kind, starterId: meta.starterId, startedAt: meta.startedAt });
+    }
+    socket.emit('callroom:active-rooms', { rooms: activeRoomsList });
+  }
 
   socket.on('chat:join', (chatId) => {
     const isMember = db.chatMembers.find(m => m.chatId === chatId && m.userId === userId);
@@ -5949,7 +6019,18 @@ io.on('connection', (socket) => {
     const isMember = db.chatMembers.find(m => m.chatId === chatId && m.userId === userId);
     if (!isMember) return;
 
-    if (!callRooms.has(chatId)) callRooms.set(chatId, new Map());
+    if (!callRooms.has(chatId)) {
+      callRooms.set(chatId, new Map());
+      // Первая заходка в комнату — фиксируем начало звонка и инициатора.
+      callRoomMeta.set(chatId, {
+        startedAt: Date.now(),
+        kind: kind === 'video' ? 'video' : 'audio',
+        starterId: userId,
+        participants: new Set([userId]),
+      });
+    }
+    const roomMeta = callRoomMeta.get(chatId);
+    if (roomMeta) roomMeta.participants.add(userId);
     const room = callRooms.get(chatId);
 
     // Список уже присутствующих участников (без нас) — вернём инициатору.
@@ -6007,6 +6088,17 @@ io.on('connection', (socket) => {
 
   socket.on('callroom:leave', ({ chatId }) => {
     doLeaveRoom(chatId, userId, socket.id);
+  });
+
+  // Отклонение входящего direct-звонка: сообщаем звонящему, чтобы тот перестал
+  // слушать гудки и вышел из комнаты (сам собеседник в комнате не состоит).
+  socket.on('callroom:decline', ({ chatId } = {}) => {
+    if (!chatId) return;
+    const isMember = db.chatMembers.some(m => m.chatId === chatId && m.userId === userId);
+    if (!isMember) return;
+    const meta = callRoomMeta.get(chatId);
+    if (!meta || meta.starterId === userId) return;
+    sendToUser(meta.starterId, 'callroom:ring-declined', { chatId, byUserId: userId });
   });
 
   // Сигналинг: SDP offer/answer/ICE между двумя конкретными пирами в комнате.

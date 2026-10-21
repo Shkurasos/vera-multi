@@ -14,6 +14,10 @@ import { registerAccountStore } from '../services/storeSyncSimple';
 import { OLDER_PAGE_SIZE, oldestCursor } from '../utils/messagePagination';
 import { splitBoardPrefix } from '../utils/deskBoard';
 
+/** Кэш размера окна рендера по чатам: при возврате в уже открытый чат не
+ * начинаем с RENDER_CHUNK, а продолжаем с последнего значения. */
+const renderLimitByChat = new Map<string, number>();
+
 /* ---------- P2P ↔ UI-модель адаптеры ---------- */
 // UI-типы (Chat/Message) исторически заточены под серверную модель.
 // В P2P-режиме приводим ответы peer.* к тем же полям, чтобы не переписывать
@@ -190,6 +194,9 @@ interface ChatState {
    * окно чата снимает там якорь прокрутки. Возвращает число новых сообщений.
    */
   loadOlderMessages: (chatId: string, beforeCommit?: (added: number) => void) => Promise<number>;
+  /** Кэш размера окна рендера по чатам: при возврате в уже открытый чат не начинаем с RENDER_CHUNK. */
+  _setRenderLimit: (chatId: string, value: number) => void;
+  _getRenderLimit: (chatId: string) => number;
   sendMessage: (chatId: string, content: string, replyToId?: string) => Promise<void>;
   forwardMessage: (chatId: string, source: Message) => Promise<void>;
   sendMessageWithFile: (chatId: string, attachments: any | any[], replyToId?: string, type?: string, content?: string) => Promise<void>;
@@ -491,7 +498,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     set({ loadingMessages: true });
     try {
-      const res = await messagesApi.getMessages(chatId, before, 50);
+      const res = await messagesApi.getMessages(chatId, before, 100);
       const incoming: Message[] = res.data;
       // Мерджим свежее с сервера и архив, чтобы сообщения не пропадали при
       // очистке /tmp на Render. Только для первой страницы (без before).
@@ -596,6 +603,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })();
     olderInflight.set(chatId, run);
     return run;
+  },
+
+  _setRenderLimit(chatId: string, value: number) {
+    renderLimitByChat.set(chatId, Math.max(0, value));
+  },
+  _getRenderLimit(chatId: string): number {
+    return renderLimitByChat.get(chatId) || 0;
   },
 
   sendMessage: async (chatId, content, replyToId) => {

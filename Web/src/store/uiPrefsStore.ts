@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { withAlpha } from '../utils/colorAlpha';
 
 /** Базовые варианты MUI: из них шим берёт саму форму иконки. */
 export type BaseIconPack = 'filled' | 'outlined' | 'rounded' | 'sharp' | 'twoTone';
@@ -28,13 +29,16 @@ export type UiStyle = 'default' | 'rounded' | 'square' | 'squircle' | 'glass' | 
  * Радиусы стиля интерфейса — задаются ползунками.
  * surface/bubble — в px, avatar — в % (50% = круг, 0% = квадрат).
  */
-export interface SquircleRadii { surface: number; avatar: number; bubble: number; profile: number }
+export interface SquircleRadii { surface: number; avatar: number; bubble: number; profile: number; nav: number }
 export const SQUIRCLE_LIMITS = {
   surface: { min: 0, max: 32, def: 12 },
   // Плашки страницы профиля — отдельно от основного экрана.
   profile: { min: 0, max: 32, def: 12 },
   avatar: { min: 0, max: 50, def: 50 },
   bubble: { min: 0, max: 30, def: 14 },
+  // Нижняя панель (профиль, музыка, редактор, архив): мобильная и «как на телефоне» на ПК.
+  // def 54 — прежний вид мобильной панели (borderRadius: 3 в sx = 3 × 18px).
+  nav: { min: 0, max: 56, def: 54 },
 } as const;
 const clampRadius = (key: keyof SquircleRadii, v: unknown) => {
   const { min, max, def } = SQUIRCLE_LIMITS[key];
@@ -43,7 +47,7 @@ const clampRadius = (key: keyof SquircleRadii, v: unknown) => {
 };
 const defaultRadii = (): SquircleRadii => ({
   surface: SQUIRCLE_LIMITS.surface.def, avatar: SQUIRCLE_LIMITS.avatar.def, bubble: SQUIRCLE_LIMITS.bubble.def,
-  profile: SQUIRCLE_LIMITS.profile.def,
+  profile: SQUIRCLE_LIMITS.profile.def, nav: SQUIRCLE_LIMITS.nav.def,
 });
 
 /** Режимы, которые включаются переключателями поверх радиусов. */
@@ -56,13 +60,53 @@ export const UI_MODES: { id: keyof UiModes; label: string; desc: string }[] = [
 const NO_MODES: UiModes = { glass: false, flat: false, compact: false };
 
 /**
+ * Непрозрачность фона нижней панели, %: 100 — как раньше, 0 — только размытие.
+ * Прозрачным становится лишь фон (withAlpha), иконки и подписи — нет.
+ */
+export const NAV_OPACITY_LIMITS = { min: 0, max: 100, def: 100 } as const;
+export const clampNavOpacity = (v: unknown) => {
+  const n = Number(v);
+  return Number.isFinite(n)
+    ? Math.min(NAV_OPACITY_LIMITS.max, Math.max(NAV_OPACITY_LIMITS.min, Math.round(n)))
+    : NAV_OPACITY_LIMITS.def;
+};
+
+/**
+ * Высота нижней панели (профиль, музыка, редактор, архив), px: мобильной и
+ * «как на телефоне» на ПК. def 70 — прежняя высота мобильной панели.
+ */
+export const NAV_HEIGHT_LIMITS = { min: 56, max: 96, def: 70 } as const;
+export const clampNavHeight = (v: unknown) => {
+  const n = Number(v);
+  return Number.isFinite(n)
+    ? Math.min(NAV_HEIGHT_LIMITS.max, Math.max(NAV_HEIGHT_LIMITS.min, Math.round(n)))
+    : NAV_HEIGHT_LIMITS.def;
+};
+
+/**
+ * Компактная нижняя панель сайдбара на ПК (строка иконок) тоже следует
+ * ползунку высоты. При 70 — прежние 56px панели и кнопки 40px с иконкой 24px.
+ */
+export const compactNavPanelPx = (navHeight: unknown) => clampNavHeight(navHeight) - 14;
+/** Кнопка компактной панели: не меньше 32px, иначе по ней трудно попасть. */
+export const compactNavButtonPx = (navHeight: unknown) => Math.max(32, compactNavPanelPx(navHeight) - 16);
+export const compactNavIconPx = (navHeight: unknown) => Math.round(compactNavButtonPx(navHeight) * 0.6);
+
+/**
+ * Фон компактной панели: при 100% — прежний rgba(0,0,0,.18), при 0% — только
+ * размытие (как у «телефонной» панели).
+ */
+export const compactNavBackground = (opacity: number) =>
+  `rgba(0,0,0,${Number((0.18 * clampNavOpacity(opacity) / 100).toFixed(3))})`;
+
+/**
  * Как прежние стили-кнопки раскладываются на ползунки и режимы.
  * radii: null — оставить текущие ползунки («Полускруглённый» уже был ими).
  */
 export const LEGACY_UI_STYLES: Record<UiStyle, { radii: SquircleRadii | null; modes: UiModes }> = {
   default:  { radii: defaultRadii(), modes: NO_MODES },
-  rounded:  { radii: { surface: 24, avatar: 50, bubble: 26, profile: 24 }, modes: NO_MODES },
-  square:   { radii: { surface: 4, avatar: 12, bubble: 4, profile: 4 }, modes: NO_MODES },
+  rounded:  { radii: { surface: 24, avatar: 50, bubble: 26, profile: 24, nav: 56 }, modes: NO_MODES },
+  square:   { radii: { surface: 4, avatar: 12, bubble: 4, profile: 4, nav: 4 }, modes: NO_MODES },
   squircle: { radii: null, modes: NO_MODES },
   glass:    { radii: defaultRadii(), modes: { ...NO_MODES, glass: true } },
   flat:     { radii: defaultRadii(), modes: { ...NO_MODES, flat: true } },
@@ -96,6 +140,12 @@ interface UiPrefsState {
   squircle: SquircleRadii;
   /** Переключатели режимов стиля интерфейса. */
   uiModes: UiModes;
+  /** Непрозрачность фона нижней панели, % (NAV_OPACITY_LIMITS). */
+  navOpacity: number;
+  setNavOpacity: (v: number) => void;
+  /** Высота нижней панели, px (NAV_HEIGHT_LIMITS). */
+  navHeight: number;
+  setNavHeight: (v: number) => void;
   setUiMode: (key: keyof UiModes, v: boolean) => void;
   setIconPack: (p: IconPack) => void;
   setCustomPack: (id: string | null) => void;
@@ -210,10 +260,32 @@ export const UI_INNER_RADIUS = 'max(2px, calc(var(--vera-sq-radius, 12px) - 6px)
 export const UI_PROFILE_RADIUS = 'var(--vera-profile-radius, var(--vera-sq-radius, 12px))';
 /** Вложенный элемент плашки профиля (отступ 6px). */
 export const UI_PROFILE_INNER_RADIUS = 'max(2px, calc(var(--vera-profile-radius, var(--vera-sq-radius, 12px)) - 6px))';
+/** Радиус нижней панели навигации — ползунок «Скругление нижней панели». */
+export const UI_NAV_RADIUS = `var(--vera-nav-radius, ${SQUIRCLE_LIMITS.nav.def}px)`;
+/** Кнопки внутри нижней панели (отступ 6px) — углы идут параллельно панели. */
+export const UI_NAV_INNER_RADIUS = `max(2px, calc(var(--vera-nav-radius, ${SQUIRCLE_LIMITS.nav.def}px) - 6px))`;
 
-function applyToDom(iconPack: IconPack, chatShape: ChatShape, chatBorder: boolean, chatFill: boolean, squircle?: SquircleRadii, modes?: UiModes) {
+/**
+ * Фон нижней панели (мобильной и «как на телефоне» на ПК) с учётом ползунка
+ * «Прозрачность нижней панели». При 100% — ровно прежние значения, чтобы вид
+ * по умолчанию не изменился; ниже — тот же градиент с домноженной альфой.
+ */
+export function navPanelBackground(bgSidebar: string, bg: string, opacityPct: number) {
+  const a = clampNavOpacity(opacityPct) / 100;
+  if (a >= 1) {
+    return { bgcolor: bgSidebar, backgroundImage: `linear-gradient(180deg, ${bgSidebar}f5, ${bg}f2)` };
+  }
+  return {
+    bgcolor: withAlpha(bgSidebar, a),
+    backgroundImage: `linear-gradient(180deg, ${withAlpha(bgSidebar, 0.96 * a)}, ${withAlpha(bg, 0.95 * a)})`,
+  };
+}
+
+function applyToDom(iconPack: IconPack, chatShape: ChatShape, chatBorder: boolean, chatFill: boolean, squircle?: SquircleRadii, modes?: UiModes, navHeight?: number) {
   try {
     const el = document.documentElement;
+    // Высоту панели читают и соседи (CallMiniBar встаёт над ней).
+    el.style?.setProperty('--vera-nav-height', `${clampNavHeight(navHeight)}px`);
     const sq = squircle || defaultRadii();
     const m = modes || NO_MODES;
     const surface = clampRadius('surface', sq.surface);
@@ -221,6 +293,7 @@ function applyToDom(iconPack: IconPack, chatShape: ChatShape, chatBorder: boolea
     el.style?.setProperty('--vera-sq-radius', `${surface}px`);
     el.style?.setProperty('--vera-profile-radius', `${clampRadius('profile', sq.profile ?? surface)}px`);
     el.style?.setProperty('--vera-sq-avatar', `${clampRadius('avatar', sq.avatar)}%`);
+    el.style?.setProperty('--vera-nav-radius', `${clampRadius('nav', sq.nav)}px`);
     el.style?.setProperty('--vera-sq-bubble', `${bubble}px`);
     // Пузыри читают --vera-bubble-radius (с «хвостиком» 4px) — раньше его
     // писал ползунок макета, теперь единственный источник — стиль интерфейса.
@@ -249,6 +322,11 @@ export const useUiPrefsStore = create<UiPrefsState>()(
       chatFill: true,
       squircle: defaultRadii(),
       uiModes: { ...NO_MODES },
+      navOpacity: NAV_OPACITY_LIMITS.def,
+      // Читается компонентами напрямую (withAlpha), CSS-переменная не нужна.
+      setNavOpacity: (v) => set({ navOpacity: clampNavOpacity(v) }),
+      navHeight: NAV_HEIGHT_LIMITS.def,
+      setNavHeight: (v) => { set({ navHeight: clampNavHeight(v) }); applyAll(); },
       setSquircleRadius: (key, v) => {
         set((s) => ({ squircle: { ...s.squircle, [key]: clampRadius(key, v) } }));
         applyAll();
@@ -267,6 +345,9 @@ export const useUiPrefsStore = create<UiPrefsState>()(
           uiStyle: 'squircle',
           squircle: legacy.radii ? { ...legacy.radii } : st.squircle,
           uiModes: { ...legacy.modes },
+          // «Сбросить стиль» и старые темы без поля — непрозрачная панель.
+          navOpacity: NAV_OPACITY_LIMITS.def,
+          navHeight: NAV_HEIGHT_LIMITS.def,
         }));
         applyAll();
       },
@@ -276,7 +357,7 @@ export const useUiPrefsStore = create<UiPrefsState>()(
     }),
     {
       name: 'vera-ui-prefs',
-      version: 3,
+      version: 4,
       // v2: стиль-кнопка → ползунки + режимы. «Полускруглённый» сохраняет
       // свои ползунки, остальные стили получают свои радиусы и режим.
       migrate: (persisted, version) => {
@@ -299,10 +380,14 @@ export const useUiPrefsStore = create<UiPrefsState>()(
           if (typeof p.squircle?.profile !== 'number') sq.profile = sq.surface;
           return { ...p, squircle: sq } as UiPrefsState;
         }
+        // v4: ползунок нижней панели — у старых сохранений его нет.
+        if (version < 4) {
+          return { ...p, squircle: { ...defaultRadii(), ...p.squircle } } as UiPrefsState;
+        }
         return p as UiPrefsState;
       },
       onRehydrateStorage: () => (state) => {
-        if (state) applyToDom(state.iconPack, state.chatShape, state.chatBorder !== false, state.chatFill !== false, state.squircle, state.uiModes);
+        if (state) applyToDom(state.iconPack, state.chatShape, state.chatBorder !== false, state.chatFill !== false, state.squircle, state.uiModes, state.navHeight);
       },
     }
   )
@@ -315,11 +400,11 @@ export const useUiPrefsStore = create<UiPrefsState>()(
  */
 function applyAll() {
   const s = useUiPrefsStore.getState();
-  applyToDom(s.iconPack, s.chatShape, s.chatBorder, s.chatFill, s.squircle, s.uiModes);
+  applyToDom(s.iconPack, s.chatShape, s.chatBorder, s.chatFill, s.squircle, s.uiModes, s.navHeight);
 }
 
 // Первичная синхронизация (persist может не успеть до первого рендера)
 {
   const s = useUiPrefsStore.getState();
-  applyToDom(s.iconPack, s.chatShape, s.chatBorder, s.chatFill, s.squircle, s.uiModes);
+  applyToDom(s.iconPack, s.chatShape, s.chatBorder, s.chatFill, s.squircle, s.uiModes, s.navHeight);
 }

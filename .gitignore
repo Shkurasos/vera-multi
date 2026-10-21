@@ -41,6 +41,18 @@ App/electron-install.log
 # temp
 tmp-data/
 
+# локальные scratch-скрипты и отчёты (генерируются вручную, не нужны в репо)
+_tmp_*.ps1
+_tmp_*.js
+_thumb*.ps1
+_wp_*.ps1
+**/tsc_output.txt
+**/tsc_result.txt
+_backup_cases_*/
+Server/_aliases.txt
+original_MainLayout.tsx
+**/original_MainLayout.tsx
+
 # local scratch (логи тестов/сборки, локальные скрипты запуска)
 local/
 

@@ -4,8 +4,9 @@ import { Button, CircularProgress } from '@mui/material';
 import { useThemeStore } from '../store/themeStore';
 import { getSocket } from '../services/socket';
 import { warshipsApi, WarshipDuelView } from '../services/api';
-import { duelToGameState } from '../utils/warship';
+import { duelToGameState, Ship } from '../utils/warship';
 import { Grid } from './WarshipGame';
+import WarshipPlacement from './WarshipPlacement';
 
 interface Props {
   open: boolean;
@@ -56,9 +57,9 @@ export default function WarshipDuel({ open, onClose, messageId, myId }: Props) {
     };
   }, [open, messageId, load]);
 
-  // Таймер партии.
+  // Таймер партии — только во время боя.
   useEffect(() => {
-    if (!open || !view || view.over) return;
+    if (!open || !view || view.over || view.phase === 'placement') return;
     const t = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(t);
   }, [open, view]);
@@ -80,6 +81,23 @@ export default function WarshipDuel({ open, onClose, messageId, myId }: Props) {
     }
   }, [firing, messageId, load]);
 
+  // Отправить свою расстановку. Флот фиксируется на сервере; бой начнётся,
+  // когда расставится и соперник (придёт warship:update).
+  const [placingBusy, setPlacingBusy] = useState(false);
+  const submitFleet = useCallback(async (ships: Ship[]) => {
+    setPlacingBusy(true);
+    try {
+      const res = await warshipsApi.place(messageId, ships.map((s) => s.cells.map(([r, c]) => [r, c] as [number, number])));
+      setView(res.data);
+      setError('');
+    } catch (e: any) {
+      setError(e?.response?.data?.message || 'Не удалось отправить расстановку');
+      void load();
+    } finally {
+      setPlacingBusy(false);
+    }
+  }, [messageId, load]);
+
   const surrender = useCallback(async () => {
     if (!window.confirm('Сдаться? Победа будет засчитана сопернику.')) return;
     try {
@@ -92,8 +110,9 @@ export default function WarshipDuel({ open, onClose, messageId, myId }: Props) {
 
   if (!open) return null;
 
+  const placing = view?.phase === 'placement';
   const end = view?.finishedAt || now;
-  const elapsed = view ? Math.max(0, Math.floor((end - view.startedAt) / 1000)) : 0;
+  const elapsed = view?.startedAt ? Math.max(0, Math.floor((end - view.startedAt) / 1000)) : 0;
   const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
   const ss = String(elapsed % 60).padStart(2, '0');
   const opponent = view?.opponentName || 'Соперник';
@@ -102,9 +121,13 @@ export default function WarshipDuel({ open, onClose, messageId, myId }: Props) {
     ? (error || 'Загрузка…')
     : view.over
       ? (view.winnerId === myId ? '🏆 Вы победили!' : `💥 Победил ${opponent}`)
-      : view.myTurn
-        ? '🎯 Ваш ход — стреляйте по полю соперника'
-        : `⏳ Ходит ${opponent}…`;
+      : placing
+        ? (!view.myReady
+          ? `🛠 Расставьте свои корабли${view.opponentReady ? ` — ${opponent} уже готов` : ''}`
+          : `⏳ Ждём, пока ${opponent} расставит корабли…`)
+        : view.myTurn
+          ? '🎯 Ваш ход — стреляйте по полю соперника'
+          : `⏳ Ходит ${opponent}…`;
 
   const overlay = (
     <div
@@ -133,7 +156,9 @@ export default function WarshipDuel({ open, onClose, messageId, myId }: Props) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800 }}>⚔️ Дуэль: вы против {opponent}</h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 14, fontVariantNumeric: 'tabular-nums', opacity: 0.85 }}>⏱ {mm}:{ss}</span>
+            {view && !placing && (
+              <span style={{ fontSize: 14, fontVariantNumeric: 'tabular-nums', opacity: 0.85 }}>⏱ {mm}:{ss}</span>
+            )}
             <button
               onClick={onClose}
               aria-label="Закрыть"
@@ -158,8 +183,20 @@ export default function WarshipDuel({ open, onClose, messageId, myId }: Props) {
           <div style={{ textAlign: 'center', fontSize: 12, color: '#e05545' }}>{error}</div>
         )}
 
-        {/* Поля */}
-        {game && view && (
+        {/* Расстановка: свой флот ещё не отправлен */}
+        {view && placing && !view.over && !view.myReady && (
+          <WarshipPlacement onReady={submitFleet} busy={placingBusy} readyLabel="✅ Готов к бою" />
+        )}
+
+        {/* Расстановка: свой флот отправлен, ждём соперника */}
+        {game && view && placing && !view.over && view.myReady && (
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <Grid state={game} side="player" disabled label="Ваш флот · готов" />
+          </div>
+        )}
+
+        {/* Поля боя */}
+        {game && view && (!placing || view.over) && (
           <>
             <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', justifyContent: 'center' }}>
               <Grid
@@ -192,11 +229,13 @@ export default function WarshipDuel({ open, onClose, messageId, myId }: Props) {
           >{view?.over ? 'Закрыть' : 'Свернуть'}</Button>
         </div>
 
-        <div style={{ display: 'flex', gap: 14, justifyContent: 'center', fontSize: 11.5, opacity: 0.6, flexWrap: 'wrap' }}>
-          <span><span style={{ color: '#e05545' }}>✕</span> попадание</span>
-          <span>· промах</span>
-          <span>Попал — стреляете ещё раз</span>
-        </div>
+        {view && !placing && (
+          <div style={{ display: 'flex', gap: 14, justifyContent: 'center', fontSize: 11.5, opacity: 0.6, flexWrap: 'wrap' }}>
+            <span><span style={{ color: '#e05545' }}>✕</span> попадание</span>
+            <span>· промах</span>
+            <span>Попал — стреляете ещё раз</span>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -3,9 +3,10 @@ import { createPortal } from 'react-dom';
 import { Box, Typography, Button } from '@mui/material';
 import { useThemeStore } from '../store/themeStore';
 import {
-  BOARD, GameState, newGame, playerFire, enemyFire,
+  BOARD, GameState, Ship, newGame, playerFire, enemyFire,
   enemyCellState, playerCellState,
 } from '../utils/warship';
+import WarshipPlacement from './WarshipPlacement';
 
 interface Props {
   open: boolean;
@@ -90,20 +91,24 @@ export function Grid({ state, side, onFire, disabled, label: labelOverride }: {
 
 export default function WarshipGame({ open, onClose, onFinish }: Props) {
   const theme = useThemeStore((s) => s.theme);
+  // Сначала игрок сам расставляет флот, потом бой.
+  const [phase, setPhase] = useState<'placement' | 'battle'>('placement');
   const [game, setGame] = useState<GameState>(() => newGame());
   const [now, setNow] = useState(Date.now());
   const finishedRef = useRef(false);
 
-  // Таймер партии.
+  // Таймер партии — только во время боя.
   useEffect(() => {
-    if (!open || game.over) return;
+    if (!open || phase !== 'battle' || game.over) return;
     const t = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(t);
-  }, [open, game.over]);
+  }, [open, phase, game.over]);
 
   // Ход ИИ — с небольшой задержкой, чтобы было видно смену хода.
+  // Зависимость от всего game: после попадания turn остаётся 'enemy',
+  // и эффект должен перезапуститься ради следующего выстрела ИИ.
   useEffect(() => {
-    if (!open || game.over || game.turn !== 'enemy') return;
+    if (!open || phase !== 'battle' || game.over || game.turn !== 'enemy') return;
     const t = setTimeout(() => {
       setGame((g) => {
         if (g.over || g.turn !== 'enemy') return g;
@@ -112,11 +117,11 @@ export default function WarshipGame({ open, onClose, onFinish }: Props) {
       });
     }, 550);
     return () => clearTimeout(t);
-  }, [open, game.turn, game.over]);
+  }, [open, phase, game]);
 
   // Сообщаем результат ровно один раз.
   useEffect(() => {
-    if (open && game.over && !finishedRef.current) {
+    if (open && phase === 'battle' && game.over && !finishedRef.current) {
       finishedRef.current = true;
       onFinish({
         winner: game.winner === 'player' ? 'player' : 'computer',
@@ -125,7 +130,7 @@ export default function WarshipGame({ open, onClose, onFinish }: Props) {
       });
     }
     if (!open) finishedRef.current = false;
-  }, [open, game.over, game.winner, game.shotsByPlayer, game.startedAt, onFinish]);
+  }, [open, phase, game.over, game.winner, game.shotsByPlayer, game.startedAt, onFinish]);
 
   const handleFire = useCallback((r: number, c: number) => {
     setGame((g) => {
@@ -135,12 +140,19 @@ export default function WarshipGame({ open, onClose, onFinish }: Props) {
     });
   }, []);
 
-  // Новая партия: свежая расстановка, сброс таймера и флага результата.
-  const restart = useCallback(() => {
+  // Флот расставлен — начинаем бой: свой флот игрока, случайный у ИИ.
+  const startBattle = useCallback((ships: Ship[]) => {
     finishedRef.current = false;
     const t = Date.now();
-    setGame(newGame(t));
+    setGame(newGame(t, ships));
     setNow(t);
+    setPhase('battle');
+  }, []);
+
+  // Новая партия: снова расстановка.
+  const restart = useCallback(() => {
+    finishedRef.current = false;
+    setPhase('placement');
   }, []);
 
   if (!open) return null;
@@ -149,11 +161,13 @@ export default function WarshipGame({ open, onClose, onFinish }: Props) {
   const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
   const ss = String(elapsed % 60).padStart(2, '0');
 
-  const statusText = game.over
-    ? (game.winner === 'player' ? '🏆 Вы победили!' : '💻 Компьютер победил')
-    : game.turn === 'player'
-      ? '🎯 Ваш ход — стреляйте по полю противника'
-      : '🤖 Ход компьютера…';
+  const statusText = phase === 'placement'
+    ? '🛠 Расставьте свои корабли'
+    : game.over
+      ? (game.winner === 'player' ? '🏆 Вы победили!' : '💻 Компьютер победил')
+      : game.turn === 'player'
+        ? '🎯 Ваш ход — стреляйте по полю противника'
+        : '🤖 Ход компьютера…';
 
   const overlay = (
     <div
@@ -177,8 +191,10 @@ export default function WarshipGame({ open, onClose, onFinish }: Props) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800 }}>⚓ Морской бой</h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 14, fontVariantNumeric: 'tabular-nums', opacity: 0.85 }}>⏱ {mm}:{ss}</span>
-            <button onClick={onClose} style={{ background: 'none', border: 'none', color: theme.text, fontSize: 24, cursor: 'pointer', opacity: 0.6, lineHeight: 1 }}>×</button>
+            {phase === 'battle' && (
+              <span style={{ fontSize: 14, fontVariantNumeric: 'tabular-nums', opacity: 0.85 }}>⏱ {mm}:{ss}</span>
+            )}
+            <button onClick={onClose} aria-label="Закрыть" style={{ background: 'none', border: 'none', color: theme.text, fontSize: 24, cursor: 'pointer', opacity: 0.6, lineHeight: 1 }}>×</button>
           </div>
         </div>
 
@@ -189,34 +205,42 @@ export default function WarshipGame({ open, onClose, onFinish }: Props) {
           background: theme.bgHover, border: `1px solid ${theme.border}`,
         }}>{statusText}</div>
 
-        {/* Поля */}
-        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', justifyContent: 'center' }}>
-          <Grid state={game} side="enemy" onFire={handleFire} disabled={game.turn !== 'player' || game.over} />
-          <Grid state={game} side="player" disabled />
-        </div>
+        {/* Расстановка или поля боя */}
+        {phase === 'placement' ? (
+          <WarshipPlacement onReady={startBattle} readyLabel="⚓ В бой" />
+        ) : (
+          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <Grid state={game} side="enemy" onFire={handleFire} disabled={game.turn !== 'player' || game.over} />
+            <Grid state={game} side="player" disabled />
+          </div>
+        )}
 
         {/* Кнопки */}
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
-          <Button
-            variant="outlined"
-            onClick={restart}
-            sx={{ textTransform: 'none', color: theme.text, borderColor: theme.border, fontSize: 13 }}
-          >🔄 Новая партия</Button>
-          {game.over && (
+        {phase === 'battle' && (
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
             <Button
-              variant="contained"
-              onClick={onClose}
-              sx={{ textTransform: 'none', bgcolor: theme.accent, '&:hover': { bgcolor: theme.accent }, fontSize: 13 }}
-            >Закрыть</Button>
-          )}
-        </div>
+              variant="outlined"
+              onClick={restart}
+              sx={{ textTransform: 'none', color: theme.text, borderColor: theme.border, fontSize: 13 }}
+            >🔄 Новая партия</Button>
+            {game.over && (
+              <Button
+                variant="contained"
+                onClick={onClose}
+                sx={{ textTransform: 'none', bgcolor: theme.accent, '&:hover': { bgcolor: theme.accent }, fontSize: 13 }}
+              >Закрыть</Button>
+            )}
+          </div>
+        )}
 
         {/* Подсказка по легенде */}
-        <div style={{ display: 'flex', gap: 14, justifyContent: 'center', fontSize: 11.5, opacity: 0.6, flexWrap: 'wrap' }}>
-          <span><span style={{ color: '#e05545' }}>✕</span> попадание</span>
-          <span><span style={{ opacity: 0.9 }}>·</span> промах</span>
-          <span>Ваш флот показан синим</span>
-        </div>
+        {phase === 'battle' && (
+          <div style={{ display: 'flex', gap: 14, justifyContent: 'center', fontSize: 11.5, opacity: 0.6, flexWrap: 'wrap' }}>
+            <span><span style={{ color: '#e05545' }}>✕</span> попадание</span>
+            <span><span style={{ opacity: 0.9 }}>·</span> промах</span>
+            <span>Ваш флот показан синим</span>
+          </div>
+        )}
       </div>
     </div>
   );

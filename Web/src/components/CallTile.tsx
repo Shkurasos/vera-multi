@@ -1,7 +1,7 @@
 /*
  * CallTile — один участник (аватар/видео + рамка при speaking + иконки mic/cam).
  */
-import React, { useEffect, useRef } from 'react';
+import React, { memo, useCallback, useEffect, useRef } from 'react';
 import { Box, Avatar, Typography } from '@mui/material';
 import { MicOff, VideocamOff, VolumeOff } from '@mui/icons-material';
 import type { CallPeer } from '../store/callStore';
@@ -17,21 +17,45 @@ interface Props {
   deaf: boolean;
   speaking: boolean;
   size?: 'grid' | 'mini';
+  /** Поток демонстрации экрана (если участник partager экран). */
+  screenStream?: MediaStream | null;
+  /** Включена ли демонстрация экрана у этого участника. */
+  screenOn?: boolean;
+  /** Клик по тайлу (используется для разворачивания экрана на весь экран). */
+  onClick?: () => void;
 }
 
-export default function CallTile({
+const setVideoStream = (el: HTMLVideoElement | null, stream: MediaStream | null | undefined) => {
+  if (!el || !stream) return;
+  if (el.srcObject !== stream) el.srcObject = stream;
+};
+
+function CallTile({
   displayName, avatarUrl, stream, camOn, micOn, deaf, speaking, isLocal, size = 'grid',
+  screenStream, screenOn, onClick,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const screenRef = useRef<HTMLVideoElement>(null);
+  // Стабильные колбэки рефов: не создаются заново при каждом рендере родителя,
+  // иначе React при перерендере вызывает старый реф с null и новый с элементом,
+  // что может сбросить srcObject у видео и вызвать мигание чёрным.
+  const setVideoRef = useCallback((el: HTMLVideoElement | null) => {
+    videoRef.current = el;
+    setVideoStream(el, stream);
+  }, [stream]);
+  const setScreenRef = useCallback((el: HTMLVideoElement | null) => {
+    screenRef.current = el;
+    setVideoStream(el, screenStream);
+  }, [screenStream]);
+  // Подстраховка: если поток пришёл раньше элемента или сменился после монтирования.
   useEffect(() => {
-    // <video> смонтирован только когда (camOn && stream) — в момент, когда
-    // stream ПРИШЁЛ, ref.current ещё null (элемента нет), и эффект, зависящий
-    // только от [stream], больше не перезапустится: картинка так и остаётся
-    // пустой. Поэтому перезапускаем эффект ещё и по camOn, и дополнительно
-    // подстраховываемся через колбэк-реф.
     const el = videoRef.current;
-    if (el && stream && el.srcObject !== stream) el.srcObject = stream;
-  }, [stream, camOn, isLocal]);
+    setVideoStream(el, camOn ? stream : null);
+  }, [stream, camOn]);
+  useEffect(() => {
+    const el = screenRef.current;
+    setVideoStream(el, screenOn ? screenStream : null);
+  }, [screenStream, screenOn]);
 
   const border = speaking ? '3px solid #22c55e' : '3px solid transparent';
   const bg = 'linear-gradient(135deg, #2b2d31 0%, #1e1f22 100%)';
@@ -53,18 +77,25 @@ export default function CallTile({
   return (
     <Box sx={{
       position: 'relative', borderRadius: 2, overflow: 'hidden',
-      background: bg, border, transition: 'border-color .15s',
-      aspectRatio: '16 / 10', minHeight: 160,
+      background: bg, border, transition: 'border-color .15s, background .15s',
+      // В сетке звонка тайл занимает ячейку целиком (stretch по ширине и
+      // высоте). Фиксированную пропорцию не ставим: она вычисляла ширину из
+      // высоты, панель выходила уже экрана и прилипала к левому краю.
+      height: '100%', minHeight: 120, boxSizing: 'border-box',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-    }}>
-      {camOn && stream ? (
+      cursor: (screenOn && screenStream) ? 'pointer' : 'default',
+    }}
+    onClick={onClick}
+  >
+      {screenOn && screenStream ? (
         <video
-          ref={(el) => {
-            // Колбэк вызывается и при монтировании, когда поток уже мог
-            // прийти раньше элемента — без этого srcObject терялся бы.
-            (videoRef as any).current = el;
-            if (el && stream) el.srcObject = stream;
-          }}
+          ref={setScreenRef}
+          autoPlay playsInline
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+        />
+      ) : camOn && stream ? (
+        <video
+          ref={setVideoRef}
           // muted ВСЕГДА: звук даёт CallAudioSink. Раньше тут стояло условие по
           // признаку «свой тайл», и удалённые тайлы играли тот же поток, что и
           // CallAudioSink, — получалось два звука с задержкой (эхо).
@@ -115,3 +146,5 @@ export default function CallTile({
     </Box>
   );
 }
+
+export default memo(CallTile);
