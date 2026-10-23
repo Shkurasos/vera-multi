@@ -11,7 +11,13 @@ primary_region = "ams"
   PORT = "3000"
   DATA_DIR = "/data"
   UPLOADS_DIR = "/data/uploads"
+  # Старый открытый JSON: читается один раз для импорта, затем не используется.
   DB_FILE = "/data/vera.json"
+  # Зашифрованное хранилище (node:sqlite, AES-256-GCM). STORE_DRIVER=json — откат.
+  STORE_FILE = "/data/vera-store.db"
+  # Секреты НЕ здесь (файл в git), а через:
+  #   fly secrets set JWT_SECRET=... VERA_KEK=... ADMIN_USERNAMES=...
+  # Без JWT_SECRET, VERA_KEK или ADMIN_USERNAMES сервер в проде не стартует.
 
 # 3 GB бесплатного persistent-volume. Создаётся отдельно: fly volumes create vera_data --region ams --size 3
 [[mounts]]

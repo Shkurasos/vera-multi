@@ -24,6 +24,10 @@ services:
       # SEC: JWT_SECRET Render генерирует сам (32+ байта).
       - key: JWT_SECRET
         generateValue: true
+      # SEC: ключ шифрования базы. НЕ generateValue: при пересоздании сервиса
+      # новый ключ не откроет старые данные. Задайте вручную и сохраните копию.
+      - key: VERA_KEK
+        sync: false
       # Крипто-кошелёк NOWPayments. Оба ключа — из личного кабинета
       # nowpayments.io (см. DEPLOY.md, раздел «Крипто-кошелёк»).
       # Пока не задан — /api/wallet/topup работает в mock-режиме.

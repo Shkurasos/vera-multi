@@ -38,7 +38,9 @@ const child = spawn(process.execPath, ['server.js'], {
   cwd: __dirname,
   env: {
     ...process.env, PORT: String(PORT), JWT_SECRET, NODE_ENV: 'development',
-    DB_FILE: dbFile, UPLOADS_DIR: path.join(tmpDir, 'uploads'),
+    // Ключ задаём явно: иначе сервер создал бы dev-ключ в tmpDir (что тоже ок).
+    VERA_KEK: require('node:crypto').randomBytes(32).toString('base64'),
+    DB_FILE: dbFile, UPLOADS_DIR: path.join(tmpDir, 'uploads'), CONTENT_DIR: path.join(tmpDir, 'content'),
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -60,9 +62,12 @@ test.before(async () => {
   throw new Error(`сервер не поднялся.\n${childLog.join('')}`);
 });
 
-test.after(() => {
+test.after(async () => {
+  // Windows не даёт удалить открытый файл SQLite: ждём выхода сервера.
+  const exited = child.exitCode !== null ? Promise.resolve() : new Promise((r) => child.once('exit', r));
   child.kill();
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  await exited;
+  fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 async function create(name) {
@@ -100,4 +105,19 @@ test('prefix sets kind over HTTP, with and without a space', async () => {
     assert.equal(chat.kind, kind, name);
     assert.equal(chat.name, clean, name);
   }
+});
+
+test('в зашифрованной базе нет открытого текста', async () => {
+  // Создаём чат через HTTP и ждём отложенной записи на диск.
+  const res = await fetch(`${BASE}/api/chats/group`, { method: 'POST', headers: auth, body: JSON.stringify({ name: 'ОченьСекретнаяГруппа', memberIds: [] }) });
+  assert.equal(res.status, 200);
+  const storeFile = path.join(tmpDir, 'vera-store.db');
+  const secret = Buffer.from('ОченьСекретнаяГруппа');
+  // id записей открыты намеренно (ключи строк) — проверяем содержимое.
+  const read = () => Buffer.concat(['', '-wal'].filter((s) => fs.existsSync(storeFile + s)).map((s) => fs.readFileSync(storeFile + s)));
+  await new Promise((r) => setTimeout(r, 1000)); // > DB_SAVE_DEBOUNCE_MS
+  const raw = read();
+  assert.ok(raw.length > 0, 'база создана');
+  assert.ok(!raw.includes(secret), 'имя чата не лежит на диске открыто');
+  assert.ok(!raw.includes(Buffer.from('ordinary')), 'ник не лежит на диске открыто');
 });

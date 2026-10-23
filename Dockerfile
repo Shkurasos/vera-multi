@@ -7,7 +7,9 @@ RUN npm ci
 COPY Web/ ./
 RUN npm run build
 
-FROM node:20-alpine AS server
+# Node 24: встроенный node:sqlite (зашифрованное хранилище Server/store/).
+# argon2/bcrypt — N-API, ставятся prebuild-бинарниками и под glibc.
+FROM node:24-bookworm-slim AS server
 WORKDIR /app/Server
 COPY Server/package*.json ./
 RUN npm ci --omit=dev
@@ -21,6 +23,7 @@ ENV NODE_ENV=production \
     PORT=3000 \
     DATA_DIR=/data \
     UPLOADS_DIR=/data/uploads \
-    DB_FILE=/data/vera.json
+    DB_FILE=/data/vera.json \
+    STORE_FILE=/data/vera-store.db
 EXPOSE 3000
 CMD ["node", "server.js"]

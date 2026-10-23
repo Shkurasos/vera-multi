@@ -44,13 +44,15 @@ function withFakeDb(run) {
   process.env.DATA_DIR = tmp;
   process.env.DB_FILE = dbFile;
   process.env.UPLOADS_DIR = uploads;
+  // Фикстуры — открытый vera.json; проверяем формат выгрузки, а не шифрование.
+  process.env.STORE_DRIVER = 'json';
   // Модуль читает пути при загрузке — перезагружаем под тестовые.
   delete require.cache[require.resolve('./backup-content')];
   const mod = require('./backup-content');
   try { run(mod, { dbFile, uploads }); }
   finally {
     delete require.cache[require.resolve('./backup-content')];
-    for (const k of ['DATA_DIR', 'DB_FILE', 'UPLOADS_DIR', 'CONTENT_DIR']) delete process.env[k];
+    for (const k of ['DATA_DIR', 'DB_FILE', 'UPLOADS_DIR', 'CONTENT_DIR', 'STORE_DRIVER']) delete process.env[k];
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
@@ -223,11 +225,11 @@ test('синхронизация после правки не роняет са�
 
 test('сервер зовёт автовосстановление при старте', () => {
   const src = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-  assert.ok(/require\('\.\/backup-content'\)\.seedOnBoot\(\)/.test(src), 'вызов есть');
+  assert.ok(/require\('\.\/backup-content'\)\.seedOnBoot\(db\)/.test(src), 'вызов есть');
   // Именно после чтения БД, иначе нечего восстанавливать.
-  const dbAt = src.indexOf('JSON.parse(fs.readFileSync(DB_FILE');
-  const seedAt = src.indexOf('seedOnBoot()');
-  assert.ok(seedAt > dbAt, 'автовосстановление идёт после загрузки БД');
+  const dbAt = src.indexOf('dataSource.load()');
+  const seedAt = src.indexOf('seedOnBoot(db)');
+  assert.ok(dbAt > 0 && seedAt > dbAt, 'автовосстановление идёт после загрузки БД');
 });
 
 test('публикация тем сразу зеркалится в репозиторий', () => {
@@ -285,6 +287,7 @@ function pushScenario(mode) {
   process.env.DATA_DIR = tmp;
   process.env.DB_FILE = path.join(tmp, 'vera.json');
   process.env.UPLOADS_DIR = path.join(tmp, 'uploads');
+  process.env.STORE_DRIVER = 'json';
   if (mode) process.env.CONTENT_SOURCE = mode; else delete process.env.CONTENT_SOURCE;
   fs.mkdirSync(path.join(process.env.UPLOADS_DIR, 'wallpapers'), { recursive: true });
   fs.mkdirSync(CONTENT_DIR, { recursive: true });
@@ -340,6 +343,7 @@ test('в режиме repo пустой каталог в репозитории
   process.env.DB_FILE = path.join(tmp, 'vera.json');
   process.env.UPLOADS_DIR = path.join(tmp, 'uploads');
   process.env.CONTENT_SOURCE = 'repo';
+  process.env.STORE_DRIVER = 'json';
   fs.mkdirSync(path.join(process.env.UPLOADS_DIR, 'wallpapers'), { recursive: true });
   fs.mkdirSync(CONTENT_DIR, { recursive: true });
   fs.writeFileSync(path.join(CONTENT_DIR, 'themes.json'),

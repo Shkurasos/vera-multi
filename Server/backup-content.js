@@ -36,10 +36,9 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
+const { openDataSource } = require('./store');
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
-const DB_FILE = process.env.DB_FILE || path.join(DATA_DIR, 'vera.json');
 // Папка выгрузки переопределяется через CONTENT_DIR — иначе тесты писали бы в
 // настоящий Server/content и подменяли бы реальный бэкап тем тестовыми данными.
 const CONTENT_DIR = process.env.CONTENT_DIR || path.join(__dirname, 'content');
@@ -47,15 +46,30 @@ const CONTENT_WALLPAPERS = path.join(CONTENT_DIR, 'wallpapers');
 const THEMES_FILE = path.join(CONTENT_DIR, 'themes.json');
 const WALLPAPERS_FILE = path.join(CONTENT_DIR, 'wallpapers.json');
 
-function readDb() {
-  if (!fs.existsSync(DB_FILE)) throw new Error(`БД не найдена: ${DB_FILE}`);
-  return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-}
-
-function writeDb(db) {
-  const tmp = DB_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
-  fs.renameSync(tmp, DB_FILE);
+/**
+ * Для запуска из консоли: открывает хранилище (SQLite или JSON, см. store/),
+ * отдаёт db в fn и, если write, сохраняет изменения.
+ * Сервер этим не пользуется — он передаёт свой db из памяти.
+ */
+function withStoredDb(fn, { write = false, required = true } = {}) {
+  // Только чтение: утилита не должна создавать пустую базу или dev-ключ.
+  const source = openDataSource({ readOnly: !write });
+  if (!source) {
+    if (required) throw new Error('БД не найдена (нет ни vera-store.db, ни vera.json)');
+    return undefined;
+  }
+  try {
+    const db = source.load();
+    if (!db) {
+      if (required) throw new Error(`БД не найдена: ${source.file}`);
+      return undefined;
+    }
+    const result = fn(db);
+    if (write && result !== false) source.save(db);
+    return result;
+  } finally {
+    source.close();
+  }
 }
 
 /** Каталог тем в приведённом виде: только то, что реально правит админ. */
@@ -113,8 +127,9 @@ function copyWallpaperFiles(list, fromDir, toDir) {
     + (removed ? `, удалено устаревших: ${removed}` : ''));
 }
 
-function backup() {
-  const db = readDb();
+/** Выгружает каталог в Server/content. db — из памяти сервера; без него читается хранилище. */
+function backup(db) {
+  if (!db) return withStoredDb((stored) => backup(stored));
   fs.mkdirSync(CONTENT_DIR, { recursive: true });
 
   const themes = pickThemes(db);
@@ -131,8 +146,11 @@ function backup() {
 
 function restore() {
   if (!fs.existsSync(THEMES_FILE)) throw new Error(`Нет файла ${THEMES_FILE} — нечего восстанавливать`);
-  const db = readDb();
+  withStoredDb((db) => restoreInto(db), { write: true });
+  console.log('[restore] готово. Перезапустите сервер.');
+}
 
+function restoreInto(db) {
   db.builtinThemes = {
     ...(db.builtinThemes || {}),
     ...JSON.parse(fs.readFileSync(THEMES_FILE, 'utf8')),
@@ -167,9 +185,6 @@ function restore() {
     }
     console.log(`[restore] файлов обоев возвращено: ${copied}`);
   }
-
-  writeDb(db);
-  console.log('[restore] готово. Перезапустите сервер.');
 }
 
 /**
@@ -199,9 +214,16 @@ function contentSourceMode() {
  * Server/content/ лежит в репозитории, поэтому при старте мы возвращаем каталог
  * оттуда. Режим задаётся CONTENT_SOURCE (см. contentSourceMode).
  */
-function seedOnBoot() {
-  if (!fs.existsSync(DB_FILE)) return false;
-  const db = readDb();
+/**
+ * Восстанавливает каталог в переданный db (сервер передаёт свой db из памяти и
+ * сам сохраняет его). Без аргумента — открывает хранилище и сохраняет сам.
+ */
+function seedOnBoot(db) {
+  if (!db) return withStoredDb((stored) => seedInto(stored), { write: true, required: false }) || false;
+  return seedInto(db);
+}
+
+function seedInto(db) {
   const themesFileExists = fs.existsSync(THEMES_FILE);
   const wallpapersFileExists = fs.existsSync(WALLPAPERS_FILE);
   if (!themesFileExists && !wallpapersFileExists) return false;
@@ -233,10 +255,7 @@ function seedOnBoot() {
     changed = true;
   }
 
-  if (changed) {
-    restoreWallpaperFiles(db);
-    writeDb(db);
-  }
+  if (changed) restoreWallpaperFiles(db);
   return changed;
 }
 
@@ -261,10 +280,19 @@ function restoreWallpaperFiles(db) {
   return copied;
 }
 
+// Сервер регистрирует доступ к своему db в памяти: записи на диск отложены
+// (saveDb коалесцирует их), и чтение хранилища сразу после правки вернуло бы
+// старый каталог.
+let liveDb = null;
+function attachLiveDb(getter) {
+  liveDb = typeof getter === 'function' ? getter : null;
+}
+
 /** Синхронизация выгрузки с БД — вызывается после каждой правки админом. */
 function sync() {
   try {
-    backup();
+    if (liveDb) backup(liveDb());
+    else withStoredDb((db) => backup(db), { required: false });
   } catch (e) {
     // Не мешаем правке тем из-за сбоя выгрузки, но сообщаем.
     console.warn(`[content] не удалось обновить выгрузку: ${e.message}`);
@@ -281,4 +309,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { backup, restore, seedOnBoot, restoreWallpaperFiles, sync, pickThemes, pickWallpapers };
+module.exports = { backup, restore, seedOnBoot, restoreWallpaperFiles, sync, attachLiveDb, pickThemes, pickWallpapers };

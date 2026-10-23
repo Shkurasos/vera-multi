@@ -16,10 +16,13 @@ const jwt = require('jsonwebtoken');
 
 const PORT = 34567;
 const JWT_SECRET = 'smoke-test-secret-secret-secret-32+';
+// Сервер пишет в зашифрованный SQLite; тест читает его тем же ключом.
+const VERA_KEK = require('node:crypto').randomBytes(32).toString('base64');
 const BASE = `http://127.0.0.1:${PORT}`;
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vera-themes-smoke-'));
 const dbFile = path.join(tmpDir, 'vera.json');
+const storeFile = path.join(tmpDir, 'vera-store.db');
 
 // Админ по ADMIN_USERNAMES — без записи в db.admins.
 fs.writeFileSync(dbFile, JSON.stringify({
@@ -37,8 +40,11 @@ const child = spawn(process.execPath, ['server.js'], {
   // У каждого набора тестов своя БД и свои загрузки: иначе тесты влияли бы
   // друг на друга (каталог фонов общий на сервер).
   env: {
-    ...process.env, PORT: String(PORT), JWT_SECRET, NODE_ENV: 'development',
-    DB_FILE: process.env.SMOKE_DB || dbFile,
+    ...process.env, PORT: String(PORT), JWT_SECRET, VERA_KEK, NODE_ENV: 'development', STORE_DRIVER: 'sqlite',
+    DB_FILE: process.env.SMOKE_DB || dbFile, STORE_FILE: storeFile,
+    // Выгрузка каталога — во временную папку: иначе тест писал бы свои темы и
+    // фото в настоящий Server/content (он в репозитории и сидирует прод).
+    CONTENT_DIR: path.join(tmpDir, 'content'),
     UPLOADS_DIR: process.env.SMOKE_UPLOADS || path.join(tmpDir, 'uploads'),
   },
   stdio: ['ignore', 'pipe', 'pipe'],
@@ -70,22 +76,31 @@ async function waitForServer() {
 test.before(async () => { await waitForServer(); });
 
 /**
- * Записи БД коалесцируются (DB_SAVE_DEBOUNCE_MS), поэтому файл появляется не
+ * Записи БД коалесцируются (DB_SAVE_DEBOUNCE_MS), поэтому база обновляется не
  * сразу после ответа. Ждём, пока каталог действительно ляжет на диск.
  */
+function readStore() {
+  const { openStore } = require('./store/sqlite-store');
+  const { createKeyring } = require('./store/crypto');
+  const store = openStore({ file: storeFile, keyring: createKeyring(Buffer.from(VERA_KEK, 'base64')), readOnly: true });
+  try { return store.load(); } finally { store.close(); }
+}
 async function readPersisted() {
   for (let i = 0; i < 60; i++) {
     try {
-      const parsed = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
+      const parsed = readStore();
       if (parsed?.builtinThemes?.overrides?.['0']) return parsed;
-    } catch { /* файл ещё пишется */ }
+    } catch { /* база ещё пишется */ }
     await new Promise((r) => setTimeout(r, 100));
   }
-  return JSON.parse(fs.readFileSync(dbFile, 'utf8'));
+  return readStore();
 }
-test.after(() => {
+test.after(async () => {
+  // Windows не даёт удалить открытый файл SQLite: ждём выхода сервера.
+  const exited = child.exitCode !== null ? Promise.resolve() : new Promise((r) => child.once('exit', r));
   child.kill();
-  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  await exited;
+  try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch {}
 });
 
 test('боевой сервер: чтение всем, запись админу, остальным 403', async () => {

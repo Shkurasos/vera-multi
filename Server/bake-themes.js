@@ -35,8 +35,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-const DB_FILE = process.env.DB_FILE || path.join(DATA_DIR, 'vera.json');
 const CONTENT_FILE = process.env.CONTENT_FILE
   || path.join(process.env.CONTENT_DIR || path.join(__dirname, 'content'), 'themes.json');
 const THEME_STORE = process.env.THEME_STORE_FILE
@@ -362,9 +360,13 @@ function bakeThemes(source, catalog) {
 
 function readCatalog(useDb) {
   if (useDb) {
-    if (!fs.existsSync(DB_FILE)) throw new Error(`БД не найдена: ${DB_FILE}`);
-    const db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    return db.builtinThemes || { overrides: {}, removed: [], added: [] };
+    // Хранилище (зашифрованный SQLite или JSON) — только чтение.
+    const source = require('./store').openDataSource({ readOnly: true });
+    if (!source) throw new Error('БД не найдена (нет ни vera-store.db, ни vera.json)');
+    try {
+      const db = source.load() || {};
+      return db.builtinThemes || { overrides: {}, removed: [], added: [] };
+    } finally { source.close(); }
   }
   if (!fs.existsSync(CONTENT_FILE)) {
     throw new Error(`Нет файла ${CONTENT_FILE}. Сначала выгрузите каталог: node backup-content.js`);

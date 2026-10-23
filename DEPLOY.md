@@ -103,10 +103,14 @@ Starter-план (7 $/мес) с persistent disk.
 | Переменная | Обяз. в prod | Что делает |
 |---|---|---|
 | `JWT_SECRET` | да | Подпись access-JWT. Render генерирует сам. |
+| `VERA_KEK` | пока нет | Корневой ключ шифрования базы (≥32 байт, base64/hex). Если не задан, ключ создаётся в файле `vera-dev.kek` рядом с базой (сервер пишет предупреждение). Это временный режим: ключ лежит рядом с данными. Переход на `VERA_KEK`: остановить сервер, `NEW_VERA_KEK=<ключ> node store-cli.js rekey`, затем задать `VERA_KEK`. `REQUIRE_VERA_KEK=1` запрещает старт без ключа. Потеря ключа = потеря данных: храните копию вне сервера. Текущий ключ: `node store-cli.js key`. Генерация: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. |
+| `ADMIN_USERNAMES` | да | CSV ников администраторов. Без него прод не стартует. |
+| `STORE_DRIVER` | нет | `sqlite` (по умолчанию, зашифрованный `vera-store.db`) или `json` (старый открытый `vera.json`, для отката). |
+| `STORE_FILE` | нет | Путь к `vera-store.db`. По умолчанию рядом с `DB_FILE`. |
 | `NOWPAYMENTS_API_KEY` | нет | Реальные крипто-инвойсы. Без него — mock. |
 | `NOWPAYMENTS_IPN_SECRET` | нет | Проверка подписи webhook'ов от NOWPayments. |
 | `CORS_ORIGIN` | нет | CSV whitelist Origin. `RENDER_EXTERNAL_URL` добавляется автоматически. |
-| `DATA_DIR` / `UPLOADS_DIR` / `DB_FILE` | нет | Пути хранения. На Free — `/tmp/vera`. |
+| `DATA_DIR` / `UPLOADS_DIR` / `DB_FILE` | нет | Пути хранения. На Free — `/tmp/vera`. `DB_FILE` (vera.json) при наличии один раз импортируется в зашифрованную базу. |
 | `PUBLIC_URL` | нет | Явный публичный URL (нужен для self-ping). |
 | `KEEPALIVE_INTERVAL_MS` | нет | Период self-ping, по умолчанию 10 мин. |
 

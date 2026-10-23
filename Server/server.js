@@ -153,20 +153,30 @@ for (const d of [DATA_DIR, UPLOADS_DIR,
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 }
 
-// ─── JSON Database ────────────────────────────────────────────────────────────
+// ─── Database ────────────────────────────────────────────────────────────────
+// Рабочая копия данных живёт в памяти (db), на диск уходит через store/:
+// по умолчанию — зашифрованный SQLite (vera-store.db, AES-256-GCM на запись,
+// ключ VERA_KEK), STORE_DRIVER=json — старый открытый vera.json для отката.
+// Пишутся только изменившиеся записи. Старый vera.json при первом старте
+// импортируется автоматически (см. store/index.js).
+const dataSource = require('./store').openDataSource();
+console.log(`[DB] хранилище: ${dataSource.kind} (${dataSource.file})`);
 let db = { users: [], chats: [], messages: [], tracks: [], chatMembers: [], playlists: [], favorites: [], devices: [], linkInvites: [], callLogs: [], bots: [], aiModels: [], aiSessions: [], walletOrders: [], refreshTokens: [], ipBans: [], moderationBans: [], moderationWarnings: [], deletedMessages: [], reports: [], moderationIps: {} };
-if (fs.existsSync(DB_FILE)) {
-  try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch {}
+{
+  const stored = dataSource.load();
+  if (stored) db = stored;
 }
 // SEC/ops: возвращаем каталог тем и обоев из репозитория, если в БД его нет.
 // На арендованном сервере диск обычно эфемерный: после рестарта/редеплоя
-// vera.json обнуляется, и все правки админа молча пропадают — пользователи
+// база обнуляется, и все правки админа молча пропадают — пользователи
 // возвращаются к заводским темам. Server/content/ лежит в репозитории,
 // поэтому при старте каталог поднимается сам. Не затирает живые правки:
 // срабатывает только когда каталога в БД действительно нет.
-try { require('./backup-content').seedOnBoot(); } catch (e) {
+let contentSeeded = false;
+try { contentSeeded = require('./backup-content').seedOnBoot(db); } catch (e) {
   console.warn(`[content] автовосстановление каталога не удалось: ${e.message}`);
 }
+require('./backup-content').attachLiveDb(() => db);
 
 // PERF/DoS: раньше КАЖДЫЙ вызов (включая read-receipt на каждое прочитанное
 // сообщение) синхронно сериализовал и писал всю БД на диск. Теперь записи
@@ -229,7 +239,7 @@ if (Number(db.marketplaceMigrationVersion || 0) < 1) {
 }
 
 if (!Array.isArray(db.chats)) db.chats = [];
-if (migrateChatKinds()) saveDb();
+if (migrateChatKinds() || contentSeeded) saveDb();
 
 // При старте сервера все пользователи офлайн (сбрасываем stale-статус)
 if (db.users) {
@@ -237,10 +247,9 @@ if (db.users) {
 }
 
 // PERF/DoS: записи коалесцируются (см. saveDb выше, объявлен до миграций).
+// Хранилище само пишет только изменившиеся записи одной транзакцией.
 function saveDbNow() {
-  const temporary = DB_FILE + '.tmp';
-  fs.writeFileSync(temporary, JSON.stringify(db, null, 2));
-  fs.renameSync(temporary, DB_FILE);
+  dataSource.save(db);
 }
 
 function saveDb() {
@@ -263,9 +272,11 @@ function flushDb() {
 
 // setTimeout не срабатывает после выхода из цикла событий — пишем синхронно.
 process.on('exit', () => {
-  if (!saveDbDirty) return;
-  saveDbDirty = false;
-  try { saveDbNow(); } catch {}
+  if (saveDbDirty) {
+    saveDbDirty = false;
+    try { saveDbNow(); } catch {}
+  }
+  try { dataSource.close(); } catch {}
 });
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => { flushDb(); process.exit(0); });
@@ -276,9 +287,11 @@ function reloadDb() {
   // загруженную с диска БД старым содержимым памяти.
   if (saveDbTimer) { clearTimeout(saveDbTimer); saveDbTimer = null; }
   saveDbDirty = false;
-  if (fs.existsSync(DB_FILE)) {
+  {
     try {
-      db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+      const stored = dataSource.load();
+      if (!stored) return;
+      db = stored;
       if (!db.users) db.users = [];
       if (!db.chats) db.chats = [];
       if (!db.messages) db.messages = [];
@@ -381,12 +394,25 @@ function isDevIp(req) {
   const ip = clientIp(req);
   return DEV_IPS.includes(ip);
 }
+// SEC: поля учётной записи, которые никогда не уходят клиенту (даже владельцу).
+// Плюс любые поля, похожие на секрет, — на случай новых полей в будущем.
+const PRIVATE_USER_FIELDS = new Set(['passwordHash', 'passwordHashVersion', 'tokenVersion', 'refreshTokens']);
+const PRIVATE_USER_FIELD_RE = /hash|secret|salt|token|otp|recovery/i;
+function safeUser(user) {
+  if (!user || typeof user !== 'object') return user;
+  const out = {};
+  for (const [key, value] of Object.entries(user)) {
+    if (PRIVATE_USER_FIELDS.has(key) || PRIVATE_USER_FIELD_RE.test(key)) continue;
+    out[key] = value;
+  }
+  return out;
+}
 function withDevFlag(req, user) {
   // Админы (ADMIN_USERNAMES / db.admins) получают полный dev-режим на клиенте:
   // весь магазин открыт и бесплатен, оверлей-инспектор включён.
   const admin = isAdminUsername(user?.username);
   const dev = isDevIp(req) || admin;
-  return { ...user, isDev: dev, isAdmin: dev };
+  return { ...safeUser(user), isDev: dev, isAdmin: dev };
 }
 
 // ─── Админы по username ──────────────────────────────────────────────────────
@@ -394,6 +420,11 @@ function withDevFlag(req, user) {
 // (редактируется через консоль сервера командой `admin add/del`). Регистр
 // не важен, символ '@' в начале игнорируется.
 const ADMIN_ENV = (() => {
+  // SEC: в проде дефолтные имена опасны — на пустой БД любой может
+  // зарегистрировать «Vera_koto_a» и стать админом. Требуем явный ENV.
+  if (process.env.NODE_ENV === 'production' && !String(process.env.ADMIN_USERNAMES || '').trim()) {
+    throw new Error('[FATAL] ADMIN_USERNAMES is not set. Set it explicitly in production (fly secrets set ADMIN_USERNAMES=...).');
+  }
   const raw = String(process.env.ADMIN_USERNAMES || 'Vera_koto_a,Vera_koto_b');
   return raw.split(',').map(s => s.trim().replace(/^@+/, '').toLowerCase()).filter(Boolean);
 })();

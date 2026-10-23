@@ -58,3 +58,8 @@ local/
 
 # скачанные бинарники для туннеля
 cloudflared.exe
+
+# артефакты CMake в app_desktop (генерируются при сборке)
+app_desktop/build/
+app_desktop/CMakeCache.txt
+app_desktop/CMakeFiles/

@@ -1,20 +1,6 @@
 {
-  "overrides": {
-    "0": {
-      "id": 0,
-      "name": "Vera для всех",
-      "bg": "#0a0a0a"
-    }
-  },
-  "removed": [
-    29
-  ],
-  "added": [
-    {
-      "id": 500,
-      "name": "Стоковая",
-      "bg": "#123456"
-    }
-  ],
-  "updatedAt": "2026-10-21T19:15:54.147Z"
+  "overrides": {},
+  "removed": [],
+  "added": [],
+  "updatedAt": null
 }
