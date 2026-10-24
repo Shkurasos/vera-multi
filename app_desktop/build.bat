@@ -1,37 +1,49 @@
 @echo off
-set QT_TOOLS=E:\QT\Tools\mingw1310_64
-set SRC_DIR=C:\Users\Ярослав\Desktop\Проеты\Vera_Multi\app_desktop
-set BUILD_DIR=C:\Users\Ярослав\Desktop\Проеты\Vera_Multi\app_desktop\build
+rem Builds Vera Desktop with Qt 6 (MinGW) and Ninja.
+rem The build directory is ASCII-only: CMake/MinGW have trouble with
+rem Cyrillic characters in the source path.
+setlocal
 
-echo [1] Cleaning build directory...
-if exist "%BUILD_DIR%" rmdir /S /Q "%BUILD_DIR%" 2>nul
+set "QT_DIR=E:\QT\6.12.0\mingw_64"
+set "QT_TOOLS=E:\QT\Tools"
+if "%BUILD_ROOT%"=="" set "BUILD_ROOT=C:\Vera_Multi_builds"
+if "%BUILD_TYPE%"=="" set "BUILD_TYPE=Release"
+set "BUILD_DIR=%BUILD_ROOT%\VeraDesktop"
 
-echo [2] Creating build directory...
-mkdir "%BUILD_DIR%"
-
-echo [3] Running CMake configuration...
-cmake -G "MinGW Makefiles" "%SRC_DIR%" -B "%BUILD_DIR%" ^
-  -DCMAKE_C_COMPILER="%QT_TOOLS%\bin\gcc.exe" ^
-  -DCMAKE_CXX_COMPILER="%QT_TOOLS%\bin\g++.exe" ^
-  -DCMAKE_MAKE_PROGRAM="%QT_TOOLS%\bin\mingw32-make.exe" ^
-  -DCMAKE_BUILD_TYPE=Release
-
-if %errorlevel% neq 0 (
-    echo CMake configuration failed!
-    pause
-    exit /b 1
+rem Qt tools (qmlimportscanner) fail on non-ASCII source paths, so the sources
+rem are reached through an ASCII junction. The junction only points to the
+rem real folder; deleting it does not touch the sources.
+set "SRC_DIR=%BUILD_ROOT%\app_desktop_src"
+if not exist "%BUILD_ROOT%" mkdir "%BUILD_ROOT%"
+if not exist "%SRC_DIR%\CMakeLists.txt" (
+  mklink /J "%SRC_DIR%" "%~dp0." >nul
+  if errorlevel 1 goto :fail
 )
 
-echo [4] Building...
-"%QT_TOOLS%\bin\mingw32-make.exe" -C "%BUILD_DIR%" --config Release
+rem Qt's CMake, Ninja and MinGW go first so that other installed copies do not interfere.
+set "PATH=%QT_TOOLS%\CMake_64\bin;%QT_TOOLS%\Ninja;%QT_TOOLS%\mingw1310_64\bin;%QT_DIR%\bin;%PATH%"
 
-if %errorlevel% neq 0 (
-    echo Build failed!
-    pause
-    exit /b 1
-)
+echo [1/3] Configuring (%BUILD_TYPE%) in %BUILD_DIR%
+cmake -S "%SRC_DIR%" -B "%BUILD_DIR%" -G Ninja ^
+  -DCMAKE_BUILD_TYPE=%BUILD_TYPE% ^
+  -DCMAKE_PREFIX_PATH="%QT_DIR%" ^
+  -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+if errorlevel 1 goto :fail
 
-echo [5] Running application...
-"%BUILD_DIR%\Release\Vera_Multi_CPP.exe"
+echo [2/3] Building
+cmake --build "%BUILD_DIR%" --parallel
+if errorlevel 1 goto :fail
 
-pause
+echo [3/3] Deploying Qt runtime
+windeployqt --no-translations --qmldir "%SRC_DIR%\qml" "%BUILD_DIR%\VeraDesktop.exe"
+if errorlevel 1 goto :fail
+
+echo.
+echo Done: %BUILD_DIR%\VeraDesktop.exe
+if /I "%~1"=="run" start "" "%BUILD_DIR%\VeraDesktop.exe"
+exit /b 0
+
+:fail
+echo.
+echo Build failed.
+exit /b 1
