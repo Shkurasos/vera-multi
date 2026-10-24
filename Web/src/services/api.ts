@@ -604,16 +604,20 @@ export const musicApi = {
 };
 
 export const filesApi = {
-  upload: (file: File) => {
+  // compress=false — отправка оригиналом (настройка «Сжимать отправляемые файлы»).
+  // Без параметра сервер сжимает фото по умолчанию.
+  upload: (file: File, compress?: boolean) => {
     const formData = new FormData();
+    if (compress === false) formData.append('compress', '0');
     formData.append('file', file);
     return api.post('/files/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
   // С прогрессом загрузки
-  uploadWithProgress: (file: File, onProgress: (p: number) => void) => {
+  uploadWithProgress: (file: File, onProgress: (p: number) => void, compress?: boolean) => {
     const formData = new FormData();
+    if (compress === false) formData.append('compress', '0');
     formData.append('file', file);
     return api.post('/files/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },

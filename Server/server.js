@@ -45,6 +45,7 @@ const communityIconPacks = require('./community-icon-packs');
 const reactionSkins = require('./reaction-skins');
 
 const { stripImageMetadata, imageType } = require('./image-privacy');
+const { compressStoredUpload, wantsCompression } = require('./media-compress');
 
 function sanitizeStoredImage(filePath, mimeType, originalName = filePath) {
   try {
@@ -4712,9 +4713,11 @@ app.get('/api/call-log', authMiddleware, (req, res) => {
   res.json(logs);
 });
 
-app.post('/api/files/upload', authMiddleware, uploadFile.single('file'), (req, res) => {
+app.post('/api/files/upload', authMiddleware, uploadFile.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'Файл не загружен' });
   if (dropIfActiveContent(req, res)) return;
+  // Фото сжимаем как в Telegram; compress=0 в форме — отправка оригиналом.
+  await compressStoredUpload(req.file, { enabled: wantsCompression(req.body) });
   res.json({
     url: `/uploads/files/${req.file.filename}`,
     sha256: req.file.sha256,

@@ -1191,7 +1191,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           const file = pendingFiles[i];
           const result = await filesApi.uploadWithProgress(file, progress => {
             setUploadProgress(Math.round(((i + progress / 100) / pendingFiles.length) * 100));
-          });
+          }, useUserSettingsStore.getState().compressUploads);
           const attachment = toMessageAttachment(result.data, file);
           if (!attachment.fileUrl) throw new Error('Missing file URL');
           attachments.push(attachment);
@@ -1362,7 +1362,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
         // while the file itself must be sent as multipart/form-data.
         const upload = await filesApi.uploadWithProgress(file, (progress) => {
           setUploadProgress(Math.round(((i + progress / 100) / files.length) * 100));
-        });
+        }, useUserSettingsStore.getState().compressUploads);
         const attachment: any = toMessageAttachment(upload.data, file);
         if (!attachment.fileUrl) throw new Error('Upload response does not contain a file URL');
         uploaded.push(attachment);
