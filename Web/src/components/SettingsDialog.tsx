@@ -4,11 +4,16 @@ import {
   List, ListItemButton, ListItemIcon, ListItemText, Divider, Switch,
   MenuItem, Select, TextField, Alert, Accordion, AccordionSummary, AccordionDetails, Stack,
 } from '@mui/material';
+// MUI v5: PhoneOutlined is available through the custom shim or directly from @mui/icons-material
+// Import from shim (which now provides the export after our fix)
+import { PhoneOutlined } from '../mui-icons-shim';
 import {
   Link as LinkIcon, DevicesOther, ChevronRight, ExpandMore, AutoAwesome,
   Language, DataUsage, Notifications, Security, Lock, Public,
-  Download,
+  Download, Refresh,
 } from '@mui/icons-material';
+import { useUpdateStore } from '../store/updateStore';
+import { applyUpdate } from '../services/appUpdate';
 import { useNavigate } from 'react-router-dom';
 import { useThemeStore } from '../store/themeStore';
 import {
@@ -36,6 +41,7 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
   const currentUser = useAuthStore((state) => state.user);
   const isAdmin = Boolean(currentUser?.isAdmin);
   const allAnimsOn = ANIM_GROUPS.every((g) => animEnabled[g.key]);
+  const updateAvailable = useUpdateStore((x) => x.available);
 
 
   const [pwd1, setPwd1] = useState('');
@@ -67,6 +73,17 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
         <DialogTitle sx={{ fontWeight: 700 }}>Настройки</DialogTitle>
         <DialogContent dividers sx={{ bgcolor: theme.bgChat, p: 0 }}>
           <List sx={{ py: 0 }}>
+            {/* После «Позже» обновление живёт здесь до перезагрузки */}
+            {updateAvailable && <>
+              <Box sx={{ display: 'flex', alignItems: 'center', px: 2, py: 1.5 }} data-testid="settings-update">
+                <ListItemIcon sx={{ color: theme.accent, minWidth: 40 }}><Refresh /></ListItemIcon>
+                <ListItemText primary="Доступно обновление" secondary="Перезагрузите VERA, чтобы получить новую версию"
+                  primaryTypographyProps={{ sx: { color: theme.text, fontWeight: 600 } }}
+                  secondaryTypographyProps={{ sx: { color: theme.textSec, fontSize: 12 } }} />
+                <Button size="small" variant="contained" onClick={applyUpdate} sx={{ flexShrink: 0, ml: 1 }}>Обновить</Button>
+              </Box>
+              <Divider sx={{ borderColor: theme.border }} />
+            </>}
             <ListItemButton onClick={() => { onClose(); navigate('/download'); }} sx={{ py: 1.5 }}>
               <ListItemIcon sx={{ color: theme.accent, minWidth: 40 }}><Download /></ListItemIcon>
               <ListItemText primary="Скачать приложение" secondary="Vera Desktop — доступные установщики"
@@ -224,6 +241,19 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
                 <Button size="small" sx={{ mt: 1 }} onClick={() => alert('Черный список: раздел в разработке')}>
                   Заблокированные пользователи
                 </Button>
+              </AccordionDetails>
+            </Accordion>
+            <Accordion sx={sectionSx} disableGutters>
+              <AccordionSummary expandIcon={<ExpandMore sx={{ color: theme.accent }} />}>
+                <PhoneOutlined sx={{ mr: 1, color: theme.accent }} />
+                <Typography sx={{ fontWeight: 600 }}>Контактные данные</Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <RowToggle label="Требовать телефон при регистрации" checked={s.requirePhone} onChange={(v) => s.set('requirePhone', v)} />
+                <RowToggle label="Требовать почту при регистрации" checked={s.requireEmail} onChange={(v) => s.set('requireEmail', v)} />
+                <Alert severity="info" sx={{ mt: 1, fontSize: 12 }}>
+                  Если включено, новые аккаунты должны указать соответствующее поле при регистрации.
+                </Alert>
               </AccordionDetails>
             </Accordion>
             <Accordion sx={sectionSx} disableGutters>

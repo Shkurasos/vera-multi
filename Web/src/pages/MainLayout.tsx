@@ -11,6 +11,7 @@ import WelcomeScreen from '../components/WelcomeScreen';
 import BotFatherPage from './BotFatherPage';
 import AdminToolsPage from './AdminToolsPage';
 import ChatWallpaper from '../components/ChatWallpaper';
+import GapWallpaper from '../components/GapWallpaper';
 import { useActiveWallpaperSpec, isLightColor } from '../hooks/useActiveWallpaper';
 import { usePetStore } from '../store/petStore';
 import PetArtwork from '../components/PetArtwork';
@@ -169,7 +170,10 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
   // ������ ���� ������� �� ������� �������, � �� �� ������ ��� ������ ����.
   useEffect(() => {
     const visibleViewport = window.visualViewport;
-    if (!isMobile || onChatList || !visibleViewport) {
+    // В десктопном приложении экранной клавиатуры нет, а fixed-позиция от
+    // top: 0 залезла бы под свою верхнюю панель окна (TitleBar).
+    const desktopApp = !!(window as any).veraDesktop;
+    if (!isMobile || onChatList || !visibleViewport || desktopApp) {
       setViewport(null);
       return;
     }
@@ -253,7 +257,7 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
   if (isMobile) {
     if (onChatList) {
       return (
-        <Box sx={{ ...bg, height: '100dvh', minHeight: 0 }}>
+        <Box sx={{ ...bg, height: '100%', minHeight: 0 }}>
           <Sidebar key="vera-sidebar-mobile" open mobile onToggle={() => {}} />
           {petOverlay}
         </Box>
@@ -297,8 +301,11 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
       position: 'relative',
       zIndex: 1,
     }}>
+      <GapWallpaper margin={chatOuterMargin} />
       <Box sx={{
         flex: 1, overflow: 'hidden', minHeight: 0, height: '100%',
+        // Над полосами фото промежутков (они absolute и иначе легли бы сверху).
+        position: 'relative', zIndex: 1,
         m: { xs: 0, md: `${chatOuterMargin}px` },
         borderRadius: { xs: 0, md: `${radius}px` },
         border: { xs: 'none', md: `1px solid ${theme.border}` },

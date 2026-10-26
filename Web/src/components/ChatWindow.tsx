@@ -510,6 +510,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const photoWallpaperValue = currentWallpaper?.type === 'photo' && isPhotoBgKey(currentWallpaper.value)
     ? currentWallpaper.value : null;
   const [photoBgUrl, setPhotoBgUrl] = useState<string | null>(null);
+  const photoRemoteUrl = useChatBgPrefsStore((s) => (photoWallpaperValue ? s.remotePhotos?.[photoWallpaperValue] : undefined));
   useEffect(() => {
     let cancelled = false;
     if (!photoWallpaperValue) { setPhotoBgUrl(null); return; }
@@ -517,7 +518,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       if (!cancelled) setPhotoBgUrl(url);
     });
     return () => { cancelled = true; };
-  }, [photoWallpaperValue]);
+  }, [photoWallpaperValue, photoRemoteUrl]);
 
   // URL для рендера: stock из каталога, photo (dataURL/URL или ключ IndexedDB), или live video
   const wallpaperPhotoUrl = useMemo(() => {

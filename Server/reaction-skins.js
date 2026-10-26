@@ -79,9 +79,11 @@ function validateSlots(user, value) {
  * непустая строка (старые клиенты шлют любые эмодзи, их не ломаем).
  */
 function canReact(user, emoji) {
-  if (typeof emoji !== 'string' || !emoji || emoji.length > MAX_REACTION_CHARS) return false;
+  if (typeof emoji !== 'string' || !emoji) return false;
+  // Скин проверяем по каталогу до лимита длины: id скинов длиннее эмодзи
+  // (`rx-cosmos-dislike` — 17 символов) и иначе отсекались как «недоступные».
   if (emoji.startsWith('rx-')) return ownsSkin(user, emoji);
-  return true;
+  return emoji.length <= MAX_REACTION_CHARS;
 }
 
 function state(user) {

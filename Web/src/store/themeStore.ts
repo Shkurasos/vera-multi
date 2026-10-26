@@ -43,11 +43,13 @@ export interface ThemeSettings {
      * есть» переключение темы обнуляло бы обои, заданные пользователем.
      */
     chatList?: { value: WallpaperOverride | null; dim?: number; blur?: number };
+    /** Фото в промежутках между окном чата и панелями (ключ IndexedDB). Пишем только если поле есть. */
+    gaps?: { value: string | null; dim?: number };
   };
   /** Звук уведомлений по умолчанию. */
   sound?: { globalSound: ChatSoundSetting | null; globalVolume: number };
   /** Иконки и стиль интерфейса. */
-  ui?: { iconPack: IconPack; customPack?: string | null; uiStyle: UiStyle; chatShape: ChatShape; chatBorder: boolean; chatFill: boolean; squircle?: Partial<SquircleRadii>; uiModes?: Partial<UiModes>; navOpacity?: number; navHeight?: number };
+  ui?: { iconPack: IconPack; customPack?: string | null; uiStyle: UiStyle; chatShape: ChatShape; chatBorder: boolean; chatFill: boolean; squircle?: Partial<SquircleRadii>; uiModes?: Partial<UiModes>; navOpacity?: number; navHeight?: number; iconSize?: number };
   /** Включённые группы анимаций. */
   animations?: Partial<Record<AnimKey, boolean>>;
   /**
@@ -1741,6 +1743,7 @@ export function snapshotThemeSettings(): ThemeSettings {
       liveValue: bg.globalLiveValue,
       brightness: bg.defaultBrightness,
       chatList: { value: bg.chatListBg, dim: bg.chatListDim, blur: bg.chatListBlur },
+      gaps: { value: bg.gapBg, dim: bg.gapDim },
       // Галерея своих фото/видео НЕ дублируется в тему: она общая (её же
       // читает движок обоев), а копия data URL в каждой теме быстрее всего
       // убьёт квоту localStorage. Тема хранит только ВЫБРАННЫЕ обои.
@@ -1750,6 +1753,8 @@ export function snapshotThemeSettings(): ThemeSettings {
       iconPack: ui.iconPack, customPack: ui.customPack, uiStyle: ui.uiStyle, chatShape: ui.chatShape,
       chatBorder: ui.chatBorder, chatFill: ui.chatFill, squircle: { ...ui.squircle },
       uiModes: { ...ui.uiModes }, navOpacity: ui.navOpacity, navHeight: ui.navHeight,
+      // Размер иконок живёт в userSettingsStore, но редактируется во вкладке «Иконки».
+      iconSize: us.iconSize,
     },
     animations: { ...anim.enabled },
     appearance: {
@@ -1826,6 +1831,11 @@ export function applyThemeSettings(s?: ThemeSettings) {
         if (typeof s.wallpaper.chatList.dim === 'number') bg.setChatListDim(s.wallpaper.chatList.dim);
         if (typeof s.wallpaper.chatList.blur === 'number') bg.setChatListBlur(s.wallpaper.chatList.blur);
       }
+      // Фото промежутков — так же: у старых снимков поля нет, не трогаем.
+      if (s.wallpaper.gaps) {
+        bg.setGapBg(s.wallpaper.gaps.value ?? null);
+        if (typeof s.wallpaper.gaps.dim === 'number') bg.setGapDim(s.wallpaper.gaps.dim);
+      }
     }
     if (s.sound) {
       const snd = useChatSoundStore.getState();
@@ -1857,6 +1867,10 @@ export function applyThemeSettings(s?: ThemeSettings) {
       // setUiStyle выше уже вернул 100% — у старых тем поля нет.
       if (typeof s.ui.navOpacity === 'number') ui.setNavOpacity(s.ui.navOpacity);
       if (typeof s.ui.navHeight === 'number') ui.setNavHeight(s.ui.navHeight);
+      // У старых тем поля нет — оставляем текущий размер.
+      if (Number.isFinite(s.ui.iconSize)) {
+        useUserSettingsStore.getState().set('iconSize', Math.min(40, Math.max(16, s.ui.iconSize as number)));
+      }
     }
     if (s.animations) useAnimStore.getState().setEnabledMap(s.animations);
     if (s.appearance) {

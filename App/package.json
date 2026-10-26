@@ -1,16 +1,18 @@
 {
   "name": "vera-multi-desktop",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "private": true,
   "description": "VERA Multi — десктоп-приложение (Electron shell). Подключается к единому серверу (Web-клиент).",
+  "author": "VERA",
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
-    "build": "electron-builder"
+    "build": "electron-builder --win nsis",
+    "check": "node --check electron/main.js && node --check electron/preload.js && node --check electron/pages/offline.js"
   },
   "devDependencies": {
-    "electron": "^31.3.1",
+    "electron": "31.7.7",
     "electron-builder": "24.13.3"
   },
   "build": {
@@ -18,20 +20,29 @@
     "productName": "VERA Multi",
     "files": [
       "electron/**/*",
-      "build/icon.png"
+      "resources/icon.png"
     ],
     "directories": {
       "output": "dist-electron-build",
-      "buildResources": "build"
+      "buildResources": "resources"
     },
     "win": {
       "target": "nsis",
-      "icon": "build/icon.ico"
+      "icon": "resources/icon.ico",
+      "artifactName": "Vera-Setup-Windows.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "VERA Multi",
+      "installerIcon": "resources/icon.ico",
+      "uninstallerIcon": "resources/icon.ico",
+      "installerHeaderIcon": "resources/icon.ico",
+      "include": "resources/installer.nsh",
+      "runAfterFinish": true
     }
   }
 }

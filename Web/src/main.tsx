@@ -8,6 +8,7 @@ import { muiPaletteFromTheme } from './utils/muiPalette';
 import { CHAT_SHAPES, UI_STYLE_FLAT_TARGETS, UI_STYLE_SQUIRCLE_TARGETS } from './store/uiPrefsStore';
 import { appFontStyles, resolveAppFont } from './utils/appFont';
 import IconPackDefs from './components/IconPackDefs';
+import TitleBar from './components/TitleBar';
 import App from './App';
 
 /**
@@ -126,6 +127,16 @@ const darkTheme = createTheme({
         root: { textTransform: 'none', borderRadius: 999, fontWeight: 700 },
       },
     },
+    // Размер иконок из редактора тем (--vera-icon-size, см. userSettingsStore).
+    // small/large масштабируются пропорционально стандартным 20/24/35px.
+    // Явный fontSize в sx по-прежнему важнее — точечные размеры не ломаются.
+    MuiSvgIcon: {
+      styleOverrides: {
+        fontSizeSmall: { fontSize: 'calc(var(--vera-icon-size, 24px) * 20 / 24)' },
+        fontSizeMedium: { fontSize: 'var(--vera-icon-size, 24px)' },
+        fontSizeLarge: { fontSize: 'calc(var(--vera-icon-size, 24px) * 35 / 24)' },
+      },
+    },
     MuiTextField: {
       styleOverrides: {
         root: {
@@ -134,7 +145,7 @@ const darkTheme = createTheme({
             borderRadius: 999,
             '& fieldset': { borderColor: 'rgba(255,255,255,0.1)' },
             '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.2)' },
-            '&.Mui-focused fieldset': { borderColor: '#00E5FF' },
+            '&.Mui-focused fieldset': { borderColor: 'var(--vera-accent, #00E5FF)' },
           },
         },
       },
@@ -640,9 +651,15 @@ function AppThemeProvider({ children }: { children: React.ReactNode }) {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <HashRouter>
     <AppThemeProvider>
-      <ErrorBoundary>
-        <App />
-      </ErrorBoundary>
+      {/* Своя панель окна (Electron / PWA без рамки) сверху, приложение под ней. */}
+      <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', minHeight: 0 }}>
+        <TitleBar />
+        <Box sx={{ flex: 1, minHeight: 0, position: 'relative' }}>
+          <ErrorBoundary>
+            <App />
+          </ErrorBoundary>
+        </Box>
+      </Box>
     </AppThemeProvider>
   </HashRouter>,
 );

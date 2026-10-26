@@ -178,6 +178,7 @@ interface ChatState {
   loadingMessages: boolean;
   typingUsers: Record<string, string[]>;
   onlineUsers: Set<string>;
+  offlineChats: Set<string>;
 
   loadChats: () => Promise<void>;
   setActiveChat: (chat: Chat | null) => void;
@@ -263,6 +264,9 @@ const VERA_AI_ID = 'vera-ai';
  */
 export const MESSAGE_DELETE_EXIT_MS = 360;
 
+/** Сколько последних сообщений показывать из архива при офлайне. */
+export const OFFLINE_MESSAGE_LIMIT = 10;
+
 /** Системная настройка «уменьшить движение»: анимацию не показываем. */
 function prefersReducedMotion(): boolean {
   return typeof window !== 'undefined'
@@ -342,6 +346,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   typingUsers: {},
   onlineUsers: new Set<string>(),
   deletingMessageIds: new Set<string>(),
+  /** Чаты, за которые показаны только архивные сообщения (нет сети). */
+  offlineChats: new Set<string>(),
 
   setUserOnline: (userId) => {
     set((state) => {
@@ -474,7 +480,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       try {
         const archived = await loadArchivedMessages(chatId);
         if (archived.length > 0 && (!get().messages[chatId] || get().messages[chatId].length === 0)) {
-          set((state) => ({ messages: { ...state.messages, [chatId]: withoutDeleted(archived) } }));
+          const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+          const displayMessages = isOffline
+            ? archived.slice(-OFFLINE_MESSAGE_LIMIT) // только последние 10 офлайн
+            : archived;
+          const marked = displayMessages.map((m) => ({
+            ...m,
+            fromArchive: true, // пометка для UI: данные из локального кэша
+          }));
+          set((state) => ({
+            messages: { ...state.messages, [chatId]: withoutDeleted(marked) },
+            ...(isOffline ? { offlineChats: new Set(state.offlineChats).add(chatId) } : {}),
+          }));
         }
       } catch {}
     }
@@ -539,7 +556,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (last?.id) get().markRead(chatId, last.id);
       }
     } catch (err) {
-      console.error('loadMessages error:', err);
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+      if (!isOffline) console.error('loadMessages error:', err);
+      // При офлайне оставляем кэш/архив, который уже показан выше.
     } finally {
       set({ loadingMessages: false });
     }

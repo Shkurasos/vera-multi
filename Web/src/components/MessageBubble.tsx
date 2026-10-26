@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useMemo, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
-import { Box, Typography, Avatar, IconButton, Tooltip, Slider, Popover, Button, CircularProgress } from '@mui/material';
+import { Box, Typography, Avatar, IconButton, Tooltip, Slider, Button, CircularProgress } from '@mui/material';
 import {
   Reply, Delete, ContentCopy, DoneAll, Done, AccessTime, GraphicEq, Pause, Download,
-  PushPin, Forward, AddReaction, OpenInNew, Edit, Close, VolumeUp, VolumeOff,
+  PushPin, Forward, OpenInNew, Edit, Close, VolumeUp, VolumeOff,
   Image as ImageIcon, Videocam, AudioFile, PictureAsPdf,
   FolderZip, Description, TableChart, Slideshow,
   TextSnippet, Code, AttachFile, RecordVoiceOver,
@@ -15,6 +15,7 @@ import { Message, User } from '../types';
 import { useChatStore, MESSAGE_DELETE_EXIT_MS } from '../store/chatStore';
 import { useThemeStore } from '../store/themeStore';
 import { useAuthStore } from '../store/authStore';
+import { useOfflineStore } from '../store/offlineStore';
 import { useChatSettingsStore } from '../store/chatSettingsStore';
 import { useChatFontStore } from '../store/chatFontStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
@@ -29,6 +30,7 @@ import { skinColors } from '../utils/skinColors';
 import { bubbleSkin, selfcardSkin } from '../utils/bubbleSkin';
 import { mirrorBubble } from '../utils/mirrorBubble';
 import { ringPoint, continueRingDrag } from '../utils/roundNote';
+import { type RoundShape, isRoundNoteName, roundShapeFromName, roundShapePath, roundShapeMaskSx, nearestFraction } from '../utils/roundShape';
 import { clampBubble, metaOnRight, normalizeMetaPos } from '../utils/bubbleSettings';
 import type { BubbleMetaPos } from '../utils/bubbleSettings';
 import { clampAlpha, withAlpha, isTranslucentColor } from '../utils/colorAlpha';
@@ -47,7 +49,7 @@ import ContextMenu from './ContextMenu';
 import ChannelComments from './ChannelComments';
 import { hasGroupRight } from '../services/groupPermissions';
 import { spawnMessageDust } from '../utils/messageDust';
-import { membranePressSx, motion } from '../styles/motion';
+import { motion } from '../styles/motion';
 import { useClockAvoid } from '../hooks/useClockAvoid';
 import { useReactionSkinStore, reactionLabel } from '../store/reactionSkinStore';
 import ReactionGlyph from './ReactionGlyph';
@@ -92,46 +94,6 @@ interface Props {
 }
 
 
-/**
- * Виртуальный якорь из снятого прямоугольника.
- *
- * Нужен, потому что панель быстрого доступа условно монтируется: как только
- * ховер сбрасывается, кнопка реакции исчезает из DOM. С настоящим элементом
- * MUI измерял бы уже отсоединённый узел (getBoundingClientRect() → нули) и
- * рисовал попап в левом верхнем углу экрана. Координаты не зависят от того,
- * жив элемент или нет, поэтому попап остаётся ровно там, где была кнопка.
- */
-/**
- * Виртуальный якорь для Popover: прямоугольник, снятый с кнопки.
- *
- * Нужен, потому что панель быстрого доступа условно монтируется: как только
- * ховер сбрасывается, кнопка реакции исчезает из DOM. С настоящим элементом
- * MUI измерял бы уже отсоединённый узел (getBoundingClientRect() → нули) и
- * рисовал попап в левом верхнем углу экрана. Координаты не зависят от того,
- * жив элемент или нет, поэтому попап остаётся ровно там, где была кнопка.
- *
- * Форма — та, что ждёт MUI: getBoundingClientRect + nodeType.
- */
-type VirtualAnchor = {
-  top: number;
-  left: number;
-  width: number;
-  height: number;
-  getBoundingClientRect: () => DOMRect;
-  /** MUI ждёт литеральный тип Node['ELEMENT_NODE'] (== 1). */
-  nodeType: 1;
-};
-
-function anchorFromRect(r: DOMRect): VirtualAnchor {
-  return {
-    top: r.top,
-    left: r.left,
-    width: r.width,
-    height: r.height,
-    getBoundingClientRect: () => r,
-    nodeType: 1,
-  };
-}
 
 // Превращает относительный /uploads/... URL в абсолютный, чтобы фото грузилось
 // даже когда клиент открыт через туннель (ngrok / cloudflare / production).
@@ -511,17 +473,23 @@ export function ImageViewer({ src, border, tile = false, fill = false, gallery, 
 }
 
 // ── Кружок (видеосообщение) ─────────────────────────────────────────────────
-// Голый круг без пузыря: видео заполняет круг целиком (cover, края кадра
+// Голая форма без пузыря: видео заполняет её целиком (cover, края кадра
 // обрезаются), прогресс — кольцом поверх края. Кольцо — ещё и перемотка.
+// Форму (круг / квадрат / сердце) выбирает отправитель, см. utils/roundShape.
 const ROUND_SIZE = 320;
 const ROUND_RING = 3; // толщина кольца в единицах viewBox (из 100)
 const ROUND_HIT = 14; // толщина невидимой зоны захвата для перемотки
-const ROUND_CIRCUMFERENCE = Math.PI * (100 - ROUND_RING);
+const ROUND_SAMPLES = 240; // точек контура для поиска ближайшей доли при перемотке
 const ROUND_SEEK_STEP = 5; // секунд на стрелку
 
-function RoundVideoNote({ src, accent }: { src: string; accent: string }) {
+function RoundVideoNote({ src, accent, shape = 'circle' }: { src: string; accent: string; shape?: RoundShape }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const ringRef = useRef<SVGPathElement>(null);
+  // Контуры формы: кольцо (по центру толщины), зона захвата и маска видео.
+  const ringPath = useMemo(() => roundShapePath(shape, ROUND_RING / 2), [shape]);
+  const hitPath = useMemo(() => roundShapePath(shape, ROUND_HIT / 2), [shape]);
+  const maskSx = useMemo(() => roundShapeMaskSx(shape), [shape]);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -529,7 +497,23 @@ function RoundVideoNote({ src, accent }: { src: string; accent: string }) {
   const [muted, setMuted] = useState(false);
   // Доля, на которой сейчас палец; null — перетаскивания нет.
   const drag = useRef<number | null>(null);
-  const ringRadius = 50 - ROUND_RING / 2;
+  // Точки кольца через равные доли длины: по ним ищем, куда ткнул палец, и
+  // ставим ручку. Снимаем один раз на форму (getPointAtLength не дешёвый).
+  const [samples, setSamples] = useState<{ x: number; y: number }[]>([]);
+  useLayoutEffect(() => {
+    const el = ringRef.current;
+    if (!el || typeof el.getTotalLength !== 'function') return;
+    try {
+      const len = el.getTotalLength();
+      const pts: { x: number; y: number }[] = [];
+      for (let k = 0; k < ROUND_SAMPLES; k++) {
+        const p = el.getPointAtLength((k / ROUND_SAMPLES) * len);
+        pts.push({ x: p.x, y: p.y });
+      }
+      setSamples(pts);
+    } catch { setSamples([]); }
+  }, [ringPath]);
+  const knob = samples.length ? samples[Math.min(samples.length - 1, Math.round(progress * samples.length) % samples.length)] : null;
 
   // У webm из MediaRecorder нет длительности в заголовке (duration = Infinity):
   // перематываем в «бесконечность», браузер дочитывает файл и узнаёт длину.
@@ -584,7 +568,13 @@ function RoundVideoNote({ src, accent }: { src: string; accent: string }) {
 
   const fractionAt = (e: React.PointerEvent) => {
     const rect = rootRef.current?.getBoundingClientRect();
-    return rect ? ringPoint(e.clientX, e.clientY, rect).fraction : 0;
+    if (!rect || rect.width <= 0 || rect.height <= 0) return 0;
+    // Круг — по углу от центра (точно и без выборки), прочие формы — по
+    // ближайшей точке контура.
+    if (shape === 'circle' || !samples.length) return ringPoint(e.clientX, e.clientY, rect).fraction;
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    return nearestFraction(x, y, samples);
   };
 
   const onSeekDown = (e: React.PointerEvent<SVGCircleElement>) => {
@@ -647,47 +637,54 @@ function RoundVideoNote({ src, accent }: { src: string; accent: string }) {
       onKeyDown={onKeyDown}
       sx={{
         position: 'relative', width: ROUND_SIZE, maxWidth: '100%', aspectRatio: '1',
-        cursor: 'pointer', borderRadius: '50%', overflow: 'hidden', outline: 'none',
-        bgcolor: '#000',
-        '&:focus-visible': { boxShadow: `0 0 0 3px ${accent}88` },
+        cursor: 'pointer', overflow: 'hidden', outline: 'none',
+        bgcolor: shape === 'circle' ? '#000' : 'transparent',
+        ...(shape === 'circle' ? { borderRadius: '50%' } : {}),
+        '&:focus-visible': shape === 'circle'
+          ? { boxShadow: `0 0 0 3px ${accent}88` }
+          : { filter: `drop-shadow(0 0 3px ${accent})` },
       }}
     >
-      <video
-        ref={videoRef}
-        src={src}
-        playsInline
-        preload="metadata"
-        onLoadedMetadata={resolveDuration}
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onVolumeChange={() => { if (videoRef.current) setMuted(videoRef.current.muted); }}
-        onEnded={() => { setPlaying(false); setProgress(0); setElapsed(0); if (videoRef.current) videoRef.current.currentTime = 0; }}
-        style={{
-          // Край видео = край круга: кадр обрезается cover'ом, кольцо лежит поверх.
-          position: 'absolute', inset: 0, width: '100%', height: '100%',
-          borderRadius: '50%', objectFit: 'cover', display: 'block',
-        }}
-      />
-      <svg viewBox="0 0 100 100" aria-hidden="true" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', transform: 'rotate(-90deg)', pointerEvents: 'none' }}>
-        <circle cx="50" cy="50" r={ringRadius} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth={ROUND_RING} />
-        <circle
-          cx="50" cy="50" r={ringRadius} fill="none" stroke={accent} strokeWidth={ROUND_RING}
-          strokeLinecap="round" strokeDasharray={ROUND_CIRCUMFERENCE}
-          strokeDashoffset={ROUND_CIRCUMFERENCE * (1 - progress)}
+      <Box sx={{ position: 'absolute', inset: 0, bgcolor: '#000', ...maskSx }}>
+        <video
+          ref={videoRef}
+          src={src}
+          playsInline
+          preload="metadata"
+          onLoadedMetadata={resolveDuration}
+          onPlay={() => setPlaying(true)}
+          onPause={() => setPlaying(false)}
+          onVolumeChange={() => { if (videoRef.current) setMuted(videoRef.current.muted); }}
+          onEnded={() => { setPlaying(false); setProgress(0); setElapsed(0); if (videoRef.current) videoRef.current.currentTime = 0; }}
+          style={{
+            // Край видео = край формы: кадр обрезается cover'ом, кольцо лежит поверх.
+            position: 'absolute', inset: 0, width: '100%', height: '100%',
+            objectFit: 'cover', display: 'block',
+          }}
+        />
+      </Box>
+      {/* Контуры начинаются в «12 часов» и идут по часовой — поворот не нужен. */}
+      <svg viewBox="0 0 100 100" aria-hidden="true" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}>
+        <path d={ringPath} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth={ROUND_RING} strokeLinejoin="round" />
+        <path
+          ref={ringRef}
+          d={ringPath} fill="none" stroke={accent} strokeWidth={ROUND_RING}
+          strokeLinecap="round" strokeLinejoin="round" pathLength={1} strokeDasharray="1 1"
+          strokeDashoffset={1 - progress}
           style={{ opacity: progress > 0 ? 1 : 0, transition: 'opacity 150ms' }}
         />
         {/* Ручка перемотки на конце прогресса */}
-        {duration > 0 && (playing || progress > 0) && (
+        {duration > 0 && (playing || progress > 0) && knob && (
           <circle
-            cx={50 + ringRadius * Math.cos(2 * Math.PI * progress)}
-            cy={50 + ringRadius * Math.sin(2 * Math.PI * progress)}
+            cx={knob.x}
+            cy={knob.y}
             r={ROUND_RING * 1.4} fill="#fff" stroke={accent} strokeWidth={1}
           />
         )}
         {/* Невидимая зона захвата: кольцо шире видимого, чтобы попадать пальцем */}
-        <circle
+        <path
           data-testid="round-seek"
-          cx="50" cy="50" r={50 - ROUND_HIT / 2} fill="none" stroke="transparent" strokeWidth={ROUND_HIT}
+          d={hitPath} fill="none" stroke="transparent" strokeWidth={ROUND_HIT}
           pointerEvents="stroke"
           style={{ cursor: duration > 0 ? 'grab' : 'pointer', touchAction: 'none' }}
           onPointerDown={onSeekDown}
@@ -950,22 +947,11 @@ function MessageBubble({
   const setHoveredId = useMessageHoverStore((s) => s.setHoveredId);
   const hoverSelf = () => setHoveredId(message.id);
   const hoverNone = () => setHoveredId(null);
-  // Панель действий живёт отдельно от ховера: ховер поднимает пузырь на любое
-  // наведение, а панель открывается только из уголка (мышь) или по долгому
-  // тапу (тач). Стор хранит id открытой панели — в чате максимум одна такая,
-  // а сброс ховера (setHoveredId(null)) её попутно закрывает.
-  const actionsOpen = useMessageHoverStore((s) => s.actionsId === message.id);
+  // Действия над сообщением — только в контекстном меню: ПКМ на мыши,
+  // долгий тап на таче. Ховер лишь слегка поднимает пузырь.
   // Режим выделения: булевы селекторы — клик по галочке перерисовывает один пузырь.
   const selectionActive = useMessageSelectionStore((s) => s.chatId === message.chatId);
   const selected = useMessageSelectionStore((s) => !!s.ids[message.id]);
-  const storeOpenActions = useMessageHoverStore((s) => s.openActions);
-  const openActions = () => storeOpenActions(message.id);
-  // Прямоугольник сообщения снимается РОВНО один раз на вход указателя и дальше
-  // только читается из памяти. Повторный getBoundingClientRect на каждом
-  // pointermove (как в сломанной версии) читал уже сдвинутую подъёмом рамку:
-  // тест уголка переворачивался туда-сюда, панель мигала сама по себе,
-  // сообщение дрожало, а постоянные layout-пересчёты съедали FPS.
-  const bubbleRectRef = useRef<DOMRect | null>(null);
 
   // Отодвигание от часов: считается по строкам сообщений, поэтому подключается
   // одинаково для своих и чужих — перекрывают часы они оба.
@@ -975,7 +961,6 @@ function MessageBubble({
   const clockAvoid = useClockAvoid(bubbleRef, rowRef);
   const clockAvoidOn = useUserSettingsStore((st) => st.wallClockAvoid);
 
-  const [showActions, setShowActions] = useState(false);
   const [openReply, setOpenReply] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [forwardChatId, setForwardChatId] = useState('');
@@ -984,16 +969,6 @@ function MessageBubble({
   // ПКМ по картинке (VK-стиль): отдельное меню с копированием изображения.
   // В состоянии src — конкретная картинка, на которую кликнули.
   const [imageMenu, setImageMenu] = useState<{ x: number; y: number; src: string } | null>(null);
-  // Якорь попапа реакций — виртуальный (координаты кнопки на момент клика), а не
-  // живой DOM-узел. Панель быстрого доступа условно монтируется ({actionsVisible &&…})
-  // и размонтируется, как только сбрасывается ховер. С живым якорем MUI звал
-  // getBoundingClientRect() у уже отсоединённой кнопки, получал нули и уводил
-  // попап в левый верхний угол экрана. Координаты переживают размонтирование.
-  const [reactionAnchor, setReactionAnchor] = useState<VirtualAnchor | null>(null);
-  // Пока открыт выбор реакции, панель остаётся смонтированной: попап должен
-  // висеть рядом с той панелью, из которой открыт, а не отдельно от неё.
-  const actionsVisible = actionsOpen || reactionAnchor !== null;
-  const [actionsPlacement, setActionsPlacement] = useState<'above' | 'below'>('below');
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchOrigin = useRef<{ x: number; y: number } | null>(null);
   const suppressTouchClick = useRef(false);
@@ -1063,12 +1038,43 @@ function MessageBubble({
   const senderName = sender ? [sender.firstName, sender.lastName].filter(Boolean).join(' ') || sender.username : 'Бот';
   // Добавляем cache-busting параметр по themeVersion, чтобы браузер перечитал
   // картинку аватара после смены (иначе кэш держит старую).
-  const senderAvatar = sender?.avatarUrl ? resolveFileUrl(sender.avatarUrl) : undefined;
+  const senderAvatarUrl = sender?.avatarUrl ? resolveFileUrl(sender.avatarUrl) : undefined;
+  const userId = sender?.id;
+
+  // Кэш аватарок: blob: URL для офлайн-просмотра. Ключ — userId отправителя.
+  const avatarCacheRef = useRef<Map<string, string>>(new Map());
+  const { getCachedFileUrl, fetchAndCacheFile } = useOfflineStore.getState();
+
+  // Ленивая загрузка и кэширование аватара отправителя (фоново, не блокирует рендер).
+  useEffect(() => {
+    if (!userId || !senderAvatarUrl) return;
+    // Если уже есть в ref — не пересоздаём.
+    if (avatarCacheRef.current.has(userId)) return;
+    void (async () => {
+      try {
+        // Сначала пробуем взять из IndexedDB кэша.
+        const cached = await getCachedFileUrl(userId);
+        if (cached) {
+          avatarCacheRef.current.set(userId, cached);
+          return;
+        }
+        // Иначе скачиваем по URL и кэшируем.
+        await fetchAndCacheFile(senderAvatarUrl, userId);
+        const blobUrl = await getCachedFileUrl(userId);
+        if (blobUrl) avatarCacheRef.current.set(userId, blobUrl);
+      } catch { /* аватар не критичен */ }
+    })();
+    return () => {
+      // Не отзываем URL здесь — он может быть нужен другому пузырю того же пользователя.
+    };
+  }, [userId, senderAvatarUrl, getCachedFileUrl, fetchAndCacheFile]);
+
+  const senderAvatar = avatarCacheRef.current.get(userId || '') || senderAvatarUrl;
 
   const attachment = message.attachments?.[0];
   // Кружок без подписи/ответа рисуем без пузыря: только круг и время под ним.
   const isRoundNote = message.attachments?.length === 1
-    && /^video-note\.(webm|mp4)$/.test(attachment?.fileName || '')
+    && isRoundNoteName(attachment?.fileName)
     && !message.content && !message.replyToId && !message.forwardFromId && !channelPost;
 
   // ── VK-альбом: все вложения сообщения — картинки ──────────────────────────
@@ -1085,7 +1091,7 @@ function MessageBubble({
 
   // ПКМ/долгое нажатие по картинке: отдельное меню (копировать, сохранить…).
   const openImageMenu = (e: React.MouseEvent, src: string) => {
-    // Тач-долгое нажатие (button !== 2) не трогаем — у сообщения своя панель.
+    // Тач-долгое нажатие (button !== 2) не трогаем — у сообщения своё меню.
     if (e.button !== 2 || !src) return;
     e.preventDefault();
     e.stopPropagation();
@@ -1096,7 +1102,6 @@ function MessageBubble({
   const handleAddReaction = (emoji: string) => {
     void runAction(async () => {
       await addReaction(message.chatId, message.id, emoji);
-      setReactionAnchor(null);
     });
   };
 
@@ -1113,26 +1118,6 @@ function MessageBubble({
     setContextMenu(null);
   };
 
-  const updateActionsPlacement = (element: HTMLElement) => {
-    const rect = element.getBoundingClientRect();
-    const actionBarHeight = 52;
-    const gap = 8;
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const spaceAbove = rect.top;
-    setActionsPlacement(spaceBelow < actionBarHeight + gap && spaceAbove > spaceBelow ? 'above' : 'below');
-  };
-
-  // Зона открытия — 72×32 у нижнего угла: слева у чужих сообщений, справа у
-  // своих, то есть там же, где и выезжает панель. Читает только сохранённый
-  // прямоугольник и не трогает DOM — открытие панели не может изменить
-  // собственный результат проверки и вызвать мигание.
-  const inActionsCorner = (clientX: number, clientY: number) => {
-    const rect = bubbleRectRef.current;
-    if (!rect) return false;
-    const fromBottom = rect.bottom - clientY;
-    const fromSide = isOwnSide ? rect.right - clientX : clientX - rect.left;
-    return fromBottom <= 32 && fromSide >= 0 && fromSide <= 72;
-  };
 
 
   const bubbleTextColor = isOwn ? (theme.bubbleOwnText || '#fff') : (theme.bubbleOtherText || theme.text);
@@ -1446,22 +1431,7 @@ function MessageBubble({
 
       <Box
         ref={bubbleRef}
-        onPointerEnter={(e) => {
-          if (e.pointerType !== 'mouse') return;
-          // Единственный замер геометрии на весь цикл ховера.
-          bubbleRectRef.current = e.currentTarget.getBoundingClientRect();
-          hoverSelf();
-          updateActionsPlacement(e.currentTarget);
-          // Панель действий открывается, только если вход пришёлся в уголок.
-          if (inActionsCorner(e.clientX, e.clientY)) openActions();
-        }}
-        onPointerMove={(e) => {
-          if (e.pointerType !== 'mouse' || actionsOpen) return;
-          // Сравниваем координаты с прямоугольником, снятым на вход, — никаких
-          // обращений к DOM. Из-за них набор стилей при открытии панели
-          // «переворачивал» проверку, панель мигала, и сообщение дрожало.
-          if (inActionsCorner(e.clientX, e.clientY)) openActions();
-        }}
+        onPointerEnter={(e) => { if (e.pointerType === 'mouse') hoverSelf(); }}
         onTouchStart={(e) => {
           cancelHold();
           suppressTouchClick.current = false;
@@ -1470,13 +1440,13 @@ function MessageBubble({
           hoverNone();
           const touch = e.touches[0];
           touchOrigin.current = { x: touch.clientX, y: touch.clientY };
-          const target = e.currentTarget;
+          const { clientX: x, clientY: y } = touch;
+          // Долгий тап открывает то же меню, что и ПКМ, в точке касания.
           holdTimer.current = setTimeout(() => {
             holdTimer.current = null;
             suppressTouchClick.current = true;
-            updateActionsPlacement(target);
-            hoverSelf();
-            openActions();
+            setImageMenu(null);
+            setContextMenu({ x, y });
           }, 550);
         }}
         onTouchMove={(e) => {
@@ -1488,7 +1458,12 @@ function MessageBubble({
             hoverNone();
           }
         }}
-        onTouchEnd={cancelHold}
+        onTouchEnd={(e) => {
+          cancelHold();
+          // Меню уже открыто долгим тапом: гасим синтетический click, иначе он
+          // попадёт в подложку меню и тут же его закроет.
+          if (suppressTouchClick.current && e.cancelable) e.preventDefault();
+        }}
         onTouchCancel={() => { cancelHold(); hoverNone(); }}
         onClickCapture={(e) => {
           if (!suppressTouchClick.current) return;
@@ -1496,7 +1471,7 @@ function MessageBubble({
           e.preventDefault();
           e.stopPropagation();
         }}
-        onPointerLeave={(e) => { if (e.pointerType === 'mouse') { hoverNone(); bubbleRectRef.current = null; } }}
+        onPointerLeave={(e) => { if (e.pointerType === 'mouse') hoverNone(); }}
         sx={{
           width: 'auto',
           maxWidth: `${maxWidthPct}%`,
@@ -1532,13 +1507,13 @@ function MessageBubble({
             if ((e.target as HTMLElement).closest('input, textarea')) return;
             e.preventDefault();
             e.stopPropagation();
+            // Браузерный contextmenu от долгого тапа (Android) — то же меню.
             if (touchOrigin.current) {
               cancelHold();
               suppressTouchClick.current = true;
-              updateActionsPlacement(e.currentTarget);
-              hoverSelf();
-              openActions();
-            } else if (e.button === 2) setContextMenu({ x: e.clientX, y: e.clientY });
+            }
+            setImageMenu(null);
+            setContextMenu({ x: e.clientX, y: e.clientY });
           }}
           onPointerDown={(e) => { if (e.pointerType === 'mouse') touchOrigin.current = null; }}
           className={bubbleEnabled && isOwn && customBubbleSpec && !ownOverrideSet('bubble') ? specAnimationClass(customBubbleSpec) : ''}
@@ -1623,7 +1598,9 @@ function MessageBubble({
                       ? <a key={i} href={part.href} target={part.href?.startsWith('http') ? '_blank' : undefined}
                         rel={part.href?.startsWith('http') ? 'noopener noreferrer' : undefined}
                         onClick={(event) => event.stopPropagation()}
-                        style={{ color: theme.accent, textDecoration: 'underline', overflowWrap: 'anywhere' }}>
+                        // Цвет — как у текста сообщения (тема/скин пузыря): акцент
+                        // сливался с плашкой. Ссылку выделяет подчёркивание.
+                        style={{ color: 'inherit', textDecoration: 'underline', textUnderlineOffset: 2, overflowWrap: 'anywhere' }}>
                         {part.value}
                       </a>
                       : <span key={i}>{part.value}</span>
@@ -1701,7 +1678,7 @@ function MessageBubble({
                 const attachmentUrl = resolveFileUrl(attachment.fileUrl);
                 const isAudio = attachment.mimeType?.startsWith('audio/') || (attachments.length === 1 && message.type === 'voice');
                 // Старые кружки сохранены с mimeType text/plain — узнаём их по имени файла.
-                const isVideo = attachment.mimeType?.startsWith('video/') || (attachments.length === 1 && message.type === 'video') || /^video-note\.(webm|mp4)$/.test(attachment.fileName || '');
+                const isVideo = attachment.mimeType?.startsWith('video/') || (attachments.length === 1 && message.type === 'video') || isRoundNoteName(attachment.fileName);
                 const isImage = attachment.mimeType?.startsWith('image/') || (attachments.length === 1 && message.type === 'photo');
                 const isDocument = !isAudio && !isVideo && !isImage;
                 return <Box key={attachment.id || index} sx={{ flex: '0 0 100%', minWidth: 0, scrollSnapAlign: 'start' }}>
@@ -1711,8 +1688,8 @@ function MessageBubble({
               )}
 
               {isVideo && attachment && (
-                /^video-note\.(webm|mp4)$/.test(attachment.fileName || '') ?
-                  <RoundVideoNote src={attachmentUrl} accent={theme.accent} /> :
+                isRoundNoteName(attachment.fileName) ?
+                  <RoundVideoNote src={attachmentUrl} accent={theme.accent} shape={roundShapeFromName(attachment.fileName) || 'circle'} /> :
                   <VideoPlayer src={attachmentUrl} />
               )}
 
@@ -1818,143 +1795,7 @@ function MessageBubble({
         )}
 
         {actionError && <Typography role="alert" color="error" sx={{ fontSize: 13, mt: 0.5 }}>{actionError}</Typography>}
-        {/* Панель монтируется ТОЛЬКО когда открыта (вход в уголок пузыря или
-            долгий тап): раньше она висела в DOM скрытой для каждого сообщения —
-            7 IconButton + 7 Tooltip на пузырь, то есть ~2800 лишних узлов на
-            200 сообщений — и участвовала в каждом цикле reconcile. Раз
-            позиционируется относительно родителя, порядок в DOM не меняется. */}
-        {actionsVisible && (
-        <Box
-          onClick={e => e.stopPropagation()}
-          onPointerDown={e => e.stopPropagation()}
-          // Панель — потомок строки сообщения, поэтому pointerleave на неё не
-          // срабатывает при переходе курсора с пузыря на кнопки: ховер и панель
-          // держит сама строка, размонтирования на шве нет.
-          onMouseEnter={(e) => { openActions(); updateActionsPlacement(e.currentTarget.parentElement as HTMLElement); }}
-          sx={{
-          display: 'flex', alignItems: 'center', gap: 0.5,
-          justifyContent: isOwnSide ? 'flex-end' : 'flex-start',
-          alignSelf: isOwnSide ? 'flex-end' : 'flex-start',
-          width: 'max-content',
-          maxWidth: 'calc(100vw - 24px)',
-          boxSizing: 'border-box',
-          flexWrap: 'nowrap',
-          overflowX: 'auto',
-          overflowY: 'hidden',
-          scrollbarWidth: 'none',
-          '&::-webkit-scrollbar': { display: 'none' },
-          touchAction: 'pan-x',
-          opacity: isHovered || reactionAnchor ? 1 : 0, transition: 'opacity 180ms',
-          p: 0.25,
-          // Панель под пузырём и ни на что не давит: position:absolute держит
-          // раскладку ленты прежней. Видимую плашку рисует ::before, а сама
-          // панель сверху остаётся прозрачной полосой-мостиком — на ней курсор
-          // не теряет ховер при переходе с пузыря на кнопки.
-          position: 'absolute',
-          top: actionsPlacement === 'below' ? 'calc(100% - 2px)' : 'auto',
-          bottom: actionsPlacement === 'above' ? 'calc(100% - 2px)' : 'auto',
-          left: isOwnSide ? 'auto' : 0,
-          right: isOwnSide ? 0 : 'auto',
-          pt: actionsPlacement === 'below' ? '12px' : 0,
-          pb: actionsPlacement === 'above' ? '12px' : 0,
-          // Прозрачная «стеклянная» плашка: подложка с полупрозрачным фоном и
-          // размытием, скругление со всех сторон, тонкая рамка и мягкая тень.
-          // isolation удерживает слой внутри панели, чтобы ::before с z-index:-1
-          // не уехал под фон чата.
-          background: 'transparent',
-          border: 'none',
-          boxShadow: 'none',
-          isolation: 'isolate',
-          '&::before': {
-            content: '""',
-            position: 'absolute',
-            left: 0, right: 0,
-            top: actionsPlacement === 'above' ? 0 : '12px',
-            bottom: actionsPlacement === 'above' ? '12px' : 0,
-            zIndex: -1,
-            pointerEvents: 'none',
-            background: withAlpha(theme.bgInput, 0.72),
-            backdropFilter: 'blur(16px) saturate(1.25)',
-            WebkitBackdropFilter: 'blur(16px) saturate(1.25)',
-            border: `1px solid ${theme.border}`,
-            borderRadius: 14,
-            boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
-          },
-          zIndex: 10,
-          pointerEvents: 'auto',
-        }} className="msg-actions">
-          {!channelPost && <Tooltip title="Ответить">
-            <IconButton size="small" onClick={() => onReply(message)} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><Reply sx={{ fontSize: 16 }} /></IconButton>
-          </Tooltip>}
-          <Tooltip title="Переслать">
-            <IconButton size="small" onClick={() => onForward(message)} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><Forward sx={{ fontSize: 16 }} /></IconButton>
-          </Tooltip>
-          <Tooltip title="Копировать">
-            <IconButton size="small" onClick={() => { navigator.clipboard.writeText(message.content || ''); }} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><ContentCopy sx={{ fontSize: 16 }} /></IconButton>
-          </Tooltip>
-          <Tooltip title="Реакция">
-            <IconButton size="small" onClick={(e) => {
-              // Снимаем прямоугольник кнопки ЗДЕСЬ, пока она ещё в DOM.
-              setReactionAnchor(anchorFromRect(e.currentTarget.getBoundingClientRect()));
-            }} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><AddReaction sx={{ fontSize: 16 }} /></IconButton>
-          </Tooltip>
-          <Tooltip title={message.isPinned ? 'Открепить' : 'Закрепить'}>
-            <IconButton size="small" onClick={handleTogglePin} sx={{ color: message.isPinned ? theme.accent : theme.textSec, flexShrink: 0, ...membranePressSx }}><PushPin sx={{ fontSize: 16 }} /></IconButton>
-          </Tooltip>
-          {/* На таче нет ПКМ — выделение запускается из панели долгого тапа. */}
-          <Tooltip title="Выделить">
-            <IconButton size="small" onClick={() => { hoverNone(); useMessageSelectionStore.getState().start(message.chatId, message.id); }} sx={{ color: theme.textSec, flexShrink: 0, ...membranePressSx }}><CheckCircleOutline sx={{ fontSize: 16 }} /></IconButton>
-          </Tooltip>
-          {canEdit && (
-            <Tooltip title="Редактировать">
-              <IconButton size="small" onClick={() => onEdit?.(message)} sx={{ color: theme.textSec, ...membranePressSx }}><Edit sx={{ fontSize: 16 }} /></IconButton>
-            </Tooltip>
-          )}
-          {canDelete && (
-            <Tooltip title="Удалить">
-              <IconButton size="small" onClick={handleDelete} sx={{ color: '#f44336', ...membranePressSx }}><Delete sx={{ fontSize: 16 }} /></IconButton>
-            </Tooltip>
-          )}
-        </Box>
-        )}
       </Box>
-
-      {/* Попап выбора реакции: открывается НАД строкой панели, начинаясь от
-          правого края кнопки-триггера. Панель и триггер остаются видимыми
-          СЛЕВА от эмодзи (раньше попап падал под кнопкой и перекрывал
-          панель с сообщениями снизу). MUI сам прижимает попап к краю
-          экрана, если справа не хватает места. */}
-      <Popover
-        open={Boolean(reactionAnchor)}
-        anchorEl={reactionAnchor}
-        onClose={() => setReactionAnchor(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-        transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-        PaperProps={{
-          sx: {
-            bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
-            borderRadius: 3, p: 1, boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-          }
-        }}
-      >
-        <Box sx={{ display: 'flex', gap: 0.25, flexWrap: 'wrap', maxWidth: 260 }}>
-          {reactionSlots.map((emoji) => (
-            <Box
-              key={emoji}
-              role="button"
-              aria-label={`Поставить реакцию ${reactionLabel(emoji)}`}
-              onClick={() => handleAddReaction(emoji)}
-              sx={{
-                fontSize: emojiSize, cursor: 'pointer', p: 0.5, borderRadius: 1.5,
-                transition: 'transform 0.1s',
-                '&:hover': { transform: 'scale(1.3)', bgcolor: theme.bgHover },
-              }}
-            >
-              <ReactionGlyph value={emoji} />
-            </Box>
-          ))}
-        </Box>
-      </Popover>
 
       {contextMenu && (
         <ContextMenu
@@ -1962,7 +1803,7 @@ function MessageBubble({
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
           header={
-            // Быстрые реакции прямо в ПКМ-меню: те же 10 слотов, что и в попапе «Реакция».
+            // Быстрые реакции прямо в контекстном меню (ПКМ / долгий тап).
             <Box role="group" aria-label="Реакции" data-vera-context-reactions
               sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.25, px: 0.5, py: 0.25, maxWidth: 260 }}>
               {reactionSlots.map((emoji) => (

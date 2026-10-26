@@ -10,9 +10,28 @@ const { contextBridge, ipcRenderer } = require('electron');
 let bufferedDeepLink = null;
 ipcRenderer.on('vera:deeplink', (_e, url) => { bufferedDeepLink = url; });
 
+let onlineHandlers = new Set();
+ipcRenderer.on('vera:online-status', (_e, isOnline) => {
+  for (const h of onlineHandlers) { try { h(isOnline); } catch { /* ignore */ } }
+});
+
 const api = {
   // id устройства генерит сам renderer (в localStorage), но вернём и агент
   platform: () => Promise.resolve({ platform: process.platform, isDesktop: true }),
+  isOnline: () => ipcRenderer.invoke('vera:is-online'),
+  onOnlineStatusChange(handler) {
+    onlineHandlers.add(handler);
+    return () => onlineHandlers.delete(handler);
+  },
+  // Своя верхняя панель: клиент рисует полосу, а кнопкам окна сообщает цвета темы.
+  titleBar: {
+    height: 32,
+    platform: process.platform,
+    setColors(colors) {
+      if (!colors || typeof colors !== 'object') return;
+      ipcRenderer.send('vera:title-bar-colors', { color: String(colors.color), symbolColor: String(colors.symbolColor) });
+    },
+  },
   onDeepLink(handler) {
     const wrapped = (_e, url) => { try { handler(url); } catch (e) { console.error('[vera] onDeepLink', e); } };
     ipcRenderer.on('vera:deeplink', wrapped);

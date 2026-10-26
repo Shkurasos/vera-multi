@@ -18,6 +18,7 @@ import { useAnimStore, ANIM_GROUPS } from '../store/animStore';
 import { useChatBgPrefsStore, useAllStockWallpapers, wallpaperCssClass } from '../store/chatBgPrefsStore';
 import WallpaperSettingsDialog from './WallpaperSettingsDialog';
 import ChatListWallpaperPanel from './ChatListWallpaperPanel';
+import GapWallpaperPanel from './GapWallpaperPanel';
 import { GlobalSoundSettingsContent } from './GlobalSoundSettingsDialog';
 import LayoutDesignerDialog from './LayoutDesignerDialog';
 import BubbleSettingsControls from './BubbleSettingsControls';
@@ -26,6 +27,7 @@ import FontPicker from './FontPicker';
 import { APP_FONT_OPTIONS } from '../utils/appFont';
 import CustomIconPacksPanel from './CustomIconPacksPanel';
 import { SettingRow, SettingSlider, SettingSection, choiceGroupSx } from './SettingRow';
+import { ROUND_SHAPES, normalizeRoundShape } from '../utils/roundShape';
 
 /** Пример для поля своего HUD: часы, которые берут время и цвет из сообщений приложения. */
 const HUD_HTML_EXAMPLE = `<div id="t" style="font:700 64px sans-serif;text-align:center"></div>
@@ -159,6 +161,9 @@ export function WallpaperPanel() {
       <Box sx={{ py: 1.25, borderBottom: `1px solid ${theme.border}` }}>
         <ChatListWallpaperPanel />
       </Box>
+
+      <SettingSection title="Обои промежутков" hint="Фото по краям окна чата, в зазоре между ним и панелями. Рисуются только полосы, а не всё фото." />
+      <GapWallpaperPanel />
     </Box>
   );
 }
@@ -183,6 +188,7 @@ export function SoundPanel() {
 export function IconsPanel() {
   const theme = useThemeStore((s) => s.theme);
   const { iconPack, setIconPack } = useUiPrefsStore();
+  const { iconSize, set } = useUserSettingsStore();
   return (
     <Box>
       <SettingSection title="Пак иконок" hint={ICON_PACKS.find((p) => p.id === iconPack)?.desc} />
@@ -210,6 +216,16 @@ export function IconsPanel() {
           ))}
         </ToggleButtonGroup>
       </Box>
+
+      <SettingSlider
+        label="Размер иконок"
+        hint="Размер иконок интерфейса в пикселях (16..40)"
+        value={iconSize}
+        onChange={(v) => set('iconSize', v)}
+        min={16}
+        max={40}
+        step={2}
+      />
 
       <SettingSection title="Свои паки" />
       <Box sx={{ py: 1.25, borderBottom: `1px solid ${theme.border}` }}>
@@ -552,6 +568,10 @@ export function MessagesPanel() {
       <ChoiceRow label="Плашка даты в ленте сообщений"
         value={s.chatDateAlign ?? 'center'} onChange={(v) => s.set('chatDateAlign', v as ChatDateAlign)}
         items={[['left', 'Слева'], ['center', 'По центру'], ['right', 'Справа']]} />
+      <ChoiceRow label="Форма кружков"
+        hint="Видеосообщения, которые вы отправляете. Форму можно сменить и во время записи."
+        value={s.roundShape ?? 'circle'} onChange={(v) => s.set('roundShape', normalizeRoundShape(v))}
+        items={ROUND_SHAPES.map((r) => [r.id, r.label] as [string, string])} />
       <PanelNote>Всё вместе сохраняется в теме.</PanelNote>
     </Box>
   );

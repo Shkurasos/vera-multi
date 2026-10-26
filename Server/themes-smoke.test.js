@@ -168,7 +168,12 @@ test('админ загружает фото-файл: он доступен в�
   assert.match(item.url, /^\/uploads\/wallpapers\/.+\.png$/, 'файл сохранён с расширением');
 
   // Файл реально отдаётся по HTTP — иначе фон был бы битым у всех.
-  const file = await fetch(`${BASE}${item.url}`);
+  // /uploads закрыт cookie сессии: без неё 401, с подписанной cookie — 200.
+  assert.equal((await fetch(`${BASE}${item.url}`)).status, 401, 'без входа файл не отдаётся');
+  const { createMediaAuth, MEDIA_COOKIE } = require('./media-auth');
+  const media = createMediaAuth({ secret: JWT_SECRET, ttlMs: 60_000, isSessionValid: () => true });
+  const cookie = `${MEDIA_COOKIE}=${media.sign({ userId: 'user-1', deviceId: null, tv: 0, dv: 0 })}`;
+  const file = await fetch(`${BASE}${item.url}`, { headers: { cookie } });
   assert.equal(file.status, 200, 'файл доступен по ссылке из каталога');
   assert.ok((await file.arrayBuffer()).byteLength > 0, 'файл не пустой');
 

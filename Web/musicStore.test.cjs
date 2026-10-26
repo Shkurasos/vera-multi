@@ -40,6 +40,10 @@ function boot(musicApi) {
       '../services/api': { musicApi: musicApi || { recordPlay: () => Promise.resolve() } },
       './../services/peer': { peer: {}, isPeerAvailable: () => false },
       '../services/storeSyncSimple': { registerAccountStore: () => {} },
+      './offlineStore': { useOfflineStore: { getState: () => ({
+        cacheMusicLibrary: async () => {}, fetchAndCacheFile: async () => '', hasCachedFile: async () => true,
+        getCachedMusicLibrary: async () => [], getCachedFileUrl: async () => null,
+      }) } },
     }[n] || {}),
   });
   ctx.exports = ctx.module.exports;

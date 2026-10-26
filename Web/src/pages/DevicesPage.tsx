@@ -4,7 +4,7 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material';
 import QRCode from 'qrcode';
-import { devicesApi, getDeviceId } from '../services/api';
+import { authApi, devicesApi, getDeviceId } from '../services/api';
 import { useThemeStore } from '../store/themeStore';
 
 interface DeviceItem {
@@ -114,8 +114,8 @@ export default function DevicesPage() {
     <Box p={4} maxWidth={900} mx="auto" pb={{ xs: 76, md: 4 }}>
       <Typography variant="h5" mb={2} fontWeight={700}>Мои устройства</Typography>
       <Alert severity="info" sx={{ mb: 3 }}>
-        Можно привязать несколько устройств к одному аккаунту. Каждое новое устройство добавляется
-        через QR-код или ссылку, созданную с уже привязанного устройства.
+        Войти на новом устройстве можно по нику и паролю или через QR-код / ссылку,
+        созданную с уже привязанного устройства.
       </Alert>
 
       <Paper sx={{ 
@@ -170,6 +170,9 @@ export default function DevicesPage() {
           </Box>
         )}
       </Paper>
+
+      <PasswordPanel />
+
 
       <Paper sx={{ 
         p: 2, mb: 3,
@@ -261,6 +264,81 @@ export default function DevicesPage() {
 
       {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
     </Box>
+  );
+}
+
+/**
+ * Пароль аккаунта. Аккаунтам, созданным раньше «по устройству», пароля нет —
+ * без него войти на новом устройстве можно только по QR. Здесь его можно задать.
+ */
+function PasswordPanel() {
+  const { theme } = useThemeStore();
+  const [hasPassword, setHasPassword] = useState<boolean | null>(null);
+  const [username, setUsername] = useState('');
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [next2, setNext2] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    authApi.me()
+      .then(({ data }) => { setHasPassword(!!data?.hasPassword); setUsername(data?.username || ''); })
+      .catch(() => setHasPassword(null));
+  }, []);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setMsg(null);
+    if (next.length < 12) { setMsg({ ok: false, text: 'Пароль должен содержать не менее 12 символов' }); return; }
+    if (next !== next2) { setMsg({ ok: false, text: 'Пароли не совпадают' }); return; }
+    setBusy(true);
+    try {
+      await authApi.setPassword(next, hasPassword ? current : undefined);
+      setHasPassword(true);
+      setCurrent(''); setNext(''); setNext2('');
+      setMsg({ ok: true, text: 'Пароль сохранён. Теперь можно войти по нику и паролю на любом устройстве.' });
+    } catch (err: any) {
+      setMsg({ ok: false, text: err?.response?.data?.message || 'Не удалось сохранить пароль' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (hasPassword === null) return null;
+  const fieldSx = {
+    mb: 1.5,
+    '& .MuiInputBase-root': { color: theme.text },
+    '& .MuiOutlinedInput-notchedOutline': { borderColor: theme.border },
+  };
+  return (
+    <Paper sx={{ p: 2, mb: 3, bgcolor: theme.bgHeader, border: `1px solid ${theme.border}` }}>
+      <Typography variant="subtitle1" mb={1} sx={{ color: theme.text }}>
+        {hasPassword ? 'Сменить пароль' : 'Задать пароль'}
+      </Typography>
+      <Typography variant="body2" sx={{ color: theme.textSec, mb: 2 }}>
+        {hasPassword
+          ? <>Вход на новом устройстве: ник <b>@{username}</b> и пароль.</>
+          : <>У аккаунта нет пароля. Задайте его, чтобы входить по нику <b>@{username}</b> на других устройствах без QR-кода.</>}
+      </Typography>
+      <Box component="form" onSubmit={save} noValidate maxWidth={420}>
+        {/* Скрытое поле с ником помогает менеджерам паролей сохранить пару логин/пароль. */}
+        <input type="text" name="username" autoComplete="username" value={username} readOnly hidden />
+        {hasPassword && (
+          <TextField fullWidth size="small" type="password" label="Текущий пароль" value={current}
+            onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" disabled={busy} sx={fieldSx} />
+        )}
+        <TextField fullWidth size="small" type="password" label="Новый пароль" value={next}
+          onChange={(e) => setNext(e.target.value)} autoComplete="new-password" disabled={busy}
+          helperText="Не менее 12 символов" sx={fieldSx} inputProps={{ maxLength: 256 }} />
+        <TextField fullWidth size="small" type="password" label="Повторите пароль" value={next2}
+          onChange={(e) => setNext2(e.target.value)} autoComplete="new-password" disabled={busy} sx={fieldSx} inputProps={{ maxLength: 256 }} />
+        <Button type="submit" variant="contained" disabled={busy || !next}>
+          {busy ? 'Сохраняем…' : 'Сохранить пароль'}
+        </Button>
+        {msg && <Alert severity={msg.ok ? 'success' : 'error'} sx={{ mt: 2 }} role="status">{msg.text}</Alert>}
+      </Box>
+    </Paper>
   );
 }
 

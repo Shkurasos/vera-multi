@@ -44,6 +44,8 @@ test('all collectible skins are recognized by the server and survive profile sav
   assert.ok(validationStart >= 0 && validationEnd > validationStart);
   const isKnownSkinId = vm.runInNewContext(
     `${server.slice(validationStart, validationEnd)}\nisKnownSkinId;`,
+    // Сервер берёт ключи паков из общего каталога кейсов.
+    { require: id => require(path.resolve(__dirname, '../Server', id)) },
   );
   const routeStart = server.indexOf("app.patch('/api/users/me',");
   const routeEnd = server.indexOf('// GET /api/users/:id/customization', routeStart);

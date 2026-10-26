@@ -1,12 +1,35 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
-export default defineConfig({
+// Идентификатор сборки: зашивается в бандл (__VERA_BUILD_ID__) и кладётся
+// рядом в dist/version.json. Клиент сравнивает свой id с серверным и, если
+// они разные, предлагает обновиться. В dev-режиме id = 'dev' — проверка
+// отключена, иначе dev-сервер всегда «отставал» бы от последней dist-сборки.
+const BUILD_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+function versionFilePlugin(): Plugin {
+  return {
+    name: 'vera-version-file',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'version.json',
+        source: JSON.stringify({ buildId: BUILD_ID, builtAt: new Date().toISOString() }),
+      });
+    },
+  };
+}
+
+export default defineConfig(({ command }) => ({
   // base:'./' — критично для загрузки из file:// в Electron (иначе assets
   // резолвятся с абсолютного /, что ломает production-сборку).
   base: './',
-  plugins: [react()],
+  plugins: [react(), versionFilePlugin()],
+  define: {
+    __VERA_BUILD_ID__: JSON.stringify(command === 'build' ? BUILD_ID : 'dev'),
+  },
   resolve: {
     alias: [
       // Точный алиас: только bare-импорт "@mui/icons-material" → шим с паками иконок.
@@ -61,4 +84,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

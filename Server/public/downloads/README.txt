@@ -23,3 +23,23 @@
   .exe, .msi                     -> Windows
   .dmg, .pkg                     -> macOS
   .AppImage, .deb, .rpm, .snap   -> Linux
+  .apk, .aab                     -> Android
+
+Сборка:
+  ПК (Windows):  cd App; npm install; npm run build
+                 -> App\dist-electron-build\Vera-Setup-Windows.exe
+  Android:       см. Android\README.md -> Vera-Android.apk
+
+One server for the site and the apps (Cloudflare Tunnel and others)
+-------------------------------------------------------------------
+On download, the server writes into Vera-Android.apk and Vera-Setup-Windows.exe
+the address the site was opened from. Open the site at
+https://xxx.trycloudflare.com, download the app, and it connects to that same
+https://xxx.trycloudflare.com. No rebuild is needed.
+  1) cd Server; npm start
+  2) cloudflared tunnel --url http://localhost:3000
+  3) Send a friend the https://....trycloudflare.com link, have them open
+     /download and install the app.
+The free tunnel's address changes on every start, so apps that are already
+installed must be downloaded again from the new address.
+A permanent address can be pinned with APP_SERVER_URL=https://... (env).

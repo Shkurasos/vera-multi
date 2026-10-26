@@ -34,6 +34,8 @@ const { v4: uuidv4 } = require(tryResolve('uuid'));
 const cookieParser = require(tryResolve('cookie-parser'));
 const crypto = require('crypto');
 const moderation = require('./moderation');
+const { createMediaAuth } = require('./media-auth');
+const { createDownloadStamper } = require('./download-stamp');
 const blocks = require('./blocks');
 const themes = require('./themes');
 const adminWallpapers = require('./admin-wallpapers');
@@ -569,7 +571,15 @@ function acceptLinkInviteOnServer(invite, newDeviceId, newDeviceName) {
   const ownerId = invite.userId;
 
   const sameDevice = getDeviceForUser(ownerId, cleanId);
-  if (sameDevice && !sameDevice.revoked) return { ok: false, message: 'Это устройство уже входит в этот аккаунт. Откройте ссылку на новом устройстве.' };
+  if (sameDevice && !sameDevice.revoked) {
+    if (!sameDevice.loggedOut) return { ok: false, message: 'Это устройство уже входит в этот аккаунт. Откройте ссылку на новом устройстве.' };
+    // Устройство вышло из аккаунта и возвращается по ссылке владельца.
+    sameDevice.loggedOut = false;
+    sameDevice.lastSeenAt = Date.now();
+    db.linkInvites = (db.linkInvites || []).filter(i => i.id !== invite.id);
+    saveDb();
+    return { ok: true, device: sameDevice };
+  }
 
   const other = (db.devices || []).find(d => d.deviceId === cleanId && d.userId !== ownerId);
   if (other) return { ok: false, message: 'Это устройство уже привязано к другому аккаунту.' };
@@ -595,6 +605,63 @@ function acceptLinkInviteOnServer(invite, newDeviceId, newDeviceName) {
   db.linkInvites = (db.linkInvites || []).filter(i => i.id !== invite.id);
   saveDb();
   return { ok: true, device };
+}
+
+function setInstallationCookie(req, res, raw) {
+  res.cookie('vera_installation', raw, { httpOnly: true, sameSite: 'lax', secure: req.secure || req.headers['x-forwarded-proto'] === 'https', path: '/', maxAge: 400 * 24 * 60 * 60 * 1000 });
+}
+
+// Вход/регистрация по паролю: пароль сам доказывает владение аккаунтом,
+// поэтому новое устройство привязывается без QR. Публичный deviceId из тела
+// запроса не используется — только секрет установки из HttpOnly-cookie.
+// Если эта установка уже принадлежит другому аккаунту (на браузере был другой
+// вход), ей выдаётся новый идентификатор: чужое устройство не переписываем.
+// Возвращает запись устройства или null (ответ с ошибкой уже отправлен).
+function bindInstallationForUser(req, res, user, deviceName) {
+  const secret = req.cookies?.vera_installation;
+  let hash = null;
+  let current = null;
+  if (typeof secret === 'string' && /^[a-f0-9]{64}$/.test(secret)) {
+    hash = crypto.createHash('sha256').update(secret).digest('hex');
+    current = (db.devices || []).find(d => d.installationHash === hash) || null;
+  }
+  const claimedId = typeof req.body?.deviceId === 'string' ? normalizeDeviceId(req.body.deviceId) : null;
+  if (moderationBlocked(db, user.id, current?.deviceId, hash) || (claimedId && moderationBlocked(db, null, claimedId))) {
+    res.status(403).json({ message: 'Доступ заблокирован', code: 'ACCOUNT_BANNED' });
+    return null;
+  }
+  const name = String(deviceName || 'Моё устройство').slice(0, 80);
+  let device = current && current.userId === user.id ? current : null;
+  if (!device) {
+    if (countUserDevices(user.id) >= MAX_DEVICES_PER_ACCOUNT) {
+      res.status(403).json({ message: `Достигнут лимит устройств (${MAX_DEVICES_PER_ACCOUNT}).` });
+      return null;
+    }
+    const raw = crypto.randomBytes(32).toString('hex');
+    hash = crypto.createHash('sha256').update(raw).digest('hex');
+    setInstallationCookie(req, res, raw);
+    device = {
+      id: uuidv4(),
+      userId: user.id,
+      deviceId: 'dev_' + crypto.randomBytes(24).toString('hex'),
+      name,
+      isPrimary: countUserDevices(user.id) === 0,
+      linkedViaQr: false,
+      linkedViaPassword: true,
+      createdAt: new Date().toISOString(),
+      lastSeenAt: Date.now(),
+    };
+    (db.devices || (db.devices = [])).push(device);
+  } else if (device.revoked) {
+    // Отвязанное устройство вернулось с паролем: старые токены остаются недействительны.
+    device.revoked = false;
+    device.tokenVersion = Number(device.tokenVersion || 0) + 1;
+  }
+  device.installationHash = hash;
+  device.loggedOut = false;
+  device.lastSeenAt = Date.now();
+  device.name = name;
+  return device;
 }
 
 function createSavedMessagesChat(userId) {
@@ -745,7 +812,7 @@ const messageLimiter = makeRateLimit({ windowMs: 60_000, max: 120, key: byUserKe
 const uploadLimiter  = makeRateLimit({ windowMs: 60_000, max: 30,  key: byUserKey }); // 30 загрузок/мин
 const writeLimiter   = makeRateLimit({ windowMs: 60_000, max: 300, key: byUserKey }); // 300 mutating-запросов/мин
 const languageCorrectionLimiter = makeRateLimit({ windowMs: 60_000, max: 20, key: byUserKey });
-app.use(['/api/auth/device', '/api/auth/register', '/api/auth/login', '/api/auth/passkey', '/api/auth/logout', '/api/auth/refresh'], authLimiter);
+app.use(['/api/auth/device', '/api/auth/register', '/api/auth/login', '/api/auth/password', '/api/auth/passkey', '/api/auth/logout', '/api/auth/refresh'], authLimiter);
 app.use('/api/users/search', searchLimiter);
 app.use(['/api/messages'], messageLimiter);
 app.use(['/api/files', '/api/users/avatar', '/api/users/me/avatar', '/api/music', '/api/ai/models'], uploadLimiter);
@@ -762,6 +829,30 @@ app.use((req, res, next) => {
   return writeLimiter(req, res, next);
 });
 
+// SEC: /uploads доступен только с живой сессией. <img>/<audio> не умеют слать
+// Bearer, поэтому при входе ставится HttpOnly-cookie vera_media (path=/uploads),
+// а здесь проверяется её подпись и что сессия не отозвана: logout, отвязка
+// устройства и бан сразу закрывают доступ к файлам.
+function mediaSessionValid(session) {
+  const user = db.users.find(u => u.id === session.u);
+  if (!user) return false;
+  if (moderation.blocked(db, user.id, session.d)) return false;
+  if (Number(session.tv || 0) !== Number(user.tokenVersion || 0)) return false;
+  if (session.d) {
+    const dev = (db.devices || []).find(d => d.userId === user.id && d.deviceId === session.d);
+    if (!dev || dev.revoked) return false;
+    if (Number(session.dv || 0) !== Number(dev.tokenVersion || 0)) return false;
+  }
+  return true;
+}
+const mediaAuth = createMediaAuth({
+  secret: JWT_SECRET,
+  ttlMs: 30 * 24 * 60 * 60 * 1000,
+  secure: IS_PROD,
+  isSessionValid: mediaSessionValid,
+});
+app.use('/uploads', mediaAuth.middleware);
+
 // SEC: /uploads раздаём как attachment + nosniff, чтобы залитый .html/.svg не исполнялся в нашем домене.
 app.use('/uploads', express.static(UPLOADS_DIR, {
   maxAge: '30d',
@@ -774,7 +865,8 @@ app.use('/uploads', express.static(UPLOADS_DIR, {
     // PERF: файлы в /uploads именуются с уникальным хэшем/timestamp и не
     // меняются — кэшируем агрессивно на 30 дней. Это резко сокращает объём
     // трафика (аватарки/фото при повторных заходах не тянутся заново).
-    res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+    // private: файлы выдаются только по cookie, общим кэшам (CDN/прокси) их хранить нельзя.
+    res.setHeader('Cache-Control', 'private, max-age=2592000, immutable');
     const lower = filePath.toLowerCase();
     // SVG намеренно не раздаём inline: в нём может быть <script>. Загрузка SVG
     // и так запрещена (см. mimeFilter), так что это лишь страховка.
@@ -790,6 +882,9 @@ app.use('/uploads', express.static(UPLOADS_DIR, {
 // а бинарники раздаются по /downloads/<file>.
 const DOWNLOADS_DIR = path.join(__dirname, 'public', 'downloads');
 try { fs.mkdirSync(DOWNLOADS_DIR, { recursive: true }); } catch {}
+// .apk/.exe are served with the address of the server the site was opened from
+// (Cloudflare tunnel, localhost...), so the downloaded app connects to the same place.
+app.use('/downloads', createDownloadStamper({ dir: DOWNLOADS_DIR }));
 app.use('/downloads', express.static(DOWNLOADS_DIR, {
   maxAge: '1h',
   setHeaders: (res, filePath) => {
@@ -844,6 +939,7 @@ app.get('/api/downloads', (req, res) => {
       if (/\.(exe|msi)$/.test(lower)) platform = 'win';
       else if (/\.(dmg|pkg)$/.test(lower)) platform = 'mac';
       else if (/\.(appimage|deb|rpm|snap|tar\.gz|tgz)$/.test(lower)) platform = 'linux';
+      else if (/\.(apk|aab)$/.test(lower)) platform = 'android';
       return {
         platform,
         filename: name,
@@ -857,9 +953,33 @@ app.get('/api/downloads', (req, res) => {
 
 // Serve built React app (Web/dist) — только статика, SPA fallback добавляется в конце
 const CLIENT_DIST = path.join(__dirname, '..', 'Web', 'dist');
+// index.html и version.json не кэшируем: после выкладки новой сборки клиент
+// должен увидеть новый buildId и при перезагрузке получить новые ссылки на
+// ассеты. Сами ассеты с хешем в имени кэшируются как обычно.
+const NO_CACHE_CLIENT_FILES = new Set(['index.html', 'version.json']);
 if (fs.existsSync(CLIENT_DIST)) {
-  app.use(express.static(CLIENT_DIST));
+  app.use(express.static(CLIENT_DIST, {
+    setHeaders(res, filePath) {
+      if (NO_CACHE_CLIENT_FILES.has(path.basename(filePath))) res.setHeader('Cache-Control', 'no-cache');
+    },
+  }));
 }
+
+// Версия веб-клиента, который сейчас раздаёт сервер. Публичная: buildId не
+// секрет, а проверка обновлений идёт и до входа. Файл читается при каждом
+// запросе, поэтому новая сборка видна без перезапуска сервера.
+app.get('/api/client-version', (req, res) => {
+  fs.readFile(path.join(CLIENT_DIST, 'version.json'), 'utf8', (err, raw) => {
+    if (err) return res.status(404).json({ message: 'Версия клиента недоступна' });
+    try {
+      const { buildId } = JSON.parse(raw);
+      if (typeof buildId !== 'string' || !buildId) throw new Error('bad buildId');
+      res.json({ buildId });
+    } catch {
+      res.status(500).json({ message: 'Повреждён version.json' });
+    }
+  });
+});
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
 // SEC: JWT содержит { sub, deviceId, tv }. Проверяем:
@@ -959,8 +1079,17 @@ function revokeFamily(familyId, reason = 'revoked') {
   }
 }
 
-function setAuthCookies(res, refreshRaw) {
+// user/deviceId нужны для cookie доступа к /uploads (см. mediaAuth).
+function setAuthCookies(res, refreshRaw, user, deviceId) {
   const csrfToken = crypto.randomBytes(24).toString('base64url');
+  if (user) {
+    mediaAuth.setCookie(res, {
+      userId: user.id,
+      deviceId: deviceId || null,
+      tv: Number(user.tokenVersion || 0),
+      dv: Number(getDeviceForUser(user.id, deviceId)?.tokenVersion || 0),
+    });
+  }
   const common = {
     httpOnly: true,
     secure: IS_PROD,
@@ -977,6 +1106,7 @@ function setAuthCookies(res, refreshRaw) {
 function clearAuthCookies(res) {
   res.clearCookie(REFRESH_COOKIE, { path: '/' });
   res.clearCookie(CSRF_COOKIE,    { path: '/' });
+  mediaAuth.clearCookie(res);
 }
 
 // SEC: double-submit CSRF — cookie должен совпасть с заголовком.
@@ -1034,7 +1164,7 @@ app.post('/api/auth/refresh', csrfCheck, (req, res) => {
   rec.usedAt = Date.now();
   const { raw: newRaw } = issueRefreshToken(user, rec.deviceId, rec.familyId);
   saveDb();
-  setAuthCookies(res, newRaw);
+  setAuthCookies(res, newRaw, user, rec.deviceId);
   const accessToken = issueAccessToken(user, rec.deviceId);
   res.json({ accessToken, user });
 });
@@ -1190,7 +1320,7 @@ app.post('/api/auth/device', (req, res) => {
 
   // 1) Устройство уже привязано (первое или добавленное по QR) — вход.
   const existingDevice = (db.devices || []).find(d => d.deviceId === deviceId);
-  if (existingDevice) {
+  if (existingDevice && !existingDevice.loggedOut) {
     existingDevice.installationHash = installation.hash;
     const user = db.users.find(u => u.id === existingDevice.userId);
     if (!user) return res.status(500).json({ message: 'Аккаунт не найден для устройства' });
@@ -1203,65 +1333,14 @@ app.post('/api/auth/device', (req, res) => {
     const accessToken = issueAccessToken(user, deviceId);
     const { raw: refreshRaw } = issueRefreshToken(user, deviceId);
     saveDb();
-    const csrfToken = setAuthCookies(res, refreshRaw);
+    const csrfToken = setAuthCookies(res, refreshRaw, user, deviceId);
     return res.json({ accessToken, csrfToken, deviceId, user: withDevFlag(req, user), isNewUser: false });
   }
 
-  // 2) Новое устройство — создаём аккаунт, устройство помечаем primary.
-  if (req.body?.createAccount !== true) {
-    return res.status(409).json({ message: 'Откройте ссылку привязки или создайте новый аккаунт.', reason: 'unregistered_device' });
-  }
-  const shortId = deviceId.replace(/[^a-z0-9]/gi, '').slice(-8) || Date.now().toString(36);
-  // Гарантируем уникальность username: если base занят — добавляем суффикс.
-  const baseName = 'user_' + shortId;
-  let uniqueName = baseName;
-  let attempt = 0;
-  while (db.users.some(u => normalizeIdentifier(u.username) === normalizeIdentifier(uniqueName))) {
-    attempt += 1;
-    uniqueName = baseName + '_' + attempt;
-    if (attempt > 9999) { uniqueName = baseName + '_' + Date.now().toString(36); break; }
-  }
-  const user = {
-    id: uuidv4(),
-    email: null,
-    phone: null,
-    username: uniqueName,
-    firstName: null, lastName: null, birthDate: null,
-    country: null, region: null, city: null,
-    avatarUrl: null, bio: null,
-    isOnline: true,
-    lastSeen: new Date().toISOString(),
-    createdAt: new Date().toISOString(),
-  };
-  db.users.push(user);
-
-  // Приветственный чат «Избранное».
-  const savedChat = {
-    id: uuidv4(), type: 'saved', name: 'Избранное', avatarUrl: null,
-    createdAt: new Date().toISOString(), pinnedMessageId: null,
-  };
-  db.chats.push(savedChat);
-  db.chatMembers.push({
-    id: uuidv4(), chatId: savedChat.id, userId: user.id, role: 'owner',
-    joinedAt: new Date().toISOString(),
-  });
-
-  const dev = registerDevice(user.id, deviceId, deviceName);
-  if (dev.ok) dev.device.installationHash = installation.hash;
-  if (!dev.ok) {
-    // Не должно случаться (счётчик 0), но на всякий случай откатим создание.
-    db.users = db.users.filter(u => u.id !== user.id);
-    db.chats = db.chats.filter(c => c.id !== savedChat.id);
-    db.chatMembers = db.chatMembers.filter(m => m.chatId !== savedChat.id);
-    return res.status(500).json({ message: dev.message || 'Не удалось создать устройство' });
-  }
-  recordModerationIp(user.id, requestIp(req));
-  saveDb();
-  const accessToken = issueAccessToken(user, deviceId);
-  const { raw: refreshRaw } = issueRefreshToken(user, deviceId);
-  saveDb();
-  const csrfToken = setAuthCookies(res, refreshRaw);
-  res.json({ accessToken, csrfToken, deviceId, user: withDevFlag(req, user), isNewUser: true });
+  // 2) Устройство не привязано. Аккаунты без пароля больше не создаются:
+  // новый аккаунт — только через /auth/register (ник + пароль), вход на новом
+  // устройстве — паролем (/auth/login) или ссылкой привязки.
+  return res.status(409).json({ message: 'Войдите по нику и паролю, зарегистрируйтесь или откройте ссылку привязки.', reason: 'unregistered_device' });
 });
 
 // ─── Устаревшие маршруты удалены: /auth/request-code, /auth/verify,
@@ -1454,9 +1533,8 @@ app.post('/api/auth/verify-code', (req, res) => {
 
 // Password fallback. Passwords are never logged or returned to the client.
 // Existing bcrypt hashes are upgraded to Argon2id after the first successful login.
-function authUserResponse(req, res, user, deviceId, isNewUser = false) {
-  const device = registerDevice(user.id, deviceId, getDeviceNameForRequest(req));
-  if (!device.ok) return res.status(403).json({ message: device.message, deviceError: true });
+function authUserResponse(req, res, user, device, isNewUser = false) {
+  const deviceId = device.deviceId;
   user.isOnline = true;
   user.lastSeen = new Date().toISOString();
   recordModerationIp(user.id, requestIp(req));
@@ -1464,7 +1542,7 @@ function authUserResponse(req, res, user, deviceId, isNewUser = false) {
   db.loginEvents = db.loginEvents.slice(-5000);
   const accessToken = issueAccessToken(user, deviceId);
   const { raw } = issueRefreshToken(user, deviceId);
-  const csrfToken = setAuthCookies(res, raw);
+  const csrfToken = setAuthCookies(res, raw, user, deviceId);
   saveDb();
   return res.json({ accessToken, csrfToken, deviceId, user: withDevFlag(req, user), isNewUser });
 }
@@ -1493,51 +1571,81 @@ function recordPasswordFailure(key) {
   return current;
 }
 
+// POST /api/auth/register — регистрация по нику и паролю. Почта и телефон необязательны.
 app.post('/api/auth/register', async (req, res) => {
-  const email = normalizeIdentifier(req.body?.email);
-  const username = String(req.body?.username || '').trim();
+  const username = String(req.body?.username || '').trim().replace(/^@+/, '');
+  const email = normalizeIdentifier(req.body?.email) || null;
+  const phone = req.body?.phone ? String(req.body.phone).trim() : null;
   const password = req.body?.password;
-  if (!email || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ message: 'Некорректная почта' });
-  if (!/^[a-zA-Z0-9_.]{3,32}$/.test(username)) return res.status(400).json({ message: 'Некорректное имя пользователя' });
+  if (!/^[a-zA-Z0-9_.]{3,32}$/.test(username)) return res.status(400).json({ message: 'Ник: 3–32 символа, латиница, цифры, _ и .' });
+  if (email && !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ message: 'Некорректная почта' });
+  if (phone && !/^\+?[0-9]{7,20}$/.test(phone)) return res.status(400).json({ message: 'Некорректный телефон' });
   if (typeof password !== 'string' || password.length < 12) return res.status(400).json({ message: 'Пароль должен содержать не менее 12 символов' });
-  if (db.users.some(u => normalizeIdentifier(u.email) === email || normalizeIdentifier(u.username) === normalizeIdentifier(username))) {
-    return res.status(409).json({ message: 'Пользователь с такой почтой или именем уже существует' });
-  }
-  const installation = resolveInstallation(req, res, true);
-  if (!installation) return;
-  const user = { id: uuidv4(), email, phone: null, username, passwordHash: await hashPassword(password), passwordHashVersion: 2,
+  if (password.length > 256) return res.status(400).json({ message: 'Пароль слишком длинный' });
+  // SEC: права админа выдаются по имени — зарезервированные ники занять нельзя.
+  if (isAdminUsername(username)) return res.status(403).json({ message: 'Этот ник зарезервирован' });
+  const taken = () => db.users.some(u => normalizeIdentifier(u.username) === normalizeIdentifier(username)
+    || (email && normalizeIdentifier(u.email) === email)
+    || (phone && normalizeIdentifier(u.phone) === phone));
+  if (taken()) return res.status(409).json({ message: 'Этот ник, почта или телефон уже заняты' });
+  const passwordHash = await hashPassword(password);
+  // Пока считался хэш, ник могли занять параллельным запросом.
+  if (taken()) return res.status(409).json({ message: 'Этот ник, почта или телефон уже заняты' });
+  const user = { id: uuidv4(), email, phone, username, passwordHash, passwordHashVersion: 2,
     firstName: null, lastName: null, birthDate: null, country: null, region: null, city: null,
     avatarUrl: null, bio: null, isOnline: true, lastSeen: new Date().toISOString(), createdAt: new Date().toISOString() };
   db.users.push(user);
+  const device = bindInstallationForUser(req, res, user, getDeviceNameForRequest(req));
+  if (!device) {
+    db.users = db.users.filter(u => u.id !== user.id);
+    return;
+  }
   createSavedMessagesChat(user.id);
-  const device = registerDevice(user.id, installation.deviceId, getDeviceNameForRequest(req));
-  if (!device.ok) return res.status(403).json({ message: device.message });
-  device.device.installationHash = installation.hash;
-  return authUserResponse(req, res, user, installation.deviceId, true);
+  return authUserResponse(req, res, user, device, true);
 });
 
+// POST /api/auth/login — вход по нику (или почте) и паролю на любом устройстве.
 app.post('/api/auth/login', async (req, res) => {
-  const identifier = normalizeIdentifier(req.body?.identifier);
+  const identifier = normalizeIdentifier(req.body?.identifier).replace(/^@+/, '');
   const password = req.body?.password;
   const attemptKey = passwordAttemptKey(req, identifier);
   if (passwordAttemptBlocked(attemptKey)) {
     res.setHeader('Retry-After', String(Math.ceil(PASSWORD_LOCK_MS / 1000)));
     return res.status(429).json({ message: 'Слишком много неудачных попыток. Попробуйте позже.' });
   }
-  const user = db.users.find(u => normalizeIdentifier(u.email) === identifier || normalizeIdentifier(u.username) === identifier);
-  if (!user || typeof password !== 'string') {
+  const user = identifier && db.users.find(u => normalizeIdentifier(u.email) === identifier || normalizeIdentifier(u.username) === identifier);
+  if (!user || typeof password !== 'string' || password.length > 256) {
     recordPasswordFailure(attemptKey);
-    return res.status(401).json({ message: 'Неверные учётные данные' });
+    return res.status(401).json({ message: 'Неверный ник или пароль' });
   }
   const result = await verifyAndMigrate(password, user);
   if (!result.ok) {
     recordPasswordFailure(attemptKey);
-    return res.status(401).json({ message: 'Неверные учётные данные' });
+    return res.status(401).json({ message: 'Неверный ник или пароль' });
   }
   passwordFailures.delete(attemptKey);
-  const installation = resolveInstallation(req, res, true);
-  if (!installation) return;
-  return authUserResponse(req, res, user, installation.deviceId);
+  if (moderation.blocked(db, user.id)) return res.status(403).json({ message: 'Доступ заблокирован', code: 'ACCOUNT_BANNED' });
+  const device = bindInstallationForUser(req, res, user, getDeviceNameForRequest(req));
+  if (!device) return;
+  return authUserResponse(req, res, user, device);
+});
+
+// POST /api/auth/password — задать пароль аккаунту, созданному раньше без него
+// (старые аккаунты «по устройству»), или сменить существующий.
+app.post('/api/auth/password', authMiddleware, async (req, res) => {
+  const user = db.users.find(u => u.id === req.userId);
+  if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
+  const { currentPassword, newPassword } = req.body || {};
+  if (typeof newPassword !== 'string' || newPassword.length < 12) return res.status(400).json({ message: 'Пароль должен содержать не менее 12 символов' });
+  if (newPassword.length > 256) return res.status(400).json({ message: 'Пароль слишком длинный' });
+  if (user.passwordHash) {
+    const ok = typeof currentPassword === 'string' && (await verifyAndMigrate(currentPassword, user)).ok;
+    if (!ok) return res.status(401).json({ message: 'Текущий пароль неверен' });
+  }
+  user.passwordHash = await hashPassword(newPassword);
+  user.passwordHashVersion = 2;
+  saveDb();
+  res.json({ success: true });
 });
 
 // WebAuthn must be implemented with a maintained verifier and an origin/RP policy.
@@ -1571,6 +1679,10 @@ app.post('/api/auth/logout', authMiddleware, (req, res) => {
       }
     }
   }
+  // Устройство остаётся в списке, но авто-вход по cookie установки после
+  // выхода запрещён: вернуться можно только паролем или ссылкой привязки.
+  const loggedOutDevice = req.deviceId && (db.devices || []).find(d => d.userId === req.userId && d.deviceId === req.deviceId);
+  if (loggedOutDevice) loggedOutDevice.loggedOut = true;
   saveDb();
   clearAuthCookies(res);
   // Разрываем все активные сокеты этого юзера — они должны переподключиться с новым токеном.
@@ -1590,7 +1702,7 @@ app.get('/api/auth/me', authMiddleware, (req, res) => {
   if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
   // Добавляем инфу об устройствах, чтобы клиент мог показать QR-экран
   const devices = (db.devices || []).filter(d => d.userId === user.id);
-  res.json({ ...withDevFlag(req, user), devices: devices.map(d => ({
+  res.json({ ...withDevFlag(req, user), hasPassword: !!user.passwordHash, devices: devices.map(d => ({
     id: d.id, deviceId: d.deviceId, name: d.name,
     isPrimary: !!d.isPrimary, linkedViaQr: !!d.linkedViaQr,
     createdAt: d.createdAt, lastSeenAt: d.lastSeenAt,
@@ -1867,7 +1979,10 @@ function publishEquipment(user) {
   const equipment = { id: user.id, activeRing: user.activeRing || '',
     activeSelfCard: user.activeSelfCard || '', activeBubble: user.activeBubble || '' };
   const rooms = db.chatMembers.filter(m => m.userId === user.id).map(m => 'chat:' + m.chatId);
-  if (rooms.length) io.to(rooms).emit('user:equipment', equipment);
+  // Свои устройства получают образ даже без общих чатов (socket.io не
+  // дублирует событие сокету, который есть и в комнате, и в списке).
+  const targets = [...rooms, ...(userSockets.get(user.id) || [])];
+  if (targets.length) io.to(targets).emit('user:equipment', equipment);
 }
 
 // Search results are visible to any authenticated user. Keep this projection
@@ -2481,7 +2596,7 @@ app.post('/api/devices/link/accept', (req, res) => {
   const accessToken = issueAccessToken(owner, installation.deviceId);
   const { raw } = issueRefreshToken(owner, installation.deviceId);
   saveDb();
-  const csrfToken = setAuthCookies(res, raw);
+  const csrfToken = setAuthCookies(res, raw, owner, installation.deviceId);
   res.json({ ok: true, accessToken, csrfToken, deviceId: installation.deviceId, user: withDevFlag(req, owner) });
 });
 
@@ -2565,6 +2680,12 @@ const MARKET_PACK_KEYS = new Set([
   'nightmare-puppet', 'nightmare-abyss',
   'ashes-ember', 'ashes-cinder', 'ashes-smoke', 'ashes-forge', 'ashes-phoenix',
   'ashes-charcoal', 'ashes-ruins', 'ashes-volcano', 'ashes-scorch', 'ashes-afterglow',
+  // Паки, которые реально выдают кейсы. Каталог кейсов общий с клиентом,
+  // поэтому новые/переименованные паки не нужно дописывать сюда вручную:
+  // иначе их скины считались «неизвестными» и не синхронизировались.
+  ...require('../Web/src/store/cases.json')
+    .flatMap(c => Array.isArray(c.packs) ? c.packs : [])
+    .filter(key => typeof key === 'string' && !key.startsWith('r-')),
 ]);
 const MARKET_STATIC_SKINS = new Set([
   'ring-default', 'ring-rainbow', 'ring-glow', 'ring-pulse', 'ring-aurora',
@@ -6339,6 +6460,7 @@ if (fs.existsSync(CLIENT_DIST)) {
     if (req.path.startsWith('/api') || req.path.startsWith('/uploads') || req.path.startsWith('/socket.io')) {
       return next();
     }
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(path.join(CLIENT_DIST, 'index.html'));
   });
 }

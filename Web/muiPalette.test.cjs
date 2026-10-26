@@ -150,4 +150,36 @@ test('в «Монохроме» границы заметны: на белом �
   const edge = contrast(over(border, parseColor(mono.bg)), parseColor(mono.bg));
   assert.ok(edge > 1.15, `граница должна отличаться от фона, получено ${edge.toFixed(2)}:1`);
 });
+test('акцент темы становится primary и info — раньше primary всегда был бирюзовым #00E5FF', () => {
+  const p = muiPaletteFromTheme({ ...LIGHT, accent: '#DC143C' });
+  // main нормализован в верхний регистр.
+  assert.equal(p.primary.main, '#DC143C');
+  // light/dark считаются сами: иначе при merge в createTheme остались бы
+  // бирюзовые значения базовой темы.
+  assert.equal(p.primary.light, '#E75B77');
+  assert.equal(p.primary.dark, '#A50F2D');
+  // Тёмный акцент → белый текст, светлый → тёмный.
+  assert.equal(p.primary.contrastText, '#FFFFFF');
+  assert.equal(p.info.main, '#DC143C');
+  assert.equal(muiPaletteFromTheme({ accent: '#E4F0F6' }).primary.contrastText, '#0B0B10');
+});
+
+test('невалидный акцент не подменяет палитру — остаётся базовый бирюзовый', () => {
+  // Градиент и пустая строка не разбираются как цвет: MUI падает в alpha(),
+  // если получить мусор в primary.
+  assert.equal(muiPaletteFromTheme({ accent: 'linear-gradient(red, blue)' }).primary, undefined);
+  assert.equal(muiPaletteFromTheme({ accent: '' }).primary, undefined);
+  assert.equal(muiPaletteFromTheme({}).primary, undefined);
+  // Короткий #rgb и #rrggbbaa тоже принимаются.
+  assert.equal(muiPaletteFromTheme({ accent: '#abc' }).primary.main, '#AABBCC');
+  assert.equal(muiPaletteFromTheme({ accent: '#dc143cff' }).primary.main, '#DC143C');
+});
+
+test('страницы установки и привязки не красят себя сами — цвета из палитры темы', () => {
+  for (const file of ['src/pages/DownloadPage.tsx', 'src/pages/AcceptLinkPage.tsx', 'src/components/PwaInstall.tsx']) {
+    const src = fs.readFileSync(path.join(__dirname, file), 'utf8');
+    assert.equal(/#[0-9a-fA-F]{3,8}/.test(src), false, `${file} содержит захардкоженный цвет`);
+    assert.equal(/rgba?\(/.test(src), false, `${file} содержит захардкоженный rgba`);
+  }
+});
 

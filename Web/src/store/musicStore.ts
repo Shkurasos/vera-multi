@@ -4,8 +4,22 @@ import { Track } from '../types';
 import { musicApi } from '../services/api';
 import { peer, isPeerAvailable } from './../services/peer';
 import { registerAccountStore } from '../services/storeSyncSimple';
+import { useOfflineStore } from './offlineStore';
 
 type RepeatMode = 'none' | 'one' | 'all';
+
+/**
+ * Кладёт прослушанный трек в офлайн-кэш (ключ = id трека — его же читает
+ * loadTracks без сети). Ошибки (квота IndexedDB, обрыв сети) не мешают плееру.
+ */
+function cachePlayedTrack(id: string, fileUrl: string): void {
+  try {
+    const offline = useOfflineStore.getState();
+    void offline.hasCachedFile(id)
+      .then((has) => (has ? undefined : offline.fetchAndCacheFile(fileUrl, id)))
+      .catch(() => { /* не критично */ });
+  } catch { /* IndexedDB недоступна */ }
+}
 
 interface MusicState {
   tracks: Track[];
@@ -86,8 +100,32 @@ export const useMusicStore = create<MusicState>()(
       set({ tracks: [] });
       return;
     }
+    // Офлайн без P2P: берём треки из кэша IndexedDB.
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    if (isOffline) {
+      try {
+        const cached = await useOfflineStore.getState().getCachedMusicLibrary();
+        const tracksWithOffline = await Promise.all((cached || []).map(async (t: any) => {
+          const blobUrl = await useOfflineStore.getState().getCachedFileUrl(t.id);
+          return { ...t, fileUrl: blobUrl || t.fileUrl, coverUrl: await useOfflineStore.getState().getCachedFileUrl(t.id + ':cover') || t.coverUrl };
+        }));
+        applyLoadedLibrary(tracksWithOffline as Track[]);
+        return;
+      } catch (e) { console.warn('[offline] load music library failed:', e); }
+      set({ tracks: [] });
+      return;
+    }
     const res = await musicApi.getMy();
     const tracks = Array.isArray(res.data) ? res.data : (res.data.tracks || []);
+    // Кэшируем треки в IndexedDB для офлайна (метаданные уже кэшируются через api.ts,
+    // но здесь мы гарантируем сохранение даже если ответ не попал в cacheResponse).
+    void useOfflineStore.getState().cacheMusicLibrary(tracks);
+    // Кэшируем обложки треков фоново.
+    for (const t of tracks) {
+      if (t.coverUrl) {
+        void useOfflineStore.getState().fetchAndCacheFile(t.coverUrl, t.id + ':cover');
+      }
+    }
     applyLoadedLibrary(tracks);
   },
 
@@ -115,6 +153,11 @@ export const useMusicStore = create<MusicState>()(
     const q = queue || get().queue;
     const idx = q.findIndex((t) => t.id === track.id);
     set({ currentTrack: track, playbackTrackId: track.id, queue: q, currentIndex: idx, isPlaying: true, progress: 0 });
+    // Прослушанный трек кладём в офлайн-кэш (IndexedDB), чтобы он играл без сети.
+    // Только серверные файлы: blob:/data: уже локальные.
+    if (track.fileUrl && !/^(blob:|data:)/i.test(track.fileUrl) && typeof navigator !== 'undefined' && navigator.onLine) {
+      cachePlayedTrack(track.id, track.fileUrl);
+    }
     // Счётчик воспроизведений — только в серверном режиме. В P2P можно
     // локально накручивать в mediaLibrary; оставим на будущее.
     if (!isPeerAvailable()) musicApi.recordPlay(track.id).catch(() => {});

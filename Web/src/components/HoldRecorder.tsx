@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Box, Button, IconButton, Typography } from '@mui/material';
+import { Box, Button, IconButton, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
 import { Mic, Videocam } from '@mui/icons-material';
+import { useUserSettingsStore } from '../store/userSettingsStore';
+import { ROUND_SHAPES, normalizeRoundShape, roundNoteFileName, roundShapeMaskSx, type RoundShape } from '../utils/roundShape';
 
 interface Props {
   disabled: boolean;
@@ -26,6 +28,12 @@ export default function HoldRecorder({ disabled, onSend, onError }: Props) {
   const [seconds, setSeconds] = useState(0);
   const [switching, setSwitching] = useState(false);
   const [locked, setLocked] = useState(false);
+  // Форма кружка: выбирается в настройках или прямо во время записи (как в ВК).
+  // Читаем при остановке записи через ref — смена формы не перезапускает запись.
+  const roundShape = normalizeRoundShape(useUserSettingsStore((s) => s.roundShape));
+  const shapeRef = useRef<RoundShape>(roundShape);
+  shapeRef.current = roundShape;
+  const setShape = (v: RoundShape) => useUserSettingsStore.getState().set('roundShape', v);
   const lockedRef = useRef(false);
   const startY = useRef(0);
   const preview = useRef<HTMLVideoElement>(null);
@@ -124,7 +132,8 @@ export default function HoldRecorder({ disabled, onSend, onError }: Props) {
         releaseResources(s);
         if (s.cancelled || !mounted.current || !chunks.length) return;
         const type = recorder.mimeType || chunks[0].type;
-        const file = new File(chunks, `${round ? 'video-note' : 'voice'}.${type.includes('mp4') ? 'mp4' : 'webm'}`, { type });
+        const ext = type.includes('mp4') ? 'mp4' : 'webm';
+        const file = new File(chunks, round ? roundNoteFileName(shapeRef.current, ext) : `voice.${ext}`, { type });
         sending.current = true; setBusy(true);
         try { await onSend(file, round); }
         catch { if (mounted.current) onError('Не удалось отправить запись. Проверьте подключение.'); }
@@ -163,7 +172,14 @@ export default function HoldRecorder({ disabled, onSend, onError }: Props) {
 
   return <>
     {active && <Box sx={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', zIndex: 1500, bgcolor: '#171923', color: '#fff', p: 2, borderRadius: 3, textAlign: 'center' }}>
-      {round && <video ref={preview} muted autoPlay playsInline style={{ width: 300, height: 300, maxWidth: '80vw', maxHeight: '80vw', borderRadius: '50%', objectFit: 'cover', display: 'block' }} />}
+      {round && <video ref={preview} muted autoPlay playsInline style={{ width: 300, height: 300, maxWidth: '80vw', maxHeight: '80vw', objectFit: 'cover', display: 'block', margin: '0 auto', ...roundShapeMaskSx(roundShape) } as React.CSSProperties} />}
+      {round && (
+        <ToggleButtonGroup exclusive size="small" value={roundShape} aria-label="Форма кружка"
+          onChange={(_, v) => v && setShape(v)}
+          sx={{ mt: 1, '& .MuiToggleButton-root': { color: '#fff', borderColor: 'rgba(255,255,255,0.25)', px: 1.5 }, '& .Mui-selected': { bgcolor: 'rgba(255,255,255,0.18) !important' } }}>
+          {ROUND_SHAPES.map((s) => <ToggleButton key={s.id} value={s.id}>{s.label}</ToggleButton>)}
+        </ToggleButtonGroup>
+      )}
       <Typography role="status">{seconds} с · {locked ? 'Запись закреплена' : 'Отпустите для отправки · Вверх — закрепить'}</Typography>
       {locked && <Button onClick={() => finish()}>Отправить</Button>}
       {round && <Button disabled={switching} onClick={flip}>Перевернуть камеру</Button>}

@@ -164,6 +164,7 @@ export default function WallpaperSettingsDialog({ open, onClose, forceGlobal }: 
     .filter((i) => i.type === 'photo' && isPhotoBgKey(i.value))
     .map((i) => i.value)
     .join('|');
+  const photoRemoteSig = useChatBgPrefsStore((s) => (photoKeys ? photoKeys.split('|').map((k) => s.remotePhotos?.[k] || '').join('|') : ''));
   useEffect(() => {
     let cancelled = false;
     const keys = photoKeys ? photoKeys.split('|') : [];
@@ -176,7 +177,7 @@ export default function WallpaperSettingsDialog({ open, onClose, forceGlobal }: 
       }
     })();
     return () => { cancelled = true; };
-  }, [photoKeys]);
+  }, [photoKeys, photoRemoteSig]);
 
   /** Применить выбранные из списка обои (сохраняется сразу, как и стоковые). */
   const selectUserWallpaper = (item: UserWallpaperItem) => {

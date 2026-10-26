@@ -211,6 +211,7 @@ void TestVera::server_registerRefreshAndRestoreSession()
         api.post(QStringLiteral("/api/auth/register"),
                  QJsonObject{{QStringLiteral("username"), nick},
                              {QStringLiteral("password"), QStringLiteral("correct-horse-battery")},
+                             {QStringLiteral("deviceId"), QStringLiteral("dev_tst_") + nick},
                              {QStringLiteral("deviceName"), QStringLiteral("tst_vera")}},
                  reg.callback(), false);
         QTRY_VERIFY_WITH_TIMEOUT(reg.done, 30000);
@@ -291,6 +292,7 @@ void TestVera::server_socketReceivesMessageNew()
              QJsonObject{{QStringLiteral("username"),
                           QStringLiteral("qs_") + QUuid::createUuid().toString(QUuid::Id128).left(12)},
                          {QStringLiteral("password"), QStringLiteral("correct-horse-battery")},
+                         {QStringLiteral("deviceId"), QStringLiteral("dev_tst_") + QUuid::createUuid().toString(QUuid::Id128)},
                          {QStringLiteral("deviceName"), QStringLiteral("tst_vera")}},
              reg.callback(), false);
     QTRY_VERIFY_WITH_TIMEOUT(reg.done, 30000);

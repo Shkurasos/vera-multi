@@ -98,9 +98,34 @@ function dataUrlToBlob(dataUrl: string): Blob {
   return new Blob([bytes], { type: mime || 'image/jpeg' });
 }
 
-/** Сохранить фото (Blob или dataURL) под ключом `<scope>:<id>`. */
-export async function savePhotoBg(source: Blob | string, key: string): Promise<void> {
-  const blob = typeof source === 'string' ? dataUrlToBlob(source) : source;
+/**
+ * Серверная копия фото.
+ *
+ * IndexedDB живёт на одном устройстве, а в синхронизируемом сторе лежит только
+ * ключ. На другом устройстве (или в скачанном приложении, или после перелогина)
+ * ключ приезжал, а файла не было — в галерее серый квадрат. Поэтому фото ещё и
+ * заливается на сервер, а стор хранит «ключ → /uploads/...». Модуль сам ничего
+ * не импортирует (его грузят тесты в голом vm): адаптер подключает App.tsx.
+ */
+export interface PhotoBgRemote {
+  /** Адрес серверной копии, если она уже есть. */
+  urlFor: (key: string) => string | null | undefined;
+  /** Залить фото на сервер и запомнить адрес. */
+  upload: (key: string, blob: Blob) => Promise<void>;
+}
+
+let remote: PhotoBgRemote | null = null;
+
+export function setPhotoBgRemote(next: PhotoBgRemote | null): void {
+  remote = next;
+}
+
+/** Качаем только свои файлы с сервера: адрес приходит из синхронизируемого стора. */
+export function isRemotePhotoUrl(url: unknown): url is string {
+  return typeof url === 'string' && /^\/uploads\/[A-Za-z0-9._\-/]+$/.test(url) && !url.includes('..');
+}
+
+async function putBlob(blob: Blob, key: string): Promise<void> {
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE, 'readwrite');
@@ -109,6 +134,28 @@ export async function savePhotoBg(source: Blob | string, key: string): Promise<v
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
   });
+}
+
+/** Сохранить фото (Blob или dataURL) под ключом `<scope>:<id>`. */
+export async function savePhotoBg(source: Blob | string, key: string): Promise<void> {
+  const blob = typeof source === 'string' ? dataUrlToBlob(source) : source;
+  await putBlob(blob, key);
+  // Копия на сервер — в фоне: локально фото уже есть, ждать сеть незачем.
+  if (remote && !remote.urlFor(key)) void remote.upload(key, blob).catch(() => {});
+}
+
+/** Скачать серверную копию в IndexedDB (фото выбрано на другом устройстве). */
+async function fetchRemotePhoto(key: string): Promise<Blob | null> {
+  const url = remote?.urlFor(key);
+  if (!isRemotePhotoUrl(url)) return null;
+  const response = await fetch(url, { credentials: 'same-origin' });
+  if (!response.ok) return null;
+  const blob = await response.blob();
+  if (!blob.size) return null;
+  // Сервер отдаёт /uploads как attachment: тип у Blob может быть пустым.
+  const typed = blob.type.startsWith('image/') ? blob : new Blob([blob], { type: 'image/jpeg' });
+  try { await putBlob(typed, key); } catch { /* показываем и без кэша */ }
+  return typed;
 }
 
 export async function getPhotoBgBlob(key: string): Promise<Blob | null> {
@@ -136,7 +183,7 @@ export function loadPhotoBgUrl(key: string): Promise<string | null> {
   if (running) return running;
   const task = (async () => {
     try {
-      const blob = await getPhotoBgBlob(key);
+      const blob = (await getPhotoBgBlob(key)) || (await fetchRemotePhoto(key));
       if (!blob) return null;
       const url = URL.createObjectURL(blob);
       urlCache.set(key, url);
@@ -179,6 +226,42 @@ function uniqueKey(base: string, used: Set<string>): string {
   let n = 1;
   while (used.has(`${base}-${n}`)) n += 1;
   return `${base}-${n}`;
+}
+
+interface RemoteBackfillState extends PhotoBgState {
+  chatListBg?: { type: string; value: string } | null;
+  gapBg?: string | null;
+  remotePhotos?: Record<string, string | undefined>;
+}
+
+/** Все ключи IndexedDB, на которые ссылается стор (без дублей). */
+export function referencedPhotoKeys(state: RemoteBackfillState): string[] {
+  const keys = new Set<string>();
+  const add = (v: unknown) => { if (typeof v === 'string' && isPhotoBgKey(v)) keys.add(v); };
+  for (const list of Object.values(state.userWallpapers || {})) {
+    for (const item of list || []) if (item?.type === 'photo') add(item.value);
+  }
+  add(state.userPhotoWallpaper);
+  for (const o of Object.values(state.perChatOverrides || {})) if (o?.type === 'photo') add(o.value);
+  if (state.chatListBg?.type === 'photo') add(state.chatListBg.value);
+  add(state.gapBg);
+  return [...keys];
+}
+
+/**
+ * Залить на сервер фото, у которых ещё нет серверной копии, но есть локальный
+ * файл. Нужно для фото, загруженных до появления синхронизации.
+ */
+export async function backfillRemotePhotos(state: RemoteBackfillState): Promise<number> {
+  if (!remote) return 0;
+  let uploaded = 0;
+  for (const key of referencedPhotoKeys(state)) {
+    if (remote.urlFor(key) || state.remotePhotos?.[key]) continue;
+    const blob = await getPhotoBgBlob(key);
+    if (!blob) continue;
+    try { await remote.upload(key, blob); uploaded += 1; } catch { /* попробуем в следующий запуск */ }
+  }
+  return uploaded;
 }
 
 /**

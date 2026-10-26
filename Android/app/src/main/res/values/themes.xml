@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Платформенная тема без ActionBar: никаких AndroidX-зависимостей. -->
+    <style name="Theme.Vera" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/vera_bg</item>
+        <item name="android:colorPrimary">@color/vera_accent</item>
+        <item name="android:colorAccent">@color/vera_accent</item>
+        <item name="android:statusBarColor">@color/vera_bg</item>
+        <item name="android:navigationBarColor">@color/vera_bg</item>
+    </style>
+    <color name="vera_bg">#0F0F17</color>
+    <color name="vera_accent">#7C6AF7</color>
+</resources>

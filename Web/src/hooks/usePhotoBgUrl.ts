@@ -11,10 +11,14 @@
  */
 import { useEffect, useState } from 'react';
 import { loadPhotoBgUrl } from '../services/chatBgPhotoStorage';
+import { useChatBgPrefsStore } from '../store/chatBgPrefsStore';
 
 /** URL одной картинки по ключу; null, пока не загрузилась (или ключа нет). */
 export function usePhotoBgUrl(key?: string | null): string | null {
   const [url, setUrl] = useState<string | null>(null);
+  // Адрес серверной копии может приехать с синком позже первого рендера:
+  // тогда перезапрашиваем — loadPhotoBgUrl докачает фото.
+  const remoteUrl = useChatBgPrefsStore((s) => (key ? s.remotePhotos?.[key] : undefined));
   useEffect(() => {
     if (!key) { setUrl(null); return; }
     let cancelled = false;
@@ -22,7 +26,7 @@ export function usePhotoBgUrl(key?: string | null): string | null {
       if (!cancelled) setUrl(next);
     });
     return () => { cancelled = true; };
-  }, [key]);
+  }, [key, remoteUrl]);
   return url;
 }
 
@@ -31,6 +35,7 @@ export function usePhotoBgUrls(keys: string[]): Record<string, string> {
   const [urls, setUrls] = useState<Record<string, string>>({});
   // Ключи приходят новым массивом каждый рендер — зависимость по содержимому.
   const signature = keys.join('|');
+  const remoteSignature = useChatBgPrefsStore((s) => keys.map((k) => s.remotePhotos?.[k] || '').join('|'));
   useEffect(() => {
     let cancelled = false;
     for (const key of keys) {
@@ -40,7 +45,7 @@ export function usePhotoBgUrls(keys: string[]): Record<string, string> {
       });
     }
     return () => { cancelled = true; };
-  }, [signature]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [signature, remoteSignature]); // eslint-disable-line react-hooks/exhaustive-deps
   // Объект и так стабилен — это state, а не новый литерал на каждый рендер.
   return urls;
 }

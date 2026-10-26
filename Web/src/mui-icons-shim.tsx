@@ -691,6 +691,7 @@ const MAP: Record<string, Record<string, React.ComponentType<SvgIconProps>>> = {
   Payment: { filled: _vPayment, outlined: _vPaymentOutlined, rounded: _vPaymentRounded, sharp: _vPaymentSharp, twoTone: _vPaymentTwoTone },
   PersonAdd: { filled: _vPersonAdd, outlined: _vPersonAddOutlined, rounded: _vPersonAddRounded, sharp: _vPersonAddSharp, twoTone: _vPersonAddTwoTone },
   Phone: { filled: _vPhone, outlined: _vPhoneOutlined, rounded: _vPhoneRounded, sharp: _vPhoneSharp, twoTone: _vPhoneTwoTone },
+  PhoneOutlined: { filled: _vPhone, outlined: _vPhoneOutlined, rounded: _vPhoneRounded, sharp: _vPhoneSharp, twoTone: _vPhoneTwoTone },
   PhotoCamera: { filled: _vPhotoCamera, outlined: _vPhotoCameraOutlined, rounded: _vPhotoCameraRounded, sharp: _vPhotoCameraSharp, twoTone: _vPhotoCameraTwoTone },
   PlayArrow: { filled: _vPlayArrow, outlined: _vPlayArrowOutlined, rounded: _vPlayArrowRounded, sharp: _vPlayArrowSharp, twoTone: _vPlayArrowTwoTone },
   PictureAsPdf: { filled: _vPictureAsPdf, outlined: _vPictureAsPdfOutlined, rounded: _vPictureAsPdfRounded, sharp: _vPictureAsPdfSharp, twoTone: _vPictureAsPdfTwoTone },
@@ -754,9 +755,12 @@ function make(baseName: string) {
     const replaced = custom?.[baseName];
     if (replaced && replaced.kind !== 'mui') return <CustomSvgIcon ref={ref} {...props} icon={replaced} />;
     const v = (replaced?.kind === 'mui' && MAP[replaced.name]) || MAP[baseName];
+    // Слот без записи в MAP (рассинхрон шима) не должен ронять всё дерево.
+    if (!v) return null;
     // Стилевые паки (рельеф, неон, плитки…) берут форму базового варианта,
     // а вид им даёт CSS по классу vera-ico (main.tsx + IconPackDefs).
     const Comp = v[variant] || v.filled;
+    if (!Comp) return null;
     const className = props.className ? `vera-ico ${props.className}` : 'vera-ico';
     return <Comp ref={ref as any} {...props} className={className} />;
   });
@@ -852,6 +856,7 @@ export const Pause = make('Pause');
 export const Payment = make('Payment');
 export const PersonAdd = make('PersonAdd');
 export const Phone = make('Phone');
+export const PhoneOutlined = make('PhoneOutlined');
 export const PhotoCamera = make('PhotoCamera');
 export const PlayArrow = make('PlayArrow');
 export const PictureAsPdf = make('PictureAsPdf');

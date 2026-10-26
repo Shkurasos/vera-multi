@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Box, Typography, Button, Paper, Alert, CircularProgress } from '@mui/material';
+import { Box, Typography, Button, Paper, Alert, CircularProgress, alpha } from '@mui/material';
+import type { Theme } from '@mui/material/styles';
 import { devicesApi } from '../services/api';
 import { useAuthStore } from '../store/authStore';
 
@@ -39,10 +40,11 @@ export default function AcceptLinkPage() {
   }
 
   return (
-    <Box minHeight="100vh" bgcolor="#000" display="flex" alignItems="center" justifyContent="center" px={2}
-      sx={{ background: 'radial-gradient(circle at 30% 10%, rgba(0,229,255,0.14), transparent 40%), #000' }}>
-      <Paper sx={{ p: 4, maxWidth: 420, width: '100%', textAlign: 'center', borderRadius: 3, background: 'rgba(8,12,24,0.9)', color: '#F5F7FF', border: '1px solid rgba(255,255,255,0.1)' }}>
-        <Typography variant="h5" fontWeight={800} mb={2} sx={{ background: 'linear-gradient(135deg, #00E5FF, #7C6AF7)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+    // Цвета — из палитры MUI (тема пользователя, см. muiPalette.ts).
+    <Box minHeight="100vh" display="flex" alignItems="center" justifyContent="center" px={2}
+      sx={{ background: (t: Theme) => `radial-gradient(circle at 30% 10%, ${alpha(t.palette.primary.main, 0.14)}, transparent 40%), ${t.palette.background.default}` }}>
+      <Paper sx={{ p: 4, maxWidth: 420, width: '100%', textAlign: 'center', borderRadius: 3, bgcolor: 'background.paper', color: 'text.primary', border: 1, borderColor: 'divider' }}>
+        <Typography variant="h5" fontWeight={800} mb={2} sx={{ background: (t: Theme) => `linear-gradient(135deg, ${t.palette.primary.main}, ${t.palette.secondary.main})`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
           Vera Link
         </Typography>
 
@@ -54,14 +56,14 @@ export default function AcceptLinkPage() {
 
         {state === 'busy' && (
           <Box py={3}>
-            <CircularProgress sx={{ color: '#00E5FF' }} />
+            <CircularProgress />
             <Typography mt={2} color="text.secondary">Привязываем это устройство к аккаунту…</Typography>
           </Box>
         )}
 
         {state === 'ok' && (
           <Box>
-            <Typography color="#7dffa8" mb={2}>✅ {message}</Typography>
+            <Typography color="success.main" mb={2}>✅ {message}</Typography>
             <Typography variant="body2" color="text.secondary" mb={3}>
               Устройство добавлено. Сейчас войдём в аккаунт автоматически.
             </Typography>

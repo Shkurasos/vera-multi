@@ -2,6 +2,7 @@
 
 #include <QJsonArray>
 #include <QLoggingCategory>
+#include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QUrlQuery>
@@ -20,6 +21,22 @@ const QString kDefaultServer = QStringLiteral("http://localhost:3000");
 QString settingsServerUrl()
 {
     return QSettings().value(QStringLiteral("serverUrl"), kDefaultServer).toString();
+}
+
+// Public installation label, same format as the web client ("dev_" + 48 hex).
+// Older servers reject /api/auth/register and /login without it; newer ones
+// only use it for moderation checks. Generated once and kept in QSettings.
+QString deviceId()
+{
+    QSettings settings;
+    QString id = settings.value(QStringLiteral("deviceId")).toString();
+    if (id.isEmpty()) {
+        QByteArray bytes(24, Qt::Uninitialized);
+        QRandomGenerator::system()->fillRange(reinterpret_cast<quint32 *>(bytes.data()), bytes.size() / 4);
+        id = QStringLiteral("dev_") + QString::fromLatin1(bytes.toHex());
+        settings.setValue(QStringLiteral("deviceId"), id);
+    }
+    return id;
 }
 
 } // namespace
@@ -104,6 +121,7 @@ void AppController::login(const QString &identifier, const QString &password)
     const QJsonObject body{
         {QStringLiteral("identifier"), identifier.trimmed()},
         {QStringLiteral("password"), password},
+        {QStringLiteral("deviceId"), deviceId()},
         {QStringLiteral("deviceName"), kDeviceName},
     };
     m_api.post(QStringLiteral("/api/auth/login"), body,
@@ -134,6 +152,7 @@ void AppController::registerAccount(const QString &username, const QString &pass
     QJsonObject body{
         {QStringLiteral("username"), nick},
         {QStringLiteral("password"), password},
+        {QStringLiteral("deviceId"), deviceId()},
         {QStringLiteral("deviceName"), kDeviceName},
     };
     if (!email.trimmed().isEmpty())

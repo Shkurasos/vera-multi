@@ -3,6 +3,7 @@ import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { Box, CircularProgress } from '@mui/material';
 import { useAuthStore } from './store/authStore';
 import { useChatStore } from './store/chatStore';
+import { useOfflineStore } from './store/offlineStore';
 import { useChatPrefsStore } from './store/chatPrefsStore';
 import { useChatSoundStore } from './store/chatSoundStore';
 import { getSocket } from './services/socket';
@@ -55,7 +56,10 @@ import { useCustomEquipStore } from './store/customEquipStore';
 import { useChatThemeStore } from './store/chatThemeStore';
 import { useChatBgPrefsStore } from './store/chatBgPrefsStore';
 import { saveLiveBg } from './services/chatLiveBgStorage';
-import { savePhotoBg, isPhotoBgKey, startPhotoWallpaperMigration } from './services/chatBgPhotoStorage';
+import { savePhotoBg, isPhotoBgKey, startPhotoWallpaperMigration, setPhotoBgRemote, isRemotePhotoUrl, backfillRemotePhotos } from './services/chatBgPhotoStorage';
+import { filesApi } from './services/api';
+import { startUpdatePolling } from './services/appUpdate';
+import UpdatePrompt from './components/UpdatePrompt';
 import ChatSettingsOfferDialog from './components/ChatSettingsOfferDialog';
 import AppLockGate from './components/AppLockGate';
 import DevInspector from './components/DevInspector';
@@ -157,6 +161,32 @@ export default function App() {
   useEffect(() => {
     startPhotoWallpaperMigration(useChatBgPrefsStore);
   }, []);
+
+  // Проверка новой сборки веб-клиента (плашка «Доступно обновление»).
+  useEffect(() => startUpdatePolling(), []);
+
+  // Фото-обои — ещё и на сервер, чтобы они ехали вместе с аккаунтом на другие
+  // устройства и в скачанные приложения (там своя IndexedDB, пустая).
+  useEffect(() => {
+    if (!isAuthenticated || isPeerMode) {
+      setPhotoBgRemote(null);
+      return;
+    }
+    setPhotoBgRemote({
+      urlFor: (key) => useChatBgPrefsStore.getState().remotePhotos?.[key],
+      upload: async (key, blob) => {
+        const ext = blob.type === 'image/png' ? 'png' : blob.type === 'image/webp' ? 'webp' : 'jpg';
+        const file = new File([blob], `wallpaper.${ext}`, { type: blob.type || 'image/jpeg' });
+        const res = await filesApi.upload(file);
+        const url = res.data?.url;
+        if (isRemotePhotoUrl(url)) useChatBgPrefsStore.getState().setRemotePhoto(key, url);
+      },
+    });
+    // Фото, загруженные раньше, есть только в IndexedDB этого устройства —
+    // докладываем их на сервер. Ждём, пока стор подтянется с сервера.
+    const timer = setTimeout(() => { void backfillRemotePhotos(useChatBgPrefsStore.getState()); }, 5000);
+    return () => clearTimeout(timer);
+  }, [isAuthenticated, isPeerMode]);
 
   useEffect(() => {
     if (!isAuthenticated || !user?.isAdmin) return;
@@ -299,6 +329,18 @@ export default function App() {
           replaceOrAddMessage(message);
         } else {
           addMessage(message);
+          // Кешируем входящее сообщение в IndexedDB для офлайна.
+          void (async () => {
+            try {
+              const offlineStore = useOfflineStore.getState();
+              const existing = await offlineStore.getCachedMessages(message.chatId);
+              const all = [...existing, message];
+              await offlineStore.cacheMessages(message.chatId, all);
+              // Также пишем в локальный архив.
+              const { saveArchivedMessages } = await import('./services/localArchive');
+              await saveArchivedMessages([message]);
+            } catch { /* офлайн-кэш не критичен */ }
+          })();
           const { isMuted } = useChatPrefsStore.getState();
           const chatMuted = isMuted(message.chatId);
           // Пользователь сидит в этом чате и видит вкладку: уведомление ему не
@@ -616,6 +658,9 @@ export default function App() {
 
       {/* Мобильная нижняя навигация — глобально на всех авторизованных экранах */}
       {isAuthenticated && <MobileBottomNav />}
+
+      {/* Новая сборка на сервере: «Обновить» / «Позже» (дальше — в настройках) */}
+      <UpdatePrompt aboveBottomNav={isAuthenticated} />
 
       {/* DEV-инспектор — активен только у пользователей с isDev (DEV_IPS на сервере). */}
       {isAuthenticated && <DevInspector />}

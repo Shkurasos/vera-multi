@@ -205,6 +205,9 @@ function mergeSyncedState(storeName: string, current: any, incoming: any): any {
           merged.userWallpapers = current.userWallpapers;
         }
       }
+      // Адреса серверных копий фото: старый снапшот без них не должен стирать
+      // уже известные, а новые с сервера — дописываются к локальным.
+      merged.remotePhotos = { ...(current.remotePhotos || {}), ...(incoming.remotePhotos || {}) };
       if (merged.userPhotoWallpaper == null && current.userPhotoWallpaper) {
         merged.userPhotoWallpaper = current.userPhotoWallpaper;
         if (merged.userPhotoName == null) merged.userPhotoName = current.userPhotoName;

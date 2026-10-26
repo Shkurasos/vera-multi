@@ -3,6 +3,7 @@ import { clampBubble, normalizeMetaPos } from '../utils/bubbleSettings';
 import type { BubbleMetaPos } from '../utils/bubbleSettings';
 import { persist } from 'zustand/middleware';
 import { registerAccountStore } from '../services/storeSyncSimple';
+import type { RoundShape } from '../utils/roundShape';
 
 /**
  * Глобальные пользовательские настройки: внешний вид (яркость, масштаб),
@@ -133,6 +134,8 @@ export interface UserSettingsState {
   // Внешний вид
   brightness: number;              // 0.5 .. 1.5 (CSS filter: brightness)
   textScale: number;               // 0.8 .. 1.6 (CSS var --vera-text-scale)
+  /** Размер иконок приложения в px (16..40). Применяется как CSS var --vera-icon-size. */
+  iconSize: number;
   language: 'ru' | 'en' | 'uk' | 'es';
   globalFontFamily: string;        // глобальный шрифт для всего приложения
   /** Экспериментальный режим встроенных чатов сторонних сайтов. */
@@ -167,6 +170,8 @@ export interface UserSettingsState {
   wallClockHudHeight: number;
   /** Плашка даты в ленте сообщений: слева / по центру / справа. */
   chatDateAlign: ChatDateAlign;
+  /** Форма отправляемых кружков (видеосообщений): круг / квадрат / сердце. */
+  roundShape: RoundShape;
 
   // Данные и экономия трафика
   autoDownloadMedia: boolean;
@@ -184,6 +189,10 @@ export interface UserSettingsState {
   // Истории
   storiesWhoCanView: PrivacyScope;
   storiesWhoCanSave: PrivacyScope;
+
+  // Контактные данные
+  requirePhone: boolean;   // требуется ли телефон при регистрации/входе
+  requireEmail: boolean;   // требуется ли почта при регистрации/входе
 
   // Приватность
   lastSeenScope: PrivacyScope;
@@ -213,6 +222,7 @@ export interface UserSettingsState {
 const initial: Omit<UserSettingsState, 'set' | 'reset' | 'setLayout' | 'resetLayout'> = {
   brightness: 1,
   textScale: 1,
+  iconSize: 24,
   language: 'ru',
   globalFontFamily: 'inherit',
   experimentalExternalSites: false,
@@ -233,6 +243,7 @@ const initial: Omit<UserSettingsState, 'set' | 'reset' | 'setLayout' | 'resetLay
   wallClockHudUrl: '',
   wallClockHudHeight: 160,
   chatDateAlign: 'center',
+  roundShape: 'circle',
 
   autoDownloadMedia: true,
   compressUploads: true,
@@ -247,6 +258,9 @@ const initial: Omit<UserSettingsState, 'set' | 'reset' | 'setLayout' | 'resetLay
 
   storiesWhoCanView: 'contacts',
   storiesWhoCanSave: 'contacts',
+
+  requirePhone: false,
+  requireEmail: false,
 
   lastSeenScope: 'contacts',
   profilePhotoScope: 'everyone',
@@ -294,6 +308,23 @@ export const useUserSettingsStore = create<UserSettingsState>()(
 
 registerAccountStore('user-settings', useUserSettingsStore);
 
+/** Применяет размер иконок к <html> как CSS переменную --vera-icon-size. */
+function applyIconSizeToDom(size: number): void {
+  try {
+    document.documentElement.style.setProperty('--vera-icon-size', `${Math.round(size)}px`);
+  } catch {}
+}
+
+/** Первичное применение после гидратации persist + отслеживание изменений. */
+applyIconSizeToDom(useUserSettingsStore.getState().iconSize);
+let _prevIconSize = useUserSettingsStore.getState().iconSize;
+useUserSettingsStore.subscribe((state) => {
+  if (state.iconSize !== _prevIconSize) {
+    _prevIconSize = state.iconSize;
+    applyIconSizeToDom(state.iconSize);
+  }
+});
+
 /** SHA-256 → hex. Используется для хранения пароля app-lock. */
 export async function hashPassword(pwd: string): Promise<string> {
   const enc = new TextEncoder().encode(pwd);
@@ -310,15 +341,16 @@ export async function hashPassword(pwd: string): Promise<string> {
  *   применяется мгновенно (с фильтром по __clientId, чтобы не ловить своё эхо).
  */
 const SYNC_KEYS: (keyof UserSettingsState)[] = [
-  'brightness', 'textScale', 'language',
+  'brightness', 'textScale', 'language', 'iconSize',
   'experimentalExternalSites', 'languageCorrectionEnabled', 'languageCorrectionExplain',
   'wallClockEnabled', 'wallClockAvoid', 'wallClockPos', 'wallClockDatePos', 'wallClockSeconds', 'wallClockSecondsPos', 'wallClockSecondsScale', 'wallClockTimeScale', 'wallClockDateScale',
   'wallClockHudMode', 'wallClockHudHtml', 'wallClockHudUrl', 'wallClockHudHeight',
-  'chatDateAlign',
+  'chatDateAlign', 'roundShape',
   'autoDownloadMedia', 'compressUploads', 'streamingHighQuality',
   'inAppSounds', 'inAppVibration', 'vibrationEnabled', 'ledIndicator',
   'popupPreview', 'pinnedPriority',
   'storiesWhoCanView', 'storiesWhoCanSave',
+  'requirePhone', 'requireEmail',
   'lastSeenScope', 'profilePhotoScope', 'forwardScope',
   'callsScope', 'callsP2P', 'groupsInviteScope',
   'appLockEnabled', 'cloudPasswordEnabled', 'autoDeleteInactiveMonths',

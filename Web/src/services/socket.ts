@@ -35,6 +35,13 @@ export const connectSocket = (token: string): Socket => {
       return;
     }
     useEquipmentStore.getState().update(equipment);
+    // Свой образ сменили на другом устройстве — применяем к магазину без
+    // обратной отправки на сервер.
+    const { useAuthStore } = await import('../store/authStore');
+    if (useAuthStore.getState().user?.id === equipment.id) {
+      const { useShopStore } = await import('../store/shopStore');
+      useShopStore.getState().hydrateEquipment(equipment);
+    }
     const updateChat = (chat: Chat): Chat => ({
       ...chat,
       members: chat.members.map(member => member.userId === equipment.id && member.user

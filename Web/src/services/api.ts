@@ -1,10 +1,107 @@
 
 import axios, { AxiosError, AxiosRequestConfig } from 'axios';
+import { useOfflineStore } from '../store/offlineStore';
 
 const api = axios.create({
   baseURL: '/api',
   withCredentials: true,
 });
+
+/* ─── Офлайн-определение ───────────────────────────────────────────────────
+ * В Electron спрашиваем главный процесс (veraDesktop.isOnline),
+ * в браузере — navigator.onLine.
+ */
+function isOffline(): boolean {
+  if (typeof window !== 'undefined' && (window as any).veraDesktop) {
+    // Синхронно не получится — isOnline возвращает Promise.
+    // Используем navigator.onLine как быструю оценку, уточнение приходит по IPC.
+    return !navigator.onLine;
+  }
+  return !navigator.onLine;
+}
+
+/** Эндпоинты, которые кэшируются для офлайн (путь -> имя стора в IndexedDB). */
+const CACHEABLE_GET: Record<string, string> = {
+  '/tracks': 'music_library',
+  '/music/library': 'music_library',
+  '/messages/': 'messages',
+  '/auth/me': 'user_profile',
+  '/users/': 'avatars',
+  '/themes': 'themes',
+  '/skins': 'skins',
+  '/icons': 'icons',
+};
+
+/** Извлечь имя стора по URL. */
+function cacheStoreForUrl(url: string): string | null {
+  const path = url.replace('/api', '');
+  for (const [prefix, store] of Object.entries(CACHEABLE_GET)) {
+    if (path.startsWith(prefix)) return store;
+  }
+  return null;
+}
+
+/** Кэшировать ответ GET-запроса. */
+async function cacheResponse(url: string, data: any): Promise<void> {
+  const store = cacheStoreForUrl(url);
+  if (!store) return;
+  try {
+    const offlineStore = useOfflineStore.getState();
+    if (store === 'messages') {
+      // URL: /messages/:chatId — извлекаем chatId и кэшируем массив сообщений.
+      const m = url.match(/\/messages\/([^\/]+)/);
+      if (m && Array.isArray(data)) {
+        await offlineStore.cacheMessages(m[1], data);
+      }
+      return;
+    }
+    if (store === 'user_profile') {
+      await offlineStore.cacheUserProfile(data);
+      return;
+    }
+    if (store === 'avatars') {
+      // Ответ может быть одним пользователем или списком.
+      const users = Array.isArray(data) ? data : [data];
+      for (const u of users) {
+        if (u?.id && u.avatarUrl) {
+          await offlineStore.cacheAvatar(u.id, u.avatarUrl, u.updatedAt || new Date().toISOString());
+        }
+      }
+      return;
+    }
+    if (Array.isArray(data)) {
+      await offlineStore.cacheMusicLibrary(data); // по умолчанию музыка
+      if (store === 'themes') await offlineStore.cacheThemes(data);
+      if (store === 'skins') await offlineStore.cacheSkins(data);
+      if (store === 'icons') await offlineStore.cacheIcons(data);
+    } else if (data && data.items) {
+      await offlineStore.cacheMusicLibrary(data.items);
+    }
+  } catch { /* офлайн-кэш не критичен */ }
+}
+
+/** Вернуть кэшированные данные для GET-запроса, если есть. */
+async function getCachedResponse(url: string): Promise<any | null> {
+  const store = cacheStoreForUrl(url);
+  if (!store) return null;
+  try {
+    const offlineStore = useOfflineStore.getState();
+    if (store === 'messages') {
+      const m = url.match(/\/messages\/([^\/]+)/);
+      if (m) {
+        return await offlineStore.getCachedMessages(m[1]);
+      }
+      return null;
+    }
+    if (store === 'user_profile') return await offlineStore.getCachedUserProfile();
+    if (store === 'avatars') return null; // аватары кэшируются по個別に через getCachedAvatar
+    if (store === 'music_library') return await offlineStore.getCachedMusicLibrary();
+    if (store === 'themes') return await offlineStore.getCachedThemes();
+    if (store === 'skins') return await offlineStore.getCachedSkins();
+    if (store === 'icons') return await offlineStore.getCachedIcons();
+  } catch { /* ignore */ }
+  return null;
+}
 
 // SEC: CSRF double-submit — читаем vera_csrf (non-HttpOnly) и кладём в заголовок.
 function readCookie(name: string): string | null {
@@ -20,6 +117,27 @@ api.interceptors.request.use((config) => {
   if (csrf) config.headers['X-CSRF-Token'] = csrf;
   return config;
 });
+
+// Offline: если нет сети и это GET-запрос к кэшируемому эндпоинту — отдаём кэш.
+api.interceptors.request.use(async (config) => {
+  const url = config.url || '';
+  if (config.method?.toLowerCase() === 'get' && isOffline()) {
+    const cached = await getCachedResponse(url);
+    if (cached != null) {
+      // Возвращаем фейковый ответ Axios с кэшированными данными.
+      return Promise.resolve({
+        data: cached,
+        status: 200,
+        statusText: 'OK (offline cache)',
+        headers: {},
+        config,
+      } as any);
+    }
+    // Нет кэша — не можем выполнить запрос без сети.
+    return Promise.reject(new Error('Offline and no cached data'));
+  }
+  return config;
+}, (err) => Promise.reject(err));
 
 // SEC: одноразовая попытка /auth/refresh на 401. Если удалось — повторяем запрос.
 // Если refresh тоже упал — чистим стейт и ре-бутстрапим.
@@ -52,8 +170,13 @@ async function tryRefresh(): Promise<string | null> {
 
 api.interceptors.response.use(
   (res) => {
-    if (res.config.url === '/auth/device' || res.config.url === '/devices/link/accept') {
+    if (res.config.url === '/auth/device' || res.config.url === '/devices/link/accept'
+      || res.config.url === '/auth/login' || res.config.url === '/auth/register') {
       if (typeof res.data?.deviceId === 'string') localStorage.setItem('vera_device_id', res.data.deviceId);
+    }
+    // Кэшируем успешные GET-ответы к кэшируемым эндпоинтам.
+    if (res.config?.method?.toLowerCase() === 'get') {
+      void cacheResponse(res.config.url || '', res.data);
     }
     return res;
   },
@@ -61,7 +184,8 @@ api.interceptors.response.use(
     const cfg = err.config as AxiosRequestConfig & { _retry?: boolean };
     const url = cfg?.url || '';
     const status = err.response?.status;
-    const isBootstrap = url.includes('/auth/device') || url.includes('/auth/me') || url.includes('/auth/refresh');
+    const isBootstrap = url.includes('/auth/device') || url.includes('/auth/me') || url.includes('/auth/refresh')
+      || url.includes('/auth/login') || url.includes('/auth/register');
     if (status === 401 && !cfg?._retry && !isBootstrap) {
       cfg._retry = true;
       const newToken = await tryRefresh();
@@ -79,9 +203,13 @@ api.interceptors.response.use(
 );
 
 export const authApi = {
-  device: (createAccount = false) => api.post('/auth/device', { deviceId: getDeviceId(), deviceName: getDeviceName(), createAccount }, { timeout: 15000 }),
-  register: (email: string, username: string, password: string) => api.post('/auth/register', { email, username, password, deviceId: getDeviceId(), deviceName: getDeviceName() }, { timeout: 30000 }),
+  device: () => api.post('/auth/device', { deviceId: getDeviceId(), deviceName: getDeviceName() }, { timeout: 15000 }),
+  /** Регистрация по нику и паролю; почта и телефон необязательны. */
+  register: (username: string, password: string, email?: string, phone?: string) => api.post('/auth/register', { username, password, email: email || undefined, phone: phone || undefined, deviceId: getDeviceId(), deviceName: getDeviceName() }, { timeout: 30000 }),
+  /** Вход по нику (или почте) и паролю — работает на любом устройстве. */
   login: (identifier: string, password: string) => api.post('/auth/login', { identifier, password, deviceId: getDeviceId(), deviceName: getDeviceName() }, { timeout: 30000 }),
+  /** Задать пароль (старым аккаунтам без него) или сменить текущий. */
+  setPassword: (newPassword: string, currentPassword?: string) => api.post('/auth/password', { newPassword, currentPassword }, { timeout: 30000 }),
   loginEvents: () => api.get('/auth/login-events'),
   passkey: { registerOptions: () => api.post('/auth/passkey/register/options'), registerVerify: (response: unknown) => api.post('/auth/passkey/register/verify', response), loginOptions: (identifier?: string) => api.post('/auth/passkey/login/options', { identifier }), loginVerify: (response: unknown) => api.post('/auth/passkey/login/verify', response) },
   me: () => api.get('/auth/me', { timeout: 15000 }),
@@ -640,7 +768,7 @@ export const voiceApi = {
 };
 
 export const downloadsApi = {
-  list: () => api.get<{ files: Array<{ platform: 'win' | 'mac' | 'linux' | 'other'; filename: string; size: number; url: string }> }>('/downloads'),
+  list: () => api.get<{ files: Array<{ platform: 'win' | 'mac' | 'linux' | 'android' | 'other'; filename: string; size: number; url: string }> }>('/downloads'),
 };
 
 /* ─── Creator / Кастомный магазин ────────────────────────────────────────── */

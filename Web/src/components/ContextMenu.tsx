@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Box, Typography } from '@mui/material';
 import { useThemeStore } from '../store/themeStore';
 import { UI_SURFACE_RADIUS, UI_INNER_RADIUS } from '../store/uiPrefsStore';
+import { withAlpha } from '../utils/colorAlpha';
 
 export interface ContextMenuItem {
   key: string;
@@ -68,7 +69,13 @@ export default function ContextMenu({ x, y, items, onClose, title, zIndex = 2000
   return createPortal(
     <Box
       onClick={onClose}
-      onContextMenu={(e) => { e.preventDefault(); onClose(); }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        // Долгий тап на Android шлёт contextmenu уже ПОСЛЕ того, как меню открылось
+        // по таймеру, — и попадает в эту подложку. Тач-вариант меню не закрывает.
+        if ((e.nativeEvent as PointerEvent).pointerType === 'touch') return;
+        onClose();
+      }}
       sx={{ position: 'fixed', inset: 0, zIndex }}>
       <Box
         ref={ref}
@@ -82,7 +89,13 @@ export default function ContextMenu({ x, y, items, onClose, title, zIndex = 2000
           maxWidth: 'calc(100vw - 16px)',
           maxHeight: 'calc(100vh - 16px)',
           boxSizing: 'border-box',
-          bgcolor: theme.bgHeader + 'F2',
+          // Почти непрозрачная плашка: шапка темы поверх основного фона темы.
+          // Раньше к шапке дописывали hex-альфу «F2» строкой — для rgba()-шапок
+          // (Сапфир, светлые темы) это невалидный цвет, фон пропадал, и текст сливался с
+          // картинкой под меню. theme.bg во всех темах сплошной, поэтому
+          // подложка даёт итоговую непрозрачность ≈ 0.97 при любой шапке.
+          bgcolor: withAlpha(theme.bg, 0.9),
+          backgroundImage: `linear-gradient(${withAlpha(theme.bgHeader, 0.95)}, ${withAlpha(theme.bgHeader, 0.95)})`,
           backdropFilter: 'blur(14px) saturate(140%)',
           WebkitBackdropFilter: 'blur(14px) saturate(140%)',
           border: `1px solid ${theme.border}`,

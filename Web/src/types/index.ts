@@ -144,6 +144,8 @@ export interface Message {
   readBy?: string[];
   /** Локальный статус доставки для UI (только для temp-сообщений в outbox). */
   status?: 'pending' | 'sending' | 'failed' | 'sent';
+  /** Сообщение загружено из локального архива (офлайн), не с сервера. */
+  fromArchive?: boolean;
   createdAt: string;
   updatedAt: string;
 }

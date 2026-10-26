@@ -23,6 +23,11 @@ async function hydrateAccount(user: User): Promise<void> {
     useThemeStore.setState({ themeId, theme, chatPhoto: (user as any).chatPhoto || undefined });
   });
   prepareSettingsForAccount(user.id, changed);
+  // Надетые скины хранятся в профиле на сервере: без этого другое устройство
+  // показывало свой локальный образ. Динамический импорт — shopStore сам
+  // импортирует authStore.
+  const { useShopStore } = await import('./shopStore');
+  useShopStore.getState().hydrateEquipment(user);
   await hydrateSettingsFromServer();
   void usePetStore.getState().load().catch(() => undefined);
   // Слоты реакций — сразу после входа/F5: иначе до открытия инвентаря
@@ -132,6 +137,31 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
 
     set({ isLoading: true });
+
+    // Офлайн-режим: если сервер недоступен, пробуем использовать кэшированного пользователя.
+    const isOffline = () => {
+      if (typeof window !== 'undefined' && (window as any).veraDesktop) {
+        return !navigator.onLine;
+      }
+      return !navigator.onLine;
+    };
+
+    if (isOffline()) {
+      const cachedUser = localStorage.getItem('vera_user');
+      const cachedToken = localStorage.getItem('vera_token');
+      if (cachedUser) {
+        try {
+          const user = JSON.parse(cachedUser);
+          set({ user, token: cachedToken || null, isAuthenticated: true, isLoading: false });
+          try { if (user?.id) initArchive(user.id); } catch {}
+          console.log('[auth] offline: used cached user', user.username);
+          return;
+        } catch {}
+      }
+      set({ isLoading: false, isAuthenticated: false });
+      return;
+    }
+
     const existingToken = localStorage.getItem('vera_token');
     // 1) Если токен есть — валидируем через /auth/me.
     if (existingToken && !existingToken.startsWith('mock-token-')) {

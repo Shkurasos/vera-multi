@@ -42,6 +42,12 @@ test('canReact: own skins only, plain emoji allowed', () => {
   assert.equal(skins.canReact({ reactionSkins: { 'rx-neon-like': 1 } }, 'rx-neon-like'), true);
   assert.equal(skins.canReact({}, ''), false);
   assert.equal(skins.canReact({}, 'x'.repeat(40)), false);
+  // Любой скин каталога, включая длинные id вроде rx-cosmos-dislike.
+  const catalog = require('../Web/src/store/reactionSkins.json');
+  for (const id of catalog.packs.flatMap(p => p.reactions.map(r => r.id))) {
+    assert.equal(skins.canReact({ reactionSkins: { [id]: 1 } }, id), true, id);
+  }
+  assert.equal(skins.canReact({}, 'rx-cosmos-dislike'), false, 'чужой скин всё ещё нельзя');
 });
 
 test('PUT /api/reactions/slots saves, emits and rejects invalid input', () => {

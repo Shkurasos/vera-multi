@@ -25,7 +25,7 @@ export const stockPalette = (key: string): ReactionPalette => {
 export const PACK_PALETTE: Record<string, (color: string, key: string) => ReactionPalette> = {
   neon: c => ({ from: '#0b1530', to: '#16234f', stroke: c, strokeWidth: 1.8, detail: c, accent: '#ff4dd8', filter: `drop-shadow(0 0 2px ${c}) drop-shadow(0 0 5px ${c})` }),
   gold: c => ({ from: '#fff3b8', to: '#c98a12', stroke: '#7a4e00', strokeWidth: 1.2, detail: '#5a3800', accent: '#fff8d6', gloss: true, filter: `drop-shadow(0 0 2px ${c})` }),
-  pixel: (c, k) => ({ ...stockPalette(k), stroke: '#1b1b1b', strokeWidth: 2.2, gloss: false, pixel: true, filter: `drop-shadow(1.5px 1.5px 0 ${c})` }),
+  pixel: (c, k) => ({ ...stockPalette(k), stroke: '#1b1b1b', strokeWidth: 2.2, gloss: false, pixel: true, filter: `drop-shadow(1px 1px 0 ${c})` }),
   cosmos: c => ({ from: '#6a3ae0', to: '#140a3a', stroke: '#c9b3ff', strokeWidth: 1.2, detail: '#ffffff', accent: '#7ee8ff', sparkles: true, filter: `drop-shadow(0 0 3px ${c})` }),
   candy: c => ({ from: '#ffe0f0', to: '#ff7ab8', stroke: '#d63384', strokeWidth: 1.3, detail: '#7a0f3d', accent: '#ffffff', gloss: true, filter: `drop-shadow(0 1.5px 0 ${c}aa)` }),
 };

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <!-- Локальная страница: никаких внешних ресурсов и скриптов. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self'">
+  <title>VERA Multi</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0f0f17; color: #f5f7ff; font: 14px/1.4 "Segoe UI", system-ui, sans-serif; }
+    /* Окно без рамки: верх страницы — ручка перетаскивания. */
+    .drag { position: fixed; inset: 0 0 auto 0; height: 32px; -webkit-app-region: drag; }
+    main { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; }
+    img { width: 96px; height: 96px; border-radius: 22px; }
+    .spinner { width: 28px; height: 28px; border: 3px solid rgba(124,106,247,.25); border-top-color: #7c6af7; border-radius: 50%; animation: spin .9s linear infinite; }
+    p { margin: 0; color: #a9adc6; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+  </style>
+</head>
+<body>
+  <div class="drag"></div>
+  <main role="status" aria-live="polite">
+    <img src="../../resources/icon.png" alt="VERA">
+    <div class="spinner" aria-hidden="true"></div>
+    <p>Подключаемся к серверу…</p>
+  </main>
+</body>
+</html>

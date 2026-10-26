@@ -2,6 +2,7 @@ import { useId } from 'react';
 import { Box } from '@mui/material';
 import { findReactionSkin, REACTION_SKIN_PACKS, STOCK_REACTIONS } from '../store/reactionSkinStore';
 import ReactionArt, { FACE_KEYS, PACK_PALETTE, stockPalette } from './ReactionArt';
+import { pixelRuns } from '../utils/pixelReactions';
 
 /**
  * Отрисовка реакции собственной SVG-картинкой (а не системным эмодзи —
@@ -33,7 +34,11 @@ export default function ReactionGlyph({ value, size }: { value: string; size?: n
         <stop offset="0" stopColor={p.from} /><stop offset="1" stopColor={p.to} />
       </linearGradient>
     </defs>
-    <ReactionArt k={key} p={p} fill={`url(#${gradientId})`} />
+    {p.pixel
+      // Пак «Пиксели» — настоящий спрайт 32×32: клетка = единица viewBox.
+      ? pixelRuns(key, { from: p.from, to: p.to, outline: p.stroke, detail: p.detail, accent: p.accent })
+        .map(r => <rect key={`${r.x}-${r.y}`} x={r.x} y={r.y} width={r.w} height={1} fill={r.fill} />)
+      : <ReactionArt k={key} p={p} fill={`url(#${gradientId})`} />}
     {p.gloss && (FACE_KEYS.has(key) || key === 'heart') && <ellipse cx="11" cy="9" rx="4.5" ry="2.2" fill="#fff" opacity={0.35} transform="rotate(-30 11 9)" />}
     {p.sparkles && <g fill="#fff"><circle cx="4" cy="5" r="0.9" /><circle cx="28" cy="5.5" r="0.7" /><circle cx="28.5" cy="27" r="0.9" /><circle cx="15" cy="16" r="0.6" opacity={0.7} /></g>}
   </svg>;

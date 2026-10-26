@@ -12,6 +12,14 @@ test('frosted: полупрозрачный фон + размытие того, 
   assert.ok(src.includes('WebkitBackdropFilter: FROSTED_BLUR'), 'Safari');
 });
 
+test('ContextMenu: фон валиден и для rgba()-шапок тем (текст не сливается с фото)', () => {
+  const src = read('src/components/ContextMenu.tsx');
+  // `rgba(...)` + 'F2' — невалидный цвет: браузер выкидывал фон целиком.
+  assert.ok(!/bgHeader\s*\+\s*'/.test(src), 'нет склейки цвета со строкой hex-альфы');
+  assert.ok(src.includes('bgcolor: withAlpha(theme.bg, 0.9)'), 'сплошная подложка из фона темы');
+  assert.ok(src.includes('withAlpha(theme.bgHeader, 0.95)'), 'шапка темы поверх подложки');
+});
+
 test('меню «три точки» в чате использует матовое стекло', () => {
   const src = read('src/components/ChatWindow.tsx');
   const menu = src.slice(src.indexOf('<Menu anchorEl={anchorEl}'), src.indexOf('Поиск по сообщениям'));

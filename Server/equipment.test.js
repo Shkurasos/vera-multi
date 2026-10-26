@@ -15,6 +15,7 @@ test('equipment is public, persisted and broadcast; clearing and invalid IDs are
       put(route, middleware, handler) { routes['PUT ' + route] = handler; },
       patch(route, middleware, handler) { routes['PATCH ' + route] = handler; } },
     authMiddleware() {}, saveDb() {}, withDevFlag: (_req, value) => value,
+    userSockets: new Map([['owner', new Set(['owner-phone'])]]),
     io: { to(rooms) { return { emit(event, payload) { events.push({ rooms, event, payload }); } }; } },
   });
   vm.runInContext(source.slice(source.indexOf('// Publish only equipment IDs'),
@@ -26,6 +27,7 @@ test('equipment is public, persisted and broadcast; clearing and invalid IDs are
   for (const key of Object.keys(outfit)) assert.equal(user[key], outfit[key]);
   assert.equal(events[0].event, 'user:equipment');
   assert.equal(events[0].rooms[0], 'chat:shared');
+  assert.ok(events[0].rooms.includes('owner-phone'), 'own devices receive the outfit');
   assert.equal(events[0].payload.email, undefined);
   const publicResponse = response();
   routes['GET /api/users/:id']({ userId: 'viewer', params: { id: 'owner' } }, publicResponse);

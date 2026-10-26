@@ -193,6 +193,13 @@ export interface ChatBgPrefsState {
   chatListDim: number;
   /** Размытие фото под списком чатов, px. */
   chatListBlur: number;
+  /**
+   * Фото в промежутках между окном чата и панелями: ключ IndexedDB
+   * (`gaps:<id>`) или null. См. utils/gapWallpaper.ts.
+   */
+  gapBg: string | null;
+  /** Затемнение фото в промежутках, 0..0.8. */
+  gapDim: number;
 
   /** Базовая яркость по умолчанию */
   defaultBrightness: number;
@@ -207,6 +214,12 @@ export interface ChatBgPrefsState {
   globalLiveValue: string;
   /** Счётчик версий живых обоев — чтобы клиент перезагрузить видео из IndexedDB */
   liveBgStamp: number;
+  /**
+   * Серверные копии фото: ключ IndexedDB → /uploads/... Синхронизируется со
+   * стором, поэтому на другом устройстве фото докачивается по ключу.
+   */
+  remotePhotos: Record<string, string>;
+  setRemotePhoto: (key: string, url: string) => void;
 
   // Actions
   setGlobalStockWallpaper: (id: string) => void;
@@ -227,6 +240,10 @@ export interface ChatBgPrefsState {
   setChatListDim: (value: number) => void;
   /** Размытие фото под списком чатов, px. */
   setChatListBlur: (value: number) => void;
+  /** Фото промежутков (null — убрать). */
+  setGapBg: (key: string | null) => void;
+  /** Затемнение фото промежутков. */
+  setGapDim: (value: number) => void;
   setChatWallpaper: (chatId: string, override: WallpaperOverride) => void;
   clearChatWallpaper: (chatId: string) => void;
   getChatWallpaper: (chatId: string) => ResolvedWallpaper | null;
@@ -246,12 +263,18 @@ export const useChatBgPrefsStore = create<ChatBgPrefsState>()(
       chatListBg: null,
       chatListDim: 0.35,
       chatListBlur: 0,
+      gapBg: null,
+      // = GAP_DIM_LIMITS.default (utils/gapWallpaper). Без импорта: тесты
+      // грузят стор в vm с заглушками require.
+      gapDim: 0.25,
       defaultBrightness: 0.65,
       userPhotoWallpaper: null,
       userPhotoName: '',
       userWallpapers: {},
       globalLiveValue: 'global',
       liveBgStamp: 0,
+      remotePhotos: {},
+      setRemotePhoto: (key, url) => set((s) => ({ remotePhotos: { ...s.remotePhotos, [key]: url } })),
 
       setGlobalStockWallpaper: (id) => set({ globalStockWallpaper: id }),
 
@@ -271,6 +294,8 @@ export const useChatBgPrefsStore = create<ChatBgPrefsState>()(
       setChatListBg: (value) => set({ chatListBg: value }),
       setChatListDim: (value) => set({ chatListDim: Math.max(0, Math.min(1, value)) }),
       setChatListBlur: (value) => set({ chatListBlur: Math.max(0, Math.min(40, value)) }),
+      setGapBg: (key) => set({ gapBg: typeof key === 'string' && key ? key : null }),
+      setGapDim: (value) => set({ gapDim: Number.isFinite(value) ? Math.max(0, Math.min(0.8, value)) : 0.25 }),
 
       setChatWallpaper: (chatId, override) => set((s) => ({
         perChatOverrides: { ...s.perChatOverrides, [chatId]: override },
@@ -320,6 +345,7 @@ export const useChatBgPrefsStore = create<ChatBgPrefsState>()(
         const next = { ...(persisted || {}) };
         if (!next.userWallpapers || typeof next.userWallpapers !== 'object') next.userWallpapers = {};
         if (typeof next.globalLiveValue !== 'string') next.globalLiveValue = 'global';
+        if (!next.remotePhotos || typeof next.remotePhotos !== 'object') next.remotePhotos = {};
         if (next.userPhotoWallpaper && !(next.userWallpapers.global || []).length) {
           next.userWallpapers = {
             ...next.userWallpapers,
