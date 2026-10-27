@@ -70,6 +70,46 @@ export default function ChannelComments({ post }: { post: Message }) {
     const timer = setInterval(load, 5000);
     return () => { cancelled = true; clearInterval(timer); };
    }, [open, post.chatId, post.id, live, pending]);
+  // ── Ветки: как в Instagram/TikTok ответы спрятаны под «Посмотреть N ответов».
+  // Ответ на ответ тоже уходит в ветку корневого комментария (вложенность
+  // в один уровень), а у самого ответа остаётся цитата «Ответ: имя».
+  const threads = buildThreads(comments);
+  const [expandedThreads, setExpandedThreads] = useState<Set<string>>(() => new Set());
+  const toggleThread = (rootId: string) => setExpandedThreads(prev => {
+    const next = new Set(prev);
+    if (next.has(rootId)) next.delete(rootId); else next.add(rootId);
+    return next;
+  });
+  const expandThread = (rootId: string) => setExpandedThreads(prev => (prev.has(rootId) ? prev : new Set(prev).add(rootId)));
+  function renderComment(m: Message, isReply: boolean) {
+    const own = m.senderId === userId;
+    const quoted = comments.find(c => c.id === m.commentReplyToId);
+    // В ветке цитата нужна только при ответе на другой ответ — ответ корню и так стоит под ним.
+    const showQuote = !!m.commentReplyToId && (!quoted || !!quoted.commentReplyToId || !isReply);
+    return <>
+      <Box sx={{ p: isReply ? 1.25 : 1.5, borderRadius: 2, background: bubbleBackground(theme.bgBubbleOther, theme.bubbleOtherGradient), color: theme.bubbleOtherText || theme.text, border: `1px solid ${theme.border}`, borderLeft: own ? `3px solid ${theme.accent}` : undefined }}>
+        <Box sx={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 1, mb: 0.75 }}>
+          <Typography sx={{ fontWeight: 600, fontSize: isReply ? 13 : 14, overflowWrap: 'anywhere', flex: 1, minWidth: 0 }}>{author(m)}{own ? ' · Вы' : ''}</Typography>
+          <Typography sx={{ fontSize: 11, opacity: 0.7 }}>{new Date(m.createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}{m.isEdited ? ' · изменено' : ''}</Typography>
+        </Box>
+        {showQuote && <Box sx={{ borderLeft: '2px solid currentColor', pl: 1, mb: 1, opacity: 0.8 }}>
+          <Typography sx={{ fontSize: 12, fontWeight: 600 }}>{quoted ? `Ответ: ${author(quoted)}` : 'Ответ на удалённый комментарий'}</Typography>
+          {quoted && <Typography sx={{ fontSize: 13, overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{quoted.content}</Typography>}
+        </Box>}
+        <Typography sx={{ fontSize: isReply ? 14 : 15, lineHeight: 1.6, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{m.content}</Typography>
+      </Box>
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
+        {m.reactions?.map(r => <Button key={r.emoji} size="small" disabled={reactionBusy === m.id} aria-label={`Реакция ${reactionLabel(r.emoji)}: ${r.count}`} aria-pressed={r.userIds.includes(userId || '')} onClick={() => void react(m, r.emoji)} sx={{ bgcolor: r.userIds.includes(userId || '') ? theme.bgActive : theme.bgHeader, border: `1px solid ${theme.border}`, borderRadius: 5, minWidth: 48, gap: 0.5 }}><ReactionGlyph value={r.emoji} /> {r.count}</Button>)}
+        <Button size="small" disabled={busy} onClick={() => { setReply(m); inputRef.current?.focus(); }}>Ответить</Button>
+        <Button size="small" aria-expanded={reactionPicker === m.id} onClick={() => setReactionPicker(reactionPicker === m.id ? null : m.id)}>Реакция</Button>
+        {(own || hasGroupRight(member, 'editMessages')) && <Button size="small" onClick={() => moderate(m, false)}>Редактировать</Button>}
+        {(own || hasGroupRight(member, 'deleteMessages')) && <Button size="small" onClick={() => moderate(m, true)}>Удалить</Button>}
+      </Box>
+      {reactionPicker === m.id && <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, p: 0.5, bgcolor: theme.bgHeader, borderRadius: 2 }}>
+        {reactionSlots.map(emoji => <Button key={emoji} disabled={!!reactionBusy} aria-label={`Поставить реакцию ${reactionLabel(emoji)}`} onClick={() => void react(m, emoji)} sx={{ minWidth: 40, minHeight: 40, fontSize: 22 }}><ReactionGlyph value={emoji} /></Button>)}
+      </Box>}
+    </>;
+  }
   async function send() {
     if (!text.trim() || busy || pending) return;
     setBusy(true); setError('');
@@ -77,6 +117,8 @@ export default function ChannelComments({ post }: { post: Message }) {
       const result = await messagesApi.send(post.chatId, { text: text.trim(), replyToId: post.id, commentReplyToId: reply?.id });
       useChatStore.getState().addMessage(result.data);
       setComments(current => current.some(m => m.id === result.data.id) ? current : [...current, result.data]);
+      // Свой ответ сразу видно: раскрываем ветку, в которую он попал.
+      if (reply) expandThread(threadRootId(reply, comments));
       setReply(null);
       setText('');
     } catch (e: any) { setError(e.response?.data?.message || 'Не удалось отправить комментарий'); }
@@ -123,30 +165,27 @@ export default function ChannelComments({ post }: { post: Message }) {
         </Box>
         {loading && !comments.length && <Typography role="status" sx={{ color: theme.textSec, py: 2 }}>Загрузка комментариев…</Typography>}
         {!loading && !comments.length && <Typography sx={{ color: theme.textSec, py: 2 }}>Пока нет комментариев. Напишите первым.</Typography>}
-        {comments.map(m => {
-          const own = m.senderId === userId;
-          const quoted = comments.find(c => c.id === m.commentReplyToId);
-          return <Box key={m.id} sx={{ mb: 2, minWidth: 0 }}>
-            <Box sx={{ p: 1.5, borderRadius: 2, background: bubbleBackground(theme.bgBubbleOther, theme.bubbleOtherGradient), color: theme.bubbleOtherText || theme.text, border: `1px solid ${theme.border}`, borderLeft: own ? `3px solid ${theme.accent}` : undefined }}>
-              <Box sx={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 1, mb: 0.75 }}>
-                <Typography sx={{ fontWeight: 600, fontSize: 14, overflowWrap: 'anywhere', flex: 1, minWidth: 0 }}>{author(m)}{own ? ' · Вы' : ''}</Typography>
-                <Typography sx={{ fontSize: 11, opacity: 0.7 }}>{new Date(m.createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}{m.isEdited ? ' · изменено' : ''}</Typography>
-              </Box>
-              {m.commentReplyToId && <Box sx={{ borderLeft: '2px solid currentColor', pl: 1, mb: 1, opacity: 0.8 }}>
-                <Typography sx={{ fontSize: 12, fontWeight: 600 }}>{quoted ? `Ответ: ${author(quoted)}` : 'Ответ на удалённый комментарий'}</Typography>
-                {quoted && <Typography sx={{ fontSize: 13, overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{quoted.content}</Typography>}
+        {threads.map(({ root, replies }) => {
+          const expanded = expandedThreads.has(root.id);
+          return <Box key={root.id} sx={{ mb: 2, minWidth: 0 }}>
+            {renderComment(root, false)}
+            {replies.length > 0 && <Box sx={{ pl: { xs: 2, sm: 3 }, mt: 0.5 }}>
+              <Button
+                size="small"
+                aria-expanded={expanded}
+                onClick={() => toggleThread(root.id)}
+                sx={{
+                  gap: 1, px: 0.5, fontWeight: 600,
+                  // Как в ленте Instagram/TikTok: тонкая линия перед подписью.
+                  '&::before': { content: '""', width: 24, height: '1px', bgcolor: 'currentColor', opacity: 0.6 },
+                }}
+              >
+                {expanded ? 'Скрыть ответы' : `Посмотреть ${replies.length} ${pluralReplies(replies.length)}`}
+                <Box component="span" aria-hidden sx={{ display: 'inline-block', fontSize: 11, transition: 'transform 150ms ease', transform: expanded ? 'rotate(180deg)' : 'none' }}>▾</Box>
+              </Button>
+              {expanded && <Box sx={{ mt: 1 }}>
+                {replies.map(r => <Box key={r.id} sx={{ mb: 1.5, minWidth: 0 }}>{renderComment(r, true)}</Box>)}
               </Box>}
-              <Typography sx={{ fontSize: 15, lineHeight: 1.6, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{m.content}</Typography>
-            </Box>
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
-              {m.reactions?.map(r => <Button key={r.emoji} size="small" disabled={reactionBusy === m.id} aria-label={`Реакция ${reactionLabel(r.emoji)}: ${r.count}`} aria-pressed={r.userIds.includes(userId || '')} onClick={() => void react(m, r.emoji)} sx={{ bgcolor: r.userIds.includes(userId || '') ? theme.bgActive : theme.bgHeader, border: `1px solid ${theme.border}`, borderRadius: 5, minWidth: 48, gap: 0.5 }}><ReactionGlyph value={r.emoji} /> {r.count}</Button>)}
-              <Button size="small" disabled={busy} onClick={() => { setReply(m); inputRef.current?.focus(); }}>Ответить</Button>
-              <Button size="small" aria-expanded={reactionPicker === m.id} onClick={() => setReactionPicker(reactionPicker === m.id ? null : m.id)}>Реакция</Button>
-              {(own || hasGroupRight(member, 'editMessages')) && <Button size="small" onClick={() => moderate(m, false)}>Редактировать</Button>}
-              {(own || hasGroupRight(member, 'deleteMessages')) && <Button size="small" onClick={() => moderate(m, true)}>Удалить</Button>}
-            </Box>
-            {reactionPicker === m.id && <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, p: 0.5, bgcolor: theme.bgHeader, borderRadius: 2 }}>
-              {reactionSlots.map(emoji => <Button key={emoji} disabled={!!reactionBusy} aria-label={`Поставить реакцию ${reactionLabel(emoji)}`} onClick={() => void react(m, emoji)} sx={{ minWidth: 40, minHeight: 40, fontSize: 22 }}><ReactionGlyph value={emoji} /></Button>)}
             </Box>}
           </Box>;
         })}
@@ -166,4 +205,43 @@ export default function ChannelComments({ post }: { post: Message }) {
       </DialogActions>
     </Dialog>
   </>;
+}
+
+/** Корень ветки: поднимаемся по commentReplyToId до комментария без родителя (или с удалённым). */
+function threadRootId(m: Message, all: Message[]): string {
+  const byId = new Map(all.map(c => [c.id, c]));
+  let cur = m;
+  const seen = new Set<string>();
+  while (cur.commentReplyToId && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    const parent = byId.get(cur.commentReplyToId);
+    if (!parent) break;
+    cur = parent;
+  }
+  return cur.id;
+}
+
+/** Корневые комментарии по порядку; все ответы (любой глубины) — в ветке своего корня. */
+function buildThreads(all: Message[]): { root: Message; replies: Message[] }[] {
+  const threads = new Map<string, { root: Message; replies: Message[] }>();
+  const order: string[] = [];
+  for (const m of all) {
+    const rootId = threadRootId(m, all);
+    if (rootId === m.id) {
+      threads.set(m.id, { root: m, replies: threads.get(m.id)?.replies ?? [] });
+      order.push(m.id);
+    } else {
+      const t = threads.get(rootId);
+      if (t) t.replies.push(m);
+      else threads.set(rootId, { root: undefined as unknown as Message, replies: [m] });
+    }
+  }
+  return order.map(id => threads.get(id)!).filter(t => t.root);
+}
+
+function pluralReplies(n: number): string {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'ответ';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'ответа';
+  return 'ответов';
 }

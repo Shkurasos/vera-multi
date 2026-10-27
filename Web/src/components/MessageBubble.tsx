@@ -27,6 +27,7 @@ import type { ChatSkinSlot, ChatSkinOverride } from '../store/chatSkinStore';
 import { specToStyle, specAnimationClass } from '../utils/customStyle';
 import { buildPlaqueSx, buildShopRingSx } from '../utils/rarityStyles';
 import { skinColors } from '../utils/skinColors';
+import { copyText, copyImageBlob } from '../utils/clipboard';
 import { bubbleSkin, selfcardSkin } from '../utils/bubbleSkin';
 import { mirrorBubble } from '../utils/mirrorBubble';
 import { ringPoint, continueRingDrag } from '../utils/roundNote';
@@ -271,7 +272,6 @@ function AudioPlayer({ src, fileName, accent, attachmentId }: { src: string; fil
 /** Копирует изображение в буфер обмена как PNG (для не-PNG — через canvas). */
 async function copyImageToClipboard(url: string): Promise<boolean> {
   try {
-    if (!navigator.clipboard || typeof ClipboardItem === 'undefined') return false;
     const resp = await fetch(url);
     const blob = await resp.blob();
     let png: Blob = blob;
@@ -285,8 +285,8 @@ async function copyImageToClipboard(url: string): Promise<boolean> {
       if (!converted) return false;
       png = converted;
     }
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
-    return true;
+    // Приложение / navigator.clipboard / запасной execCommand — см. utils/clipboard.
+    return await copyImageBlob(png);
   } catch {
     return false;
   }
@@ -1831,7 +1831,7 @@ function MessageBubble({
           items={[
             ...(!channelPost ? [{ key: 'reply', label: 'Ответить', icon: <Reply />, onClick: () => onReply(message) }] : []),
             { key: 'forward', label: 'Переслать', icon: <Forward />, onClick: () => onForward(message) },
-            { key: 'copy', label: 'Копировать', icon: <ContentCopy />, onClick: () => navigator.clipboard.writeText(message.content || '') },
+            { key: 'copy', label: 'Копировать', icon: <ContentCopy />, onClick: () => { void copyText(message.content || ''); } },
             { key: 'pin', label: message.isPinned ? 'Открепить' : 'Закрепить', icon: <PushPin />, onClick: () => handleTogglePin() },
             { key: 'select', label: 'Выделить', icon: <CheckCircleOutline />, onClick: () => { hoverNone(); useMessageSelectionStore.getState().start(message.chatId, message.id); } },
             ...(canEdit ? [{ key: 'edit', label: 'Редактировать', icon: <Edit />, onClick: () => onEdit?.(message) }] : []),
@@ -1854,7 +1854,7 @@ function MessageBubble({
               icon: <ContentCopy />,
               onClick: () => {
                 void copyImageToClipboard(imageMenu.src).then((ok) => {
-                  if (!ok) void navigator.clipboard?.writeText(imageMenu.src);
+                  if (!ok) void copyText(imageMenu.src);
                 });
               },
             },
@@ -1862,7 +1862,7 @@ function MessageBubble({
               key: 'copy-link',
               label: 'Копировать ссылку',
               icon: <OpenInNew />,
-              onClick: () => navigator.clipboard.writeText(imageMenu.src),
+              onClick: () => { void copyText(imageMenu.src); },
             },
             { key: 'open', label: 'Открыть в новой вкладке', icon: <OpenInNew />, onClick: () => window.open(imageMenu.src, '_blank', 'noopener,noreferrer') },
             { key: 'save', label: 'Сохранить', icon: <Download />, onClick: () => downloadImage(imageMenu.src) },

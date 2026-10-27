@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Box, Typography, TextField, Button, InputAdornment, IconButton } from '@mui/material';
+import { Box, Typography, TextField, Button, InputAdornment, IconButton, useMediaQuery } from '@mui/material';
 import { ContentCopy } from '@mui/icons-material';
 import { useThemeStore, CUSTOM_THEME_ID_START, Theme, themeToLink, themeFromLink, snapshotThemeSettings } from '../store/themeStore';
 import { aiApi } from '../services/botsApi';
@@ -19,6 +19,7 @@ import {
 import { UI_MODES } from '../store/uiPrefsStore';
 import { readableTextOn } from '../utils/contrast';
 import { ANIM_GROUPS } from '../store/animStore';
+import { SLIDE_MEDIA, SLIDE_IN_MS, SLIDE_OUT_MS, SLIDE_EASE, SLIDE_KEYFRAMES_CSS, slideAllowed } from '../utils/slidePanel';
 
 // ─── Последняя вкладка редактора ──────────────────────────────────────────────
 // Список и группы вкладок — в utils/themeEditorSearch.ts (там же индекс поиска).
@@ -282,13 +283,13 @@ function CommunityThemesPanel({
     </div>
     {message && <div style={{ fontSize: 12, color: theme.accent, marginBottom: 8 }}>{message}</div>}
     <div style={{ display: 'grid', gap: 8 }}>
-      {items.map(item => <div key={item.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: 8, border: `1px solid ${theme.border}`, borderRadius: 7 }}>
+      {items.map(item => <div key={item.id} onClick={() => void install(item)} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: 8, border: `1px solid ${theme.border}`, borderRadius: 7, cursor: 'pointer' }}>
         {item.previewUrl ? <img src={communityAssetUrl(item.previewUrl)} alt="" style={{ width: 54, height: 42, objectFit: 'cover', borderRadius: 5 }} /> : <div style={{ width: 54, height: 42, background: item.theme?.accent || theme.accent, borderRadius: 5 }} />}
         <div style={{ minWidth: 0, flex: 1 }}><div style={{ fontWeight: 600 }}>{item.name}</div><div style={{ fontSize: 11, opacity: .65, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description || `Автор: ${item.authorName}`} · {item.downloads} установок</div></div>
-        <button onClick={() => void install(item)} disabled={busy} style={{ padding: '6px 9px', border: `1px solid ${theme.accent}`, borderRadius: 6, background: 'transparent', color: theme.accent, cursor: 'pointer' }}>Установить</button>
+        <button onClick={(e) => { e.stopPropagation(); void install(item); }} disabled={busy} style={{ padding: '6px 9px', border: `1px solid ${theme.accent}`, borderRadius: 6, background: 'transparent', color: theme.accent, cursor: 'pointer' }}>Установить</button>
         <button onClick={() => void downloadTheme(item)} style={{ padding: '6px 9px', border: `1px solid ${theme.border}`, borderRadius: 6, background: 'transparent', color: theme.text, cursor: 'pointer' }}>JSON</button>
         {item.assetUrl && <a href={communityAssetUrl(item.assetUrl)} download style={{ fontSize: 12, color: theme.accent }}>Скачать</a>}
-        <button onClick={() => void remove(item)} title="Удалить свою публикацию" style={{ border: 0, background: 'transparent', color: '#f87171', cursor: 'pointer' }}>×</button>
+        <button onClick={(e) => { e.stopPropagation(); void remove(item); }} title="Удалить свою публикацию" style={{ border: 0, background: 'transparent', color: '#f87171', cursor: 'pointer' }}>×</button>
       </div>)}
       {!items.length && <div style={{ fontSize: 12, opacity: .6 }}>Публикаций пока нет.</div>}
     </div>
@@ -314,8 +315,20 @@ interface Props {
   headerExtra?: React.ReactNode;
 }
 
-export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 'app', headerExtra }: Props) {
+export function ThemeEditor({ onClose: closeNow, onGoChats: goChatsNow, initialTheme, onApply, mode = 'app', headerExtra }: Props) {
   const isChat = mode === 'chat';
+  // На телефоне редактор — полноэкранный экран, который выезжает справа и
+  // уезжает туда же. Закрытие ждёт конца анимации, потом зовёт родителя.
+  const mobile = useMediaQuery(SLIDE_MEDIA);
+  const [leaving, setLeaving] = useState(false);
+  const leaveThen = (cb: () => void) => {
+    if (leaving) return;
+    if (!slideAllowed()) { cb(); return; }
+    setLeaving(true);
+    window.setTimeout(cb, SLIDE_OUT_MS);
+  };
+  const onClose = () => leaveThen(closeNow);
+  const onGoChats = goChatsNow && (() => leaveThen(goChatsNow));
   const { theme, customThemes, saveCustomTheme, deleteCustomTheme, setTheme, themeId, builtinThemes } = useThemeStore();
 
   const [draft, setDraft] = useState<Theme>(() => {
@@ -516,14 +529,29 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
   // Плавающая панель поверх всего: отступы от краёв, размытие фона, своя
   // высота. Раньше это была карточка 820 px с прокруткой — половина
   // настроек уезжала за экран.
-  const overlay: React.CSSProperties = {
+  const overlay: React.CSSProperties = mobile ? {
+    // Телефон: экран целиком, без полей — каждый пиксель под настройки.
+    position: 'fixed', inset: 0, zIndex: 9999,
+    display: 'flex', alignItems: 'stretch',
+    background: leaving ? 'transparent' : 'rgba(0,0,0,0.35)',
+    transition: `background ${SLIDE_OUT_MS}ms ${SLIDE_EASE}`,
+  } : {
     position: 'fixed', inset: 0, zIndex: 9999,
     background: 'rgba(0,0,0,0.55)',
     backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
     display: 'flex', alignItems: 'stretch', justifyContent: 'center',
     padding: 'max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left))',
   };
-  const modal: React.CSSProperties = {
+  const modal: React.CSSProperties = mobile ? {
+    background: theme.sidebarGradient || theme.bgSidebar, color: theme.text,
+    width: '100%', height: '100%',
+    display: 'flex', flexDirection: 'column', overflow: 'hidden',
+    paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)',
+    boxSizing: 'border-box',
+    animation: `veraSlideInRight ${SLIDE_IN_MS}ms ${SLIDE_EASE}`,
+    transform: leaving ? 'translateX(100%)' : undefined,
+    transition: `transform ${SLIDE_OUT_MS}ms ${SLIDE_EASE}`,
+  } : {
     background: theme.sidebarGradient || theme.bgSidebar, color: theme.text,
     backdropFilter: 'blur(22px) saturate(1.35)', WebkitBackdropFilter: 'blur(22px) saturate(1.35)',
     borderRadius: 22, width: '100%',
@@ -537,11 +565,12 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
   // Прокручиваемая середина между закреплённой шапкой и кнопками.
   const plateBody: React.CSSProperties = {
     flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden',
-    padding: '18px 20px 20px', boxSizing: 'border-box',
+    padding: mobile ? '10px 14px 16px' : '18px 20px 20px', boxSizing: 'border-box',
+    WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
   };
   const plateFooter: React.CSSProperties = {
-    flexShrink: 0, display: 'flex', gap: 10, justifyContent: 'space-between',
-    alignItems: 'center', flexWrap: 'wrap', padding: '12px 20px',
+    flexShrink: 0, display: 'flex', gap: mobile ? 8 : 10, justifyContent: 'space-between',
+    alignItems: 'center', flexWrap: mobile ? 'nowrap' : 'wrap', padding: mobile ? '8px 12px' : '12px 20px',
     borderTop: '1px solid ' + theme.border,
     background: 'rgba(0,0,0,0.18)',
   };
@@ -594,7 +623,8 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
       onClick={() => setTab(id)}
       aria-pressed={tab === id}
       style={{
-        border: 'none', cursor: 'pointer', padding: '7px 12px', borderRadius: 6,
+        border: 'none', cursor: 'pointer', padding: mobile ? '9px 12px' : '7px 12px', borderRadius: 6,
+        flexShrink: 0, minHeight: mobile ? 36 : undefined,
         background: tab === id ? theme.accent : 'transparent',
         // На светлом акценте белые буквы сливаются — берём читаемый цвет.
         color: tab === id ? readableTextOn(theme.accent) : theme.textSec,
@@ -607,7 +637,7 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
     >{label}</button>
   );
   const searchBox = !isChat && (
-    <div style={{ position: 'relative', flex: '0 1 280px', minWidth: 180 }}>
+    <div style={{ position: 'relative', flex: mobile ? '1 1 auto' : '0 1 280px', minWidth: 180 }}>
       <input
         type="search"
         role="combobox"
@@ -663,7 +693,23 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
       )}
     </div>
   );
-  const nav = (
+  const nav = mobile ? (
+    // Телефон: все разделы одной строкой с горизонтальной прокруткой и поиск
+    // под ней. Подписи групп и подсказка съедали треть экрана.
+    <nav aria-label="Разделы редактора" style={{
+      flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 6,
+      padding: '6px 0 8px', borderBottom: '1px solid ' + theme.border,
+      background: 'rgba(0,0,0,0.18)',
+    }}>
+      <div style={{
+        display: 'flex', gap: 4, overflowX: 'auto', overflowY: 'hidden',
+        padding: '0 12px', scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch',
+      }}>
+        {tabGroups.flatMap(g => g.tabs.map(([id, label]) => tabButton(id, label)))}
+      </div>
+      {searchBox && <div style={{ display: 'flex', padding: '0 12px' }}>{searchBox}</div>}
+    </nav>
+  ) : (
     <nav aria-label="Разделы редактора" style={{
       flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'stretch',
       gap: 6, padding: '8px 16px', borderBottom: '1px solid ' + theme.border,
@@ -695,15 +741,16 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
 
   const content = (
     <div style={overlay} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      {mobile && <style>{SLIDE_KEYFRAMES_CSS}</style>}
       <div style={modal}>
         {/* Шапка */}
-        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 20px', borderBottom: '1px solid ' + theme.border }}>
+        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: mobile ? 8 : 12, padding: mobile ? '6px 6px 6px 14px' : '14px 20px', borderBottom: '1px solid ' + theme.border }}>
           <div style={{ minWidth: 0 }}>
-            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>{isChat ? '🎨 Оформление чата' : '🎨 Редактор темы'}</h2>
+            <h2 style={{ margin: 0, fontSize: mobile ? 15 : 16, fontWeight: 700 }}>{isChat ? '🎨 Оформление чата' : '🎨 Редактор темы'}</h2>
             {/* Какая тема стоит и какая настраивается — видно в ЛЮБОМ разделе,
                 а не только на вкладке «Тема». Иначе в «Обоях» или «Звуке» было
                 невозможно понять, к какой теме относится правка. */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 5, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: mobile ? 3 : 5, flexWrap: mobile ? 'nowrap' : 'wrap', minWidth: 0, overflow: 'hidden' }}>
               {activeThemeName !== null && (
                 <span style={themeBadge} title="Тема, применённая в приложении прямо сейчас">
                   <span style={{ ...badgeDot, background: theme.accent }} />
@@ -720,22 +767,23 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
                   {editingThemeName}
                 </span>
               </span>
-              {!sameAsActive && !isChat && (
+              {!sameAsActive && !isChat && !mobile && (
                 <span style={{ fontSize: 11, opacity: 0.55 }}>изменения ещё не применены</span>
               )}
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: mobile ? 2 : 8, flexShrink: 0 }}>
             {headerExtra}
             {onGoChats && (
               <button
                 onClick={onGoChats}
-                style={{ background: 'none', border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.accent, padding: '6px 10px', cursor: 'pointer', fontSize: 13 }}
+                style={{ background: 'none', border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.accent, padding: '6px 10px', cursor: 'pointer', fontSize: 13, minHeight: mobile ? 36 : undefined }}
               >Чаты</button>
             )}
             <button
               onClick={onClose}
-              style={{ background: 'none', border: 'none', color: theme.text, fontSize: 22, cursor: 'pointer', opacity: 0.6, lineHeight: 1 }}
+              aria-label="Закрыть редактор"
+              style={{ background: 'none', border: 'none', color: theme.text, fontSize: 22, cursor: 'pointer', opacity: 0.6, lineHeight: 1, minWidth: mobile ? 44 : undefined, minHeight: mobile ? 44 : undefined }}
             >×</button>
           </div>
         </div>
@@ -1229,13 +1277,16 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
 
         {/* Кнопки */}
         <div style={plateFooter}>
+          {!mobile && (
           <div style={{ fontSize: 11.5, opacity: 0.55, marginRight: 'auto' }}>
             Правки видны сразу. «Сохранить и применить» записывает их в эту тему.
           </div>
+          )}
           <button
             onClick={() => setDraft(d => ({ ...d, id: makeId(), name: d.name + ' (копия)' }))}
             style={{
-              padding: '9px 18px', borderRadius: 6,
+              padding: mobile ? '10px 8px' : '9px 18px', borderRadius: 6,
+              flex: mobile ? 1 : undefined, minHeight: mobile ? 44 : undefined,
               border: '1px solid ' + theme.border,
               background: 'transparent', color: theme.text,
               cursor: 'pointer', fontSize: 12, fontWeight: 700,
@@ -1250,7 +1301,8 @@ export function ThemeEditor({ onClose, onGoChats, initialTheme, onApply, mode = 
           <button
             onClick={handleSave}
             style={{
-              padding: '9px 22px', borderRadius: 6, border: 'none',
+              padding: mobile ? '10px 8px' : '9px 22px', borderRadius: 6, border: 'none',
+              flex: mobile ? 1.4 : undefined, minHeight: mobile ? 44 : undefined,
               background: theme.accent, color: readableTextOn(theme.accent),
               cursor: 'pointer', fontSize: 12, fontWeight: 700,
               letterSpacing: '0.06em', textTransform: 'uppercase', fontFamily: 'inherit',

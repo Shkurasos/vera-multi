@@ -50,16 +50,27 @@ export const connectSocket = (token: string): Socket => {
     useChatStore.setState(state => ({
       chats: state.chats.map(updateChat),
       activeChat: state.activeChat ? updateChat(state.activeChat) : null,
-      messages: Object.fromEntries(Object.entries(state.messages).map(([id, messages]) => [id,
-        messages.map(message => message.senderId === equipment.id && message.sender
-          ? { ...message, sender: { ...message.sender, ...equipment } } : message),
-      ])),
+      // Только чаты, в которых есть сообщения от этого пользователя, получают
+      // новую ссылку — остальные массивы сообщений не трогаем.
+      messages: Object.fromEntries(
+        Object.entries(state.messages).map(([chatId, messages]) => {
+          const idx = messages.findIndex(m => m.senderId === equipment.id && m.sender);
+          if (idx < 0) return [chatId, messages];
+          const next = messages.slice();
+          next[idx] = { ...messages[idx], sender: { ...messages[idx].sender, ...equipment } };
+          return [chatId, next];
+        })
+      ),
     }));
   });
   socket.on('connect', async () => {
     // Refresh outfits missed while disconnected, including the open conversation.
     const { useChatStore } = await import('../store/chatStore');
-    await useChatStore.getState().loadChats();
+    // Не перезагружаем весь список чатов при каждом переподключении — только
+    // если список ещё пуст (первый вход / после сброса состояния).
+    if (useChatStore.getState().chats.length === 0) {
+      await useChatStore.getState().loadChats();
+    }
     await Promise.all(Object.keys(useEquipmentStore.getState().users).map(id => useEquipmentStore.getState().refresh(id)));
     useChatStore.setState(state => ({
       activeChat: state.chats.find(chat => chat.id === state.activeChat?.id) || state.activeChat,

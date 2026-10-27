@@ -333,9 +333,21 @@ function CardBody({ item, photoUrl }: { item: DeskItem; photoUrl?: string | null
       <Box sx={{ bgcolor: '#fdfaf3', p: '10px 10px 0', boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.08)' }}>
         <Box sx={{
           width: '100%', height: Math.max(60, item.h - 44), bgcolor: '#2b2b2b', overflow: 'hidden',
-          backgroundImage: photoUrl ? `url(${photoUrl})` : undefined,
-          backgroundSize: 'cover', backgroundPosition: 'center',
-        }} />
+        }}>
+          {/* <img loading="lazy"> вместо background-image: браузер грузит только
+              фото в видимой части доски и декодирует их вне основного потока —
+              при сотне карточек открытие не ждёт все картинки разом. */}
+          {photoUrl && (
+            <img
+              src={photoUrl}
+              alt={item.caption || 'Фото на доске'}
+              loading="lazy"
+              decoding="async"
+              draggable={false}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }}
+            />
+          )}
+        </Box>
         {/* Полоска под подпись — как у полароида. */}
         <Typography sx={{
           fontFamily: '"Caveat", "Segoe Script", cursive, sans-serif',

@@ -206,9 +206,11 @@ export default function MusicLibrary() {
   };
 
   return <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-    <Box sx={{ px: 2, pt: 2, pb: 1 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 1 }}>
-        <Typography variant="h6" fontWeight={800} sx={{ color: theme.text }}>Музыка</Typography>
+    {/* На телефоне заголовок уже есть в шапке окна, а строка поиска нужна
+        только на «Все треки»: на других вкладках они лишь съедали место. */}
+    <Box sx={{ px: { xs: 1.5, sm: 2 }, pt: { xs: 1, sm: 2 }, pb: { xs: tab === 0 ? 1 : 0, sm: 1 } }}>
+      <Box sx={{ display: { xs: tab === 0 ? 'flex' : 'none', sm: 'flex' }, alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 1 }}>
+        <Typography variant="h6" fontWeight={800} sx={{ color: theme.text, fontSize: { xs: 16, sm: 20 } }}>Музыка</Typography>
         {tab === 0 ? (
           <Stack direction="row" spacing={0.5}>
             <IconButton size="small" onClick={() => setUrlOpen(true)} title="Импорт по ссылке" sx={{ color: theme.textSec, '&:hover': { color: theme.accent } }}><LinkIcon fontSize="small" /></IconButton>
@@ -223,13 +225,13 @@ export default function MusicLibrary() {
           </Stack>
         ) : <Box sx={{ visibility: 'hidden', height: 32 }} />}
       </Box>
-      <Box sx={{ visibility: tab === 0 ? 'visible' : 'hidden', height: 40 }}>
+      <Box sx={{ visibility: tab === 0 ? 'visible' : 'hidden', display: { xs: tab === 0 ? 'block' : 'none', sm: 'block' }, height: 40 }}>
         <TextField fullWidth size="small" placeholder="Поиск треков..." value={query} onChange={(e) => handleSearch(e.target.value)} InputProps={{ startAdornment: <Search fontSize="small" sx={{ mr: 1, color: theme.textSec }} /> }} />
       </Box>
     </Box>
-    <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ 
-      px: 2, 
-      '& .MuiTab-root': { color: theme.textSec, textTransform: 'none' }, 
+    <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" scrollButtons={false} sx={{
+      px: { xs: 0.5, sm: 2 }, minHeight: { xs: 40, sm: 48 }, flexShrink: 0,
+      '& .MuiTab-root': { color: theme.textSec, textTransform: 'none', minHeight: { xs: 40, sm: 48 }, minWidth: 0, px: { xs: 1.5, sm: 2 } },
       '& .MuiTab-root.Mui-selected': { color: theme.accent }, 
       '& .MuiTabs-indicator': { bgcolor: theme.accent } 
     }}>

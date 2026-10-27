@@ -60,32 +60,46 @@ const KEYFRAMES = `
 }
 `;
 
-/* ── Пиксельный кот: сетка пикселей по референсу (чёрный кот, зелёные глаза) ── */
-const PIXEL_COLORS: Record<string, string> = { K: '#171923', E: '#667089', P: '#343b50', G: '#a6f65b', W: '#efffdc', H: '#48536c', N: '#c18aa8' };
+/* ── Пиксельный кот: сидящий чёрный кот, зелёные глаза с бликом, розовый нос ── */
+const PIXEL_COLORS: Record<string, string> = {
+  K: '#1d2030', // шерсть
+  H: '#4a5571', // контур/подсветка — чтобы кот читался на тёмных темах
+  P: '#2a2f42', // светлая грудка
+  D: '#0f1017', // тень между лапами
+  N: '#e59ab8', // внутренняя сторона ушей
+  G: '#a6f65b', // глаз
+  g: '#5fae22', // нижняя часть глаза
+  W: '#ffffff', // блик
+  p: '#f2a3c4', // нос
+  M: '#5a6580', // рот
+  w: '#8b93a8', // усы
+};
+const PIXEL_EYE_ROWS = [6, 8] as const;
+const PIXEL_EYES: Array<[number, number]> = [[6, 7], [16, 17]];
+// 24 колонки × 22 строки, сетка симметрична (кроме хвоста справа).
 const PIXEL_CAT = [
-  '....KK............KK....',
-  '...KKK............KKK...',
-  '..KNNKK..........KKNNK..',
-  '.KKNNKKKKKKKKKKKKKKNNKK.',
-  '.KPHHHHHHHHHHHHHHHHHHPK.',
-  '.KPHHPPPPPPPPPPPPPPHHPK.',
-  '.KKKKGGGGGKKKKGGGGGKKKK.',
-  '.KKKKGWGGGKKKKGGGWGKKKK.',
-  '.KKKKGGGGGKKKKGGGGGKKKK.',
-  '.KKKKGGGGGKKKKGGGGGKKKK.',
-  '.KWWWKKKKKKKKKKKKKKWWWK.',
-  '.KWWKKKKKKKKKKKKKKKKWWK.',
-  '..KKWKKKKKKKKKKKKKKWKK..',
-  '..KKKKKKKKKKKKKKKKKKKK..',
-  '...KPPKKKPPPPPPKKKPPK...',
-  '...KPPKKPPHHHHPPKKPPK...',
-  '...KPPKKPHHHHHHPKKPPK...',
-  '...KPPKKPPHHHHPPKKPPK...',
-  '..KKPPKKKPPPPPPKKKPPKK..',
-  '.KKEEEEKKKKKKKKKKEEEEEKK.',
-  '.KKPPPPKKKKKKKKKKPPPPKK.',
-  '..PPPPKKKKKKKKKKKKPPPP..',
-  '...PPPPKKKKKKKKKKPPPP...',
+  '....HH............HH....',
+  '...HKKH..........HKKH...',
+  '...HKNKH........HKNKH...',
+  '...HKNNKHHHHHHHHKNNKH...',
+  '..HKKKKKKKKKKKKKKKKKKH..',
+  '..HKKKKKKKKKKKKKKKKKKH..',
+  '.HKKKKWGKKKKKKKKWGKKKKH.',
+  '.HKKKKGGKKKKKKKKGGKKKKH.',
+  '.HKKKKggKKKKKKKKggKKKKH.',
+  '.HKKKKKKKKKppKKKKKKKKKH.',
+  'wHKKKKKKKKKMMKKKKKKKKKHw',
+  'wHKKKKKKKKMKKMKKKKKKKKHw',
+  '..HKKKKKKKKKKKKKKKKKKH..',
+  '...HHKKKKKKKKKKKKKKHH...',
+  '....HKKKKPPPPPPKKKKH....',
+  '...HKKKKKPPPPPPKKKKKH...',
+  '...HKKKKKKPPPPKKKKKKH.H.',
+  '..HKKKKKKKKKKKKKKKKKKHKH',
+  '..HKKKKKKKKKKKKKKKKKKHKH',
+  '..HKKDKKKKKKKKKKKKDKKKKH',
+  '..HKKDKKKKKKKKKKKKDKKKH.',
+  '...HHHHHHHHHHHHHHHHHH...',
 ];
 
 const starPath = (cx: number, cy: number, r: number) =>
@@ -94,9 +108,12 @@ const starPath = (cx: number, cy: number, r: number) =>
 function PixelCatArt() {
   const cell = 5;
   const offsetY = (120 - PIXEL_CAT.length * cell) / 2;
+  const [eyeTop, eyeBottom] = PIXEL_EYE_ROWS;
+  const isEye = (x: number, y: number) =>
+    y >= eyeTop && y <= eyeBottom && PIXEL_EYES.some(([x0, x1]) => x >= x0 && x <= x1);
   const eyeRects = (x0: number, x1: number, keyPrefix: string) => {
     const rects: React.ReactElement[] = [];
-    for (let y = 6; y <= 9; y++) {
+    for (let y = eyeTop; y <= eyeBottom; y++) {
       for (let x = x0; x <= x1; x++) {
         const color = PIXEL_COLORS[PIXEL_CAT[y][x]];
         if (color) rects.push(<rect key={`${keyPrefix}-${x}-${y}`} x={x * cell} y={y * cell} width={cell} height={cell} fill={color} />);
@@ -109,14 +126,13 @@ function PixelCatArt() {
       <ellipse className="vera-pet-glow" cx="60" cy={PIXEL_CAT.length * cell - 1} rx="34" ry="3.5" fill="#7ee022" opacity="0.35" />
       <g shapeRendering="crispEdges">
         {PIXEL_CAT.map((row, y) => row.split('').map((ch, x) => {
-          if (y >= 6 && y <= 9 && ((x >= 5 && x <= 9) || (x >= 14 && x <= 18))) return null;
+          // Глаза рисуются отдельными группами — чтобы моргали.
+          if (isEye(x, y)) return null;
           const color = PIXEL_COLORS[ch];
           return color ? <rect key={`${x}-${y}`} x={x * cell} y={y * cell} width={cell} height={cell} fill={color} /> : null;
         }))}
-        <g className="vera-pet-blink">{eyeRects(5, 9, 'eyeL')}</g>
-        <g className="vera-pet-blink" style={{ animationDelay: '0.05s' }}>{eyeRects(14, 18, 'eyeR')}</g>
-        <path d="M55 55 H65 V60 H60 V65 H55 Z" fill="#c18aa8" />
-        <path d="M50 65 H55 V70 H50 Z M60 65 H65 V70 H60 Z" fill="#a2adc4" />
+        <g className="vera-pet-blink">{eyeRects(PIXEL_EYES[0][0], PIXEL_EYES[0][1], 'eyeL')}</g>
+        <g className="vera-pet-blink" style={{ animationDelay: '0.05s' }}>{eyeRects(PIXEL_EYES[1][0], PIXEL_EYES[1][1], 'eyeR')}</g>
       </g>
     </g>
   );

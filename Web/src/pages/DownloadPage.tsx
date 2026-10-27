@@ -4,6 +4,8 @@ import type { Theme } from '@mui/material/styles';
 import { Download as DownloadIcon } from '@mui/icons-material';
 import { downloadsApi } from '../services/api';
 import PwaInstall from '../components/PwaInstall';
+import PageBackButton from '../components/PageBackButton';
+import { useUiPrefsStore } from '../store/uiPrefsStore';
 
 type Platform = 'win' | 'mac' | 'linux' | 'android' | 'other';
 interface DownloadFile { platform: Platform; filename: string; size: number; url: string; }
@@ -33,6 +35,8 @@ export default function DownloadPage() {
   const [files, setFiles] = useState<DownloadFile[] | null>(null);
   const [error, setError] = useState('');
   const myPlatform = useMemo(detectPlatform, []);
+  // Высота мобильной нижней панели (MobileBottomNav) — чтобы последние кнопки не прятались под ней.
+  const navHeight = useUiPrefsStore((s) => s.navHeight);
 
   useEffect(() => {
     downloadsApi.list()
@@ -50,12 +54,27 @@ export default function DownloadPage() {
 
   return (
     // Цвета — из палитры MUI, которая собрана из темы пользователя (muiPalette.ts).
-    <Box sx={{ minHeight: '100vh', bgcolor: 'background.default', color: 'text.primary', p: 3 }}>
+    // body/#root в main.tsx не скроллятся (overflow: hidden), поэтому страница —
+    // сама скролл-контейнер. Снизу отступ под мобильную нижнюю панель + safe-area.
+    <Box sx={{
+      // Заполняем родителя из main.tsx (flex: 1, position: relative) — надёжнее, чем height: 100%.
+      position: 'absolute', inset: 0, overflowY: 'auto', overflowX: 'hidden',
+      WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
+      bgcolor: 'background.default', color: 'text.primary',
+      p: { xs: 2, sm: 3 },
+      pb: {
+        xs: `calc(${navHeight}px + 32px + env(safe-area-inset-bottom))`,
+        md: 3,
+      },
+    }}>
       <Box sx={{ maxWidth: 720, mx: 'auto' }}>
-        <Typography variant="h4" fontWeight={800} mb={1}
-          sx={{ background: (t: Theme) => `linear-gradient(135deg, ${t.palette.primary.light}, ${t.palette.primary.main})`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-          Установить VERA
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+          <PageBackButton />
+          <Typography variant="h4" fontWeight={800}
+            sx={{ background: (t: Theme) => `linear-gradient(135deg, ${t.palette.primary.light}, ${t.palette.primary.main})`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+            Установить VERA
+          </Typography>
+        </Box>
         <Typography variant="body2" color="text.secondary" mb={3}>
           Приложения для ПК и Android синхронизируются с веб-версией и работают как отдельные устройства аккаунта. Последние сообщения, музыка, аватары и тема доступны и без сети.
         </Typography>

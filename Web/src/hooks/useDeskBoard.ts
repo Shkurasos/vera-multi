@@ -29,6 +29,39 @@ function newId(prefix: string): string {
 
 const NO_RIGHTS: DeskRights = { myLevel: null, canEdit: false, canManage: false, members: [] };
 
+/**
+ * Кэш досок на время жизни вкладки.
+ *
+ * Без него каждое открытие доски начиналось с пустой пробки и ожидания
+ * сервера — записки «загружались» заново при каждом входе. Теперь доска
+ * показывается мгновенно из кэша, а свежая версия подтягивается в фоне.
+ *
+ * Кэш ограничен по числу досок (LRU): доска с сотнями карточек весит
+ * заметно, держать в памяти все когда-либо открытые незачем.
+ */
+const CACHE_LIMIT = 8;
+const boardCache = new Map<string, { board: DeskBoard; rights: DeskRights }>();
+
+function cacheGet(chatId: string) {
+  const hit = boardCache.get(chatId);
+  if (hit) {
+    // Перекладываем в конец — так Map работает как LRU.
+    boardCache.delete(chatId);
+    boardCache.set(chatId, hit);
+  }
+  return hit;
+}
+
+function cacheSet(chatId: string, entry: { board: DeskBoard; rights: DeskRights }) {
+  boardCache.delete(chatId);
+  boardCache.set(chatId, entry);
+  while (boardCache.size > CACHE_LIMIT) {
+    const oldest = boardCache.keys().next().value;
+    if (oldest === undefined) break;
+    boardCache.delete(oldest);
+  }
+}
+
 export interface UseDeskBoard {
   board: DeskBoard;
   rights: DeskRights;
@@ -66,9 +99,13 @@ export interface UseDeskBoard {
 }
 
 export function useDeskBoard(chatId?: string): UseDeskBoard {
-  const [board, setBoard] = useState<DeskBoard>(emptyBoard);
-  const [rights, setRights] = useState<DeskRights>(NO_RIGHTS);
-  const [ready, setReady] = useState(false);
+  // Стартуем сразу с кэша, если доска уже открывалась: никакой пустой пробки.
+  const [board, setBoard] = useState<DeskBoard>(() => (chatId && boardCache.get(chatId)?.board) || emptyBoard());
+  const [rights, setRights] = useState<DeskRights>(() => (chatId && boardCache.get(chatId)?.rights) || NO_RIGHTS);
+  const [ready, setReady] = useState(() => !!(chatId && boardCache.has(chatId)));
+  // Текущий чат: ответ сервера для прошлого чата не должен перетереть новый.
+  const chatIdRef = useRef(chatId);
+  chatIdRef.current = chatId;
   const [error, setError] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
   // Актуальная доска для записи: замыкание таймера не должно видеть старый
@@ -76,59 +113,91 @@ export function useDeskBoard(chatId?: string): UseDeskBoard {
   const latestRef = useRef<DeskBoard>(board);
   // Право редактирования в ref: расписание записи читает его на отправке, и
   // к тому моменту оно должно быть актуальным, а не захваченным в замыкании.
-  const canEditRef = useRef(false);
+  const canEditRef = useRef(!!(chatId && boardCache.get(chatId)?.rights.canEdit));
+  const rightsRef = useRef<DeskRights>(rights);
 
   const apply = useCallback((next: DeskBoard) => {
     latestRef.current = next;
     setBoard(next);
+    // Каждая правка сразу попадает в кэш: вернувшись на доску, увидим её
+    // такой, какой оставили, даже если запись на сервер ещё не ушла.
+    if (chatIdRef.current) cacheSet(chatIdRef.current, { board: next, rights: rightsRef.current });
   }, []);
 
   const load = useCallback(async () => {
     if (!chatId) { setReady(true); return; }
     try {
       const res = await protoBoardApi.get(chatId);
+      if (chatIdRef.current !== chatId) return; // успели переключиться на другой чат
       const data = res.data;
+      const nextRights: DeskRights = {
+        myLevel: data.myLevel ?? null,
+        canEdit: !!data.canEdit,
+        canManage: !!data.canManage,
+        members: data.members || [],
+      };
+      rightsRef.current = nextRights;
+      setRights(nextRights);
+      canEditRef.current = nextRights.canEdit;
+      setError(null);
+      // Доска на сервере не менялась (тот же updatedAt) — не трогаем стейт.
+      // Иначе сотни карточек перерисовывались бы на каждом открытии и на
+      // каждом сокет-событии, даже когда менять нечего.
+      const serverUpdatedAt = data.updatedAt || 0;
+      if (serverUpdatedAt && serverUpdatedAt === latestRef.current.updatedAt) {
+        cacheSet(chatId, { board: latestRef.current, rights: nextRights });
+        return;
+      }
+      // Есть несохранённая локальная правка — свежая версия с сервера её бы
+      // затёрла. Подождём: после записи придёт сокет-событие и мы перечитаем.
+      if (timerRef.current !== null) return;
       // Размер приходит с сервера и может отсутствовать у доски, созданной до
       // появления этой настройки, — тогда берём размер по умолчанию.
       const size = boardSize(data.width, data.height);
       apply({
         items: data.items || [],
         threads: data.threads || [],
-        updatedAt: data.updatedAt || 0,
+        updatedAt: serverUpdatedAt,
         width: size.width,
         height: size.height,
       });
-      setRights({
-        myLevel: data.myLevel ?? null,
-        canEdit: !!data.canEdit,
-        canManage: !!data.canManage,
-        members: data.members || [],
-      });
-      canEditRef.current = !!data.canEdit;
-      setError(null);
     } catch (e: any) {
+      if (chatIdRef.current !== chatId) return;
       const status = e?.response?.status;
+      // Сеть отвалилась, а доска есть в кэше — показываем её, а не ошибку.
+      if (status !== 403 && boardCache.has(chatId)) return;
       setError(status === 403 ? 'Вам не открыта эта доска' : (e?.response?.data?.message || 'Не удалось загрузить доску'));
+      rightsRef.current = NO_RIGHTS;
       setRights(NO_RIGHTS);
       canEditRef.current = false;
+      if (status === 403) boardCache.delete(chatId);
     } finally {
-      setReady(true);
+      if (chatIdRef.current === chatId) setReady(true);
     }
   }, [chatId, apply]);
 
-  // Загрузка при смене чата. Отменяем прошлую загрузку: при быстром
-  // переключении ответ старого чата не должен перетереть новый.
+  // Смена чата: доска из кэша показывается сразу, сервер — фоном.
+  // Пустая пробка и «Загрузка» остаются только для первого открытия.
   useEffect(() => {
-    let cancelled = false;
-    setReady(false);
+    const cached = chatId ? cacheGet(chatId) : undefined;
     setError(null);
-    apply(emptyBoard());
-    void (async () => {
-      await load();
-      if (cancelled) return;
-    })();
-    return () => { cancelled = true; };
-  }, [chatId, apply, load]);
+    if (cached) {
+      latestRef.current = cached.board;
+      setBoard(cached.board);
+      rightsRef.current = cached.rights;
+      setRights(cached.rights);
+      canEditRef.current = cached.rights.canEdit;
+      setReady(true);
+    } else {
+      setReady(false);
+      latestRef.current = emptyBoard();
+      setBoard(latestRef.current);
+      rightsRef.current = NO_RIGHTS;
+      setRights(NO_RIGHTS);
+      canEditRef.current = false;
+    }
+    void load();
+  }, [chatId, load]);
 
   // Отложенная запись.
   const schedule = useCallback(() => {

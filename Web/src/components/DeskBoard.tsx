@@ -656,7 +656,6 @@ function MessageComposer({ canEdit, onSubmit }: {
     const at = selRef.current ?? text.length;
     const next = text.slice(0, at) + emoji + text.slice(at);
     setText(next);
-    setEmojiOpen(false);
     requestAnimationFrame(() => {
       const el = inputRef.current;
       if (!el) return;

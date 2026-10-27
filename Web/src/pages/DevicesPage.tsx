@@ -6,6 +6,8 @@ import {
 import QRCode from 'qrcode';
 import { authApi, devicesApi, getDeviceId } from '../services/api';
 import { useThemeStore } from '../store/themeStore';
+import PageBackButton from '../components/PageBackButton';
+import { useUiPrefsStore } from '../store/uiPrefsStore';
 
 interface DeviceItem {
   id: string;
@@ -109,10 +111,27 @@ export default function DevicesPage() {
   // Лимит 2 устройства на аккаунт — QR доступен, пока не набрали лимит.
   const atLimit = false;
   const { theme } = useThemeStore();
+  // Высота мобильной нижней панели — чтобы низ страницы не прятался под ней.
+  const navHeight = useUiPrefsStore((s) => s.navHeight);
 
   return (
-    <Box p={4} maxWidth={900} mx="auto" pb={{ xs: 76, md: 4 }}>
-      <Typography variant="h5" mb={2} fontWeight={700}>Мои устройства</Typography>
+    // body/#root не скроллятся (overflow: hidden в main.tsx), поэтому страница
+    // сама скролл-контейнер — как DownloadPage. Снизу отступ под мобильную
+    // нижнюю панель + safe-area.
+    <Box sx={{
+      position: 'absolute', inset: 0, overflowY: 'auto', overflowX: 'hidden',
+      WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
+      p: { xs: 2, sm: 4 },
+      pb: {
+        xs: `calc(${navHeight}px + 32px + env(safe-area-inset-bottom))`,
+        md: 4,
+      },
+    }}>
+    <Box maxWidth={900} mx="auto">
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+        <PageBackButton />
+        <Typography variant="h5" fontWeight={700}>Мои устройства</Typography>
+      </Box>
       <Alert severity="info" sx={{ mb: 3 }}>
         Войти на новом устройстве можно по нику и паролю или через QR-код / ссылку,
         созданную с уже привязанного устройства.
@@ -263,6 +282,7 @@ export default function DevicesPage() {
       </Dialog>
 
       {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+    </Box>
     </Box>
   );
 }

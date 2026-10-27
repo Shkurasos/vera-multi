@@ -2,15 +2,20 @@ package app.vera.multi;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
+import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Insets;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.view.View;
+import android.view.WindowInsets;
 import android.webkit.CookieManager;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
@@ -21,6 +26,7 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -52,7 +58,21 @@ public class MainActivity extends Activity {
         serverUrl = ServerStamp.resolve(this);
         webView = new WebView(this);
         webView.setBackgroundColor(Color.parseColor("#0F0F17"));
-        setContentView(webView);
+        // targetSdk 35+ включает edge-to-edge: окно рисуется под строкой состояния
+        // и навигацией, и шапка клиента (поиск, кнопки) залезала под часы/заряд.
+        // Отодвигаем WebView от системных панелей, вырезов и клавиатуры отступами
+        // контейнера — фон контейнера закрашивает полосы под панелями.
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(Color.parseColor("#0F0F17"));
+        root.addView(webView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        // Слушатель только там, где edge-to-edge принудительный (Android 15+):
+        // на старых версиях система сама отодвигает контент, и двойной отступ
+        // сдвинул бы страницу вниз.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            root.setOnApplyWindowInsetsListener(this::applyInsets);
+        }
+        setContentView(root);
 
         WebSettings s = webView.getSettings();
         s.setJavaScriptEnabled(true);
@@ -77,6 +97,18 @@ public class MainActivity extends Activity {
         } else {
             webView.loadUrl(startUrl(getIntent()));
         }
+    }
+
+    /** Отступы под строку состояния, панель навигации, вырез камеры и клавиатуру. */
+    @TargetApi(Build.VERSION_CODES.R)
+    private WindowInsets applyInsets(View v, WindowInsets insets) {
+        // Клавиатура входит в объединение: adjustResize при edge-to-edge не работает,
+        // и без этого поле ввода пряталось бы под ней.
+        Insets bars = insets.getInsets(WindowInsets.Type.systemBars()
+                | WindowInsets.Type.displayCutout()
+                | WindowInsets.Type.ime());
+        v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+        return WindowInsets.CONSUMED;
     }
 
     /** Стартовый адрес: сервер или ссылка привязки vera://link?token=... */

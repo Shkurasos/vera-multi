@@ -16,6 +16,7 @@ import { useActiveWallpaperSpec, isLightColor } from '../hooks/useActiveWallpape
 import { usePetStore } from '../store/petStore';
 import PetArtwork from '../components/PetArtwork';
 import useMaxPetSize from '../hooks/useMaxPetSize';
+import useWindowWidth from '../hooks/useWindowWidth';
 import usePetInteraction, { getPetDock } from '../hooks/usePetInteraction';
 
 // �������� ������ ������ � ���������������� � MusicPlayer.tsx
@@ -48,6 +49,9 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
   const chatOuterMargin = useUserSettingsStore((s) => s.layout.chatOuterMargin);
   const location = useLocation();
   const isMobile = useMediaQuery('(max-width: 700px)');
+  // Ширина окна с подпиской на resize: отступ под боковой плеер должен
+  // пересчитываться при изменении размера окна, а не только при ререндере.
+  const windowWidth = useWindowWidth();
   const equippedPet = usePetStore((s) => s.equippedPet);
   const updatePetSettings = usePetStore((s) => s.updateSettings);
   // Максимальный размер питомца зависит от размера монитора (1/5 экрана,
@@ -200,7 +204,7 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
   const effectiveVerticalPos = isMobile && (playerPos === 'left' || playerPos === 'right' || playerPos === 'info')
     ? 'bottom'
     : playerPos;
-  const maxSidePlayerWidth = Math.max(PLAYER_SIDE_MIN, Math.floor(window.innerWidth / 2));
+  const maxSidePlayerWidth = Math.max(PLAYER_SIDE_MIN, Math.floor(windowWidth / 2));
   const sidePlayerWidth = Math.min(
     Math.max(Number(playerWidth) || 300, PLAYER_SIDE_MIN),
     maxSidePlayerWidth,

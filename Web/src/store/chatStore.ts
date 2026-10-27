@@ -450,7 +450,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       } catch {}
       get().loadMessages(chat.id).then(() => {
         const msgs = get().messages[chat.id] || [];
-        const lastIncoming = [...msgs].reverse().find((m) => m.senderId !== useAuthStore.getState().user?.id);
+        const meId = useAuthStore.getState().user?.id;
+        // Помечаем все чужые сообщения прочитанными, чтобы у собеседников
+        // сразу появились двойные галочки, а не только по последнему сообщению.
+        msgs.forEach(m => {
+          if (m.senderId !== meId && m.readBy && !m.readBy.includes(meId)) {
+            get().markMessageRead(chat.id, m.id, meId);
+          }
+        });
+        const lastIncoming = [...msgs].reverse().find((m) => m.senderId !== meId);
         const lastAny = msgs[msgs.length - 1];
         const last = lastIncoming || lastAny;
         if (last?.id) get().markRead(chat.id, last.id);
@@ -1121,16 +1129,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       return {
         messages: { ...state.messages, [message.chatId]: cleanMsgs },
-        chats: safeChats.map((c) =>
-          c.id === message.chatId && !(c.type === 'channel' && message.replyToId)
-            ? {
-                ...c,
-                lastMessage: normalizedMessage,
-                updatedAt: normalizedMessage.createdAt,
-                unreadCount: isActive ? 0 : (c.unreadCount || 0) + 1,
-              }
-            : c
-  ).sort((a, b) => new Date(chatActivityAt(b)).getTime() - new Date(chatActivityAt(a)).getTime()),
+        chats: (() => {
+          const idx = safeChats.findIndex(c => c.id === message.chatId);
+          if (idx < 0) return safeChats;
+          const next = safeChats.slice();
+          next[idx] = {
+            ...safeChats[idx],
+            lastMessage: normalizedMessage,
+            updatedAt: normalizedMessage.createdAt,
+            unreadCount: isActive ? 0 : (safeChats[idx].unreadCount || 0) + 1,
+          };
+          next.sort((a, b) => new Date(chatActivityAt(b)).getTime() - new Date(chatActivityAt(a)).getTime());
+          return next;
+        })(),
       };
     });
   },
@@ -1157,19 +1168,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...state.messages,
           [message.chatId]: nextMsgs,
         },
-        chats: safeChats.map((c) =>
-          c.id === message.chatId && !(c.type === 'channel' && message.replyToId)
-            ? {
-                ...c,
-                lastMessage: normalizedMessage,
-                updatedAt: normalizedMessage.createdAt,
-                // Инкрементим счётчик только если сообщение чужое и чат не открыт.
-                unreadCount: (!isActive && !isMine)
-                  ? ((c.unreadCount || 0) + 1)
-                  : (isActive ? 0 : (c.unreadCount || 0)),
-              }
-            : c
-  ).sort((a, b) => new Date(chatActivityAt(b)).getTime() - new Date(chatActivityAt(a)).getTime()),
+        chats: (() => {
+          const idx = safeChats.findIndex(
+            (c) => c.id === message.chatId && !(c.type === 'channel' && message.replyToId)
+          );
+          if (idx < 0) return safeChats;
+          const next = safeChats.slice();
+          next[idx] = {
+            ...safeChats[idx],
+            lastMessage: normalizedMessage,
+            updatedAt: normalizedMessage.createdAt,
+            // Инкрементим счётчик только если сообщение чужое и чат не открыт.
+            unreadCount: (!isActive && !isMine)
+              ? ((safeChats[idx].unreadCount || 0) + 1)
+              : (isActive ? 0 : (safeChats[idx].unreadCount || 0)),
+          };
+          next.sort((a, b) => new Date(chatActivityAt(b)).getTime() - new Date(chatActivityAt(a)).getTime());
+          return next;
+        })(),
       };
     });
   },
@@ -1347,7 +1363,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               // Как и с lastMessage: без фолбэка серверный chat:updated без
               // updatedAt затирал локальный пинг активности (правка доски).
               updatedAt: normalized.updatedAt || c.updatedAt,
-              unreadCount: isActive ? 0 : (normalized.unreadCount ?? c.unreadCount ?? 0),
+              unreadCount: isActive ? 0 : c.unreadCount ?? 0,
             };
           }).filter(Boolean) as Chat[]
         : [{ ...normalized, unreadCount: state.activeChat?.id === normalized.id ? 0 : (normalized.unreadCount ?? 0) }, ...state.chats].filter(Boolean) as Chat[],

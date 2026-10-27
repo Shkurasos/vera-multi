@@ -64,12 +64,15 @@ export default function SharedMusicPanel() {
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
       <Box sx={{ px: { xs: 1, sm: 1.5 }, pt: 1, pb: 1 }}>
         <Box sx={{
-          p: { xs: 1.25, sm: 1.5 }, mb: 1.25, borderRadius: 2.5,
+          // На телефоне большая карточка «Общая музыка» не нужна: она занимала
+          // пол-экрана над поиском. Оставляем только «Сейчас играет».
+          display: { xs: currentTrack ? 'block' : 'none', sm: 'block' },
+          p: { xs: 1, sm: 1.5 }, mb: { xs: 1, sm: 1.25 }, borderRadius: 2.5,
           color: theme.text, border: `1px solid ${theme.border}`,
           background: `linear-gradient(135deg, ${theme.accent}20 0%, ${theme.bgInput} 62%)`,
           boxShadow: `0 10px 28px ${theme.accent}12`,
         }}>
-          <Stack direction="row" spacing={1.25} alignItems="center">
+          <Stack direction="row" spacing={1.25} alignItems="center" sx={{ display: { xs: 'none', sm: 'flex' } }}>
             <Box sx={{
               width: 44, height: 44, borderRadius: 1.75, flexShrink: 0,
               display: 'grid', placeItems: 'center', color: theme.accent,
@@ -116,7 +119,8 @@ export default function SharedMusicPanel() {
           )}
         </Box>
 
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }}>
+        {/* Телефон: поиск во всю ширину, сортировка и две кнопки — одной строкой. */}
+        <Stack direction="row" spacing={1} alignItems="center">
           <TextField
             size="small" fullWidth value={query} onChange={(e) => setQuery(e.target.value)}
             placeholder="Поиск по общей библиотеке..."
@@ -124,19 +128,19 @@ export default function SharedMusicPanel() {
           />
           <TextField
             size="small" select value={sort} onChange={(e) => setSort(e.target.value as SharedSort)}
-            sx={{ minWidth: { sm: 175 }, flexShrink: 0 }}
+            sx={{ minWidth: { xs: 0, sm: 175 }, width: { xs: 120, sm: 'auto' }, flexShrink: 0 }}
           >
             {SHARED_SORTS.map((s) => <MenuItem key={s.key} value={s.key}>{s.label}</MenuItem>)}
           </TextField>
         </Stack>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={0.75} sx={{ mt: 0.85 }}>
+        <Stack direction="row" spacing={0.75} sx={{ mt: 0.85 }}>
           <Button fullWidth size="small" variant="outlined" startIcon={<Add />} onClick={() => setTrackOpen(true)}
-            sx={{ textTransform: 'none', borderColor: theme.accent, color: theme.accent, justifyContent: 'center' }}>
-            Добавить свой трек
+            sx={{ textTransform: 'none', borderColor: theme.accent, color: theme.accent, justifyContent: 'center', minHeight: 40, whiteSpace: 'nowrap' }}>
+            <Box component="span" sx={{ display: { xs: 'none', sm: 'inline' } }}>Добавить свой&nbsp;</Box>трек
           </Button>
           <Button fullWidth size="small" variant="outlined" startIcon={<Add />} onClick={() => setAlbumOpen(true)}
-            sx={{ textTransform: 'none', borderColor: theme.accent, color: theme.accent, justifyContent: 'center' }}>
-            Собрать альбом
+            sx={{ textTransform: 'none', borderColor: theme.accent, color: theme.accent, justifyContent: 'center', minHeight: 40, whiteSpace: 'nowrap' }}>
+            <Box component="span" sx={{ display: { xs: 'none', sm: 'inline' } }}>Собрать&nbsp;</Box>альбом
           </Button>
           {query && (
             <Button size="small" onClick={() => setQuery('')} sx={{ color: theme.textSec, textTransform: 'none', whiteSpace: 'nowrap' }}>

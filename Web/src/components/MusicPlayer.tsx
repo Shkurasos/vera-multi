@@ -16,6 +16,7 @@ import type { MusicVisualizerSettings } from '../store/musicVisualizerStore';
 import MusicVisualizerOverlay from './MusicVisualizerOverlay';
 import MusicVisualizerSettingsDialog, { MusicVisualizerSettingsControls } from './MusicVisualizerSettingsDialog';
 import PlaylistsPanel from './PlaylistsPanel';
+import useWindowWidth from '../hooks/useWindowWidth';
 
 const resolveAudioUrl = (url: string): string => {
   if (!url) return '';
@@ -124,6 +125,9 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
   const playerWidth = useUserSettingsStore((s) => s.layout.playerWidth);
   const setLayout = useUserSettingsStore((s) => s.setLayout);
   const isDesktop = useMediaQuery('(min-width: 701px)');
+  // Ширина окна с подпиской на resize (см. useWindowWidth): иначе после
+  // сворачивания/разворачивания ширина панели расходилась с отступом раскладки.
+  const windowWidth = useWindowWidth();
   const [queueFilter, setQueueFilter] = useState('');
   const [sideResizing, setSideResizing] = useState(false);
   // Боковые режимы: плеер становится панелью стандартной ширины.
@@ -138,7 +142,7 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
   const sidePanelW = showSidePanel
     ? Math.min(
       Math.max(Number(playerWidth) || 300, PLAYER_SIDE_MIN),
-      Math.max(PLAYER_SIDE_MIN, Math.floor(window.innerWidth / 2)),
+      Math.max(PLAYER_SIDE_MIN, Math.floor(windowWidth / 2)),
     )
     : 0;
   // В правой панели можно переключать компоненты внутри: «Трек», «Плейлист», «Настройки».

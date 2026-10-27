@@ -1,14 +1,16 @@
-import React, { useEffect, useRef, useState, lazy, Suspense } from 'react';
+import React, { useEffect, useRef, useState, lazy, Suspense, forwardRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
-  Box, IconButton, Dialog, DialogTitle, DialogContent, DialogActions, Button,
+  Box, IconButton, Dialog, Button, Slide,
 } from '@mui/material';
+import type { TransitionProps } from '@mui/material/transitions';
 import {
   Chat as ChatIcon,
   LibraryMusic,
   AccountCircle,
   Palette,
   Archive,
+  ArrowBack,
 } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
 import { useSidebarViewStore } from '../store/sidebarViewStore';
@@ -16,8 +18,17 @@ import { useMobileNavStore } from '../store/mobileNavStore';
 import type { NavKey } from '../utils/mobileNav';
 import { UI_NAV_RADIUS, UI_NAV_INNER_RADIUS, NAV_HEIGHT_LIMITS, navPanelBackground, useUiPrefsStore } from '../store/uiPrefsStore';
 import MusicLibrary from './MusicLibrary';
+import { SLIDE_IN_MS, SLIDE_OUT_MS, SLIDE_EASE, leaveSlidePage } from '../utils/slidePanel';
 
 const ThemeEditor = lazy(() => import('./ThemeEditor').then(m => ({ default: m.ThemeEditor })));
+
+/** Музыка выезжает справа и уезжает туда же — как профиль и редактор темы. */
+const SlideFromRight = forwardRef(function SlideFromRight(
+  props: TransitionProps & { children: React.ReactElement },
+  ref: React.Ref<unknown>,
+) {
+  return <Slide direction="left" ref={ref} easing={SLIDE_EASE} {...props} />;
+});
 
 // Высота панели — ползунок «Высота нижней панели» (uiPrefsStore.navHeight).
 export const MOBILE_NAV = { HEIGHT: NAV_HEIGHT_LIMITS.def };
@@ -104,8 +115,10 @@ export default function MobileBottomNav() {
   if (activePath.startsWith('/chat/')) return null;
 
   const hideForOpen = (callback: () => void) => {
+    // Панель уезжает вниз одновременно с выездом экрана — без паузы перед
+    // открытием: раньше ждали 220 мс, и открытие ощущалось медленным.
     setHiding(true);
-    window.setTimeout(callback, 220);
+    callback();
   };
 
   const openMusic = () => hideForOpen(() => setMusicOpen(true));
@@ -237,7 +250,7 @@ export default function MobileBottomNav() {
         <Button
           aria-label="Вернуться в чаты"
           startIcon={<ChatIcon />}
-          onClick={() => navigate('/')}
+          onClick={() => leaveSlidePage(() => navigate('/'))}
           sx={{
             minWidth: 48, height: 48, px: 1.5, color: theme.text, bgcolor: theme.bgSidebar,
             border: `1px solid ${theme.border}`, boxShadow: '0 8px 24px rgba(0,0,0,.35)',
@@ -279,13 +292,23 @@ export default function MobileBottomNav() {
       </Box>
 
       <Dialog open={musicOpen} onClose={closeMusic} fullScreen
-        PaperProps={{ sx: { bgcolor: theme.bg, color: theme.text } }}>
-        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          Музыка и плейлисты
-          <Button onClick={closeMusic} startIcon={<ChatIcon />} sx={{ color: theme.accent }}>Чаты</Button>
-        </DialogTitle>
-        <DialogContent sx={{ p: 0 }}><MusicLibrary /></DialogContent>
-        <DialogActions><Button onClick={closeMusic} sx={{ color: theme.textSec }}>Закрыть</Button></DialogActions>
+        TransitionComponent={SlideFromRight}
+        transitionDuration={{ enter: SLIDE_IN_MS, exit: SLIDE_OUT_MS }}
+        PaperProps={{ sx: {
+          bgcolor: theme.bg, color: theme.text,
+          // Общий zoom-fade диалогов (main.tsx) спорил бы с выездом сбоку.
+          animation: 'none !important',
+          pt: 'env(safe-area-inset-top)', pb: 'env(safe-area-inset-bottom)',
+        } }}>
+        {/* Компактная шапка: на телефоне каждая строка на счету. */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, px: 0.5, py: 0.25, flexShrink: 0, borderBottom: `1px solid ${theme.border}` }}>
+          <IconButton aria-label="Закрыть музыку" onClick={closeMusic} sx={{ color: theme.textSec, width: 44, height: 44 }}>
+            <ArrowBack />
+          </IconButton>
+          <Box sx={{ flex: 1, fontSize: 17, fontWeight: 700 }}>Музыка и плейлисты</Box>
+          <Button onClick={closeMusic} startIcon={<ChatIcon />} sx={{ color: theme.accent, minHeight: 40 }}>Чаты</Button>
+        </Box>
+        <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}><MusicLibrary /></Box>
       </Dialog>
 
       <Suspense fallback={null}>

@@ -140,17 +140,35 @@ export function enableStoreSync(storeName: string, api: StoreApi<any>, debounce 
   };
   syncManagers.set(storeName, manager);
 
-  api.subscribe(() => {
+  const localOnly = LOCAL_ONLY_KEYS[storeName] || [];
+  api.subscribe((state: any, prev: any) => {
     if (manager.paused || manager.isHydrating) return;
+    // Открытие/закрытие окна и смена вкладки — не повод слать снапшот на сервер.
+    if (localOnly.length && prev) {
+      const changed = Object.keys(state).filter((k) => state[k] !== prev[k]);
+      if (changed.length && changed.every((k) => localOnly.includes(k))) return;
+    }
     localStorage.setItem(`vera_sync_${storeName}_local_changed`, String(Date.now()));
     scheduleSync(manager);
   });
 }
 
+/**
+ * Локальное UI-состояние конкретного окна: никогда не уходит на сервер и не
+ * принимается с других устройств. Иначе любое изменение стора на соседнем
+ * устройстве (опрос кошелька/площадки) присылает `open: false` и закрывает
+ * только что открытый инвентарь.
+ */
+const LOCAL_ONLY_KEYS: Record<string, string[]> = {
+  shop: ['open', 'tab'],
+};
+
 function snapshotState(storeName: string, state: any): any {
   const out: any = {};
+  const localOnly = LOCAL_ONLY_KEYS[storeName] || [];
   for (const key in state) {
     if (typeof state[key] !== 'function') {
+      if (localOnly.includes(key)) continue;
       // Public outfit fields are authoritative on the user record. Generic
       // shop snapshots must never overwrite another outfit asynchronously.
       if (storeName === 'shop' && ['activeRing', 'activeSelfCard', 'activeBubble', 'owned', 'balanceVp', 'marketListings'].includes(key)) continue;
@@ -163,6 +181,15 @@ function snapshotState(storeName: string, state: any): any {
 // Some old snapshots intentionally omitted fields. Merge only those legacy
 // exceptions; account switching resets `current` before this function runs.
 function mergeSyncedState(storeName: string, current: any, incoming: any): any {
+  const localOnly = LOCAL_ONLY_KEYS[storeName];
+  if (localOnly) {
+    // Старые снапшоты на сервере уже содержат `open`/`tab` — оставляем локальные.
+    incoming = { ...incoming };
+    for (const key of localOnly) {
+      if (current && key in current) incoming[key] = current[key];
+      else delete incoming[key];
+    }
+  }
   if (storeName === 'shop') {
     incoming = { ...incoming, owned: current.owned, balanceVp: current.balanceVp, marketListings: current.marketListings };
   }

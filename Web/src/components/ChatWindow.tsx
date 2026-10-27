@@ -9,9 +9,9 @@ import {
 } from '@mui/material';
 import {
   Send, Send as SendIcon, AttachFile, MoreVert, Search,
-  EmojiEmotions, InfoOutlined, Close, PushPin,
+  EmojiEmotions, InfoOutlined, Close, PushPin, Reply as ReplyIcon, Edit as EditIcon,
   Call, Videocam, NotificationsOff, NotificationsActive,
-  FormatSize, ExitToApp, ArrowBack, Palette, KeyboardArrowDown, KeyboardArrowUp,
+  FormatSize, ExitToApp, ChevronLeft, Palette, KeyboardArrowDown, KeyboardArrowUp,
   // Send и RestartAlt есть в шиме иконок (mui-icons-shim); Handshake там нет.
   RestartAlt, AutoAwesome,
 } from '@mui/icons-material';
@@ -27,6 +27,7 @@ import { useUserBlocksStore } from '../store/userBlocksStore';
 import AppealDialog from './AppealDialog';
 import { useThemeStore, getFinishStyles, themeBaseWallpaperId } from '../store/themeStore';
 import type { Theme } from '../store/themeStore';
+import { withAlpha } from '../utils/colorAlpha';
 import { muiPaletteFromTheme } from '../utils/muiPalette';
 import { useChatSettingsStore, BUILTIN_FONTS } from '../store/chatSettingsStore';
 import { useUserSettingsStore } from '../store/userSettingsStore';
@@ -46,7 +47,7 @@ import BubbleSettingsControls from './BubbleSettingsControls';
 import { normalizeMetaPos } from '../utils/bubbleSettings';
 import type { BubbleMetaPos } from '../utils/bubbleSettings';
 import FontPicker from './FontPicker';
-import { membranePressSx, motion } from '../styles/motion';
+import { membranePressSx, motion, chatExit } from '../styles/motion';
 import { frostedPaperSx } from '../styles/frosted';
 import ChatInfoPanel from './ChatInfoPanel';
 import UserProfileModal from './UserProfileModal';
@@ -340,6 +341,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const [toast, setToast] = useState<{ message: string; severity: 'success' | 'info' | 'warning' | 'error' } | null>(null);
   const [languageCorrectionBusy, setLanguageCorrectionBusy] = useState(false);
   const [languageCorrectionExplanation, setLanguageCorrectionExplanation] = useState('');
+  const [exiting, setExiting] = useState(false);
   const languageCorrectionRequestRef = useRef(0);
   const languageCorrectionAbortRef = useRef<AbortController | null>(null);
   useEffect(() => {
@@ -393,6 +395,10 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   // перерисовывало всё окно чата.
   const chatHeaderPos = useUserSettingsStore((s) => s.layout.chatHeaderPos);
   const chatInputPos = useUserSettingsStore((s) => s.layout.chatInputPos);
+  // Плашки «Ответ» / «Редактирование» / вложения: строка ввода стоит на order 4
+  // (или 1, если её подняли наверх), лента на 2. Order 3 ставит плашки ровно
+  // между лентой и вводом; при вводе сверху они идут сразу перед ним.
+  const composerAttachOrder = { xs: 3, md: chatInputPos === 'top' ? 1 : 3 };
   const messageAlign = useUserSettingsStore((s) => s.layout.messageAlign);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -459,7 +465,16 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   // отодвижения при прокрутке.
   const lastClockTickRef = useRef(0);
   const bumpClockLayout = useClockLayout((s) => s.bump);
-  useEffect(() => { setRenderLimit(RENDER_CHUNK); scrollAnchorRef.current = null; }, [id]);
+  // Сброс окна рендера при смене чата — СИНХРОННО во время рендера, а не в
+  // useEffect: иначе первый кадр нового чата рисовался со старым (большим)
+  // окном, прыжок вниз делался по нему, а потом окно ужималось и лента
+  // оказывалась не внизу.
+  const [renderLimitChatId, setRenderLimitChatId] = useState(id);
+  if (renderLimitChatId !== id) {
+    setRenderLimitChatId(id);
+    setRenderLimit(RENDER_CHUNK);
+  }
+  useEffect(() => { scrollAnchorRef.current = null; }, [id]);
   const loadOlderMessages = useChatStore((s) => s.loadOlderMessages);
   const olderStatus = useChatStore((s) => s.olderHistory[id || '']);
   const olderLoading = !!olderStatus?.loading;
@@ -748,6 +763,15 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   // Ключ последнего сообщения на момент прошлого автоскролла: отличает
   // «пришло новое снизу» от «догрузилась история сверху».
   const prevLastKeyRef = useRef<string>('');
+  // Намерение пользователя прокрутить ленту (колесо, тач, перетаскивание
+  // скроллбара, клавиши). «Отлипнуть» от низа можно ТОЛЬКО по такому жесту:
+  // браузер сам двигает scrollTop (scroll anchoring при догрузке картинок,
+  // компенсация якоря), и раньше эти программные scroll-события сбрасывали
+  // atBottomRef → удержание низа выключалось и чат открывался не внизу.
+  const userScrollIntentAtRef = useRef(0);
+  const userPointerDownRef = useRef(false);
+  const hasUserScrollIntent = () =>
+    userPointerDownRef.current || performance.now() - userScrollIntentAtRef.current < 500;
 
   // ── Плавная прокрутка вниз ─────────────────────────────────────────────────
   // Мягкая rAF-твин (~400 мс) на кривой cubic-bezier(.25,.1,.25,1): старт
@@ -833,11 +857,34 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
+    const markIntent = () => { userScrollIntentAtRef.current = performance.now(); };
+    const onPointerDown = () => { userPointerDownRef.current = true; markIntent(); };
+    const onPointerUp = () => {
+      if (userPointerDownRef.current) markIntent();
+      userPointerDownRef.current = false;
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) markIntent();
+    };
     container.addEventListener('wheel', stopSmoothScroll, { passive: true });
     container.addEventListener('touchstart', stopSmoothScroll, { passive: true });
+    container.addEventListener('wheel', markIntent, { passive: true });
+    container.addEventListener('touchmove', markIntent, { passive: true });
+    container.addEventListener('pointerdown', onPointerDown, { passive: true });
+    window.addEventListener('pointerup', onPointerUp, { passive: true });
+    window.addEventListener('pointercancel', onPointerUp, { passive: true });
+    window.addEventListener('keydown', onKeyDown);
     return () => {
       container.removeEventListener('wheel', stopSmoothScroll);
       container.removeEventListener('touchstart', stopSmoothScroll);
+      container.removeEventListener('wheel', markIntent);
+      container.removeEventListener('touchmove', markIntent);
+      container.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
+      window.removeEventListener('keydown', onKeyDown);
+      userPointerDownRef.current = false;
+      userScrollIntentAtRef.current = 0;
       stopSmoothScroll(); // смена чата/размонтирование — гасим твин + blur
     };
   }, [id, stopSmoothScroll]);
@@ -944,6 +991,51 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     return () => { cleanup(); clearTimeout(stopTimer); };
   }, [id, chatMessages.length]);
 
+  // (1б) Постоянное удержание низа, пока пользователь внизу: любая догрузка
+  // картинок/видео/шрифтов после первых 6 сек (лениво загружаемые медиа,
+  // медленная сеть при перезагрузке страницы) раньше сдвигала ленту вверх.
+  // ResizeObserver на прямых детях ленты ловит рост контента (на самом
+  // контейнере рост scrollHeight не виден), событие load в фазе захвата —
+  // догрузку <img>/<video>.
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!id || !container) return;
+    let raf = 0;
+    const pin = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (!atBottomRef.current || smoothScrollActiveRef.current) return;
+        if (messagesContainerRef.current !== container) return;
+        container.scrollTop = container.scrollHeight;
+      });
+    };
+    let resizeObserver: ResizeObserver | null = null;
+    let childObserver: MutationObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(pin);
+      resizeObserver.observe(container);
+      Array.from(container.children).forEach((child) => resizeObserver!.observe(child));
+      if (typeof MutationObserver !== 'undefined') {
+        childObserver = new MutationObserver((mutations) => {
+          for (const m of mutations) {
+            m.addedNodes.forEach((n) => { if (n instanceof Element) resizeObserver!.observe(n); });
+            m.removedNodes.forEach((n) => { if (n instanceof Element) resizeObserver!.unobserve(n); });
+          }
+          pin();
+        });
+        childObserver.observe(container, { childList: true });
+      }
+    }
+    container.addEventListener('load', pin, true);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      resizeObserver?.disconnect();
+      childObserver?.disconnect();
+      container.removeEventListener('load', pin, true);
+    };
+  }, [id]);
+
   // (2) Новые сообщения — автоскролл. Своё сообщение докатываем до низа
   // ВСЕГДА. Чужое — только если пользователь находится не дальше одного
   // экрана от низа (иначе не дёргаем чтение истории).
@@ -1020,8 +1112,11 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     const handleScroll = () => {
       const { scrollTop, scrollHeight, clientHeight } = container;
       const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-      atBottomRef.current = distanceFromBottom < 40;
-      setShowScrollButton(distanceFromBottom > 200);
+      // Прилипаем к низу всегда, отлипаем — только по жесту пользователя.
+      // Программные сдвиги (scroll anchoring, рост медиа) низ не отменяют.
+      if (distanceFromBottom < 40) atBottomRef.current = true;
+      else if (hasUserScrollIntent()) atBottomRef.current = false;
+      setShowScrollButton(distanceFromBottom > 200 && !atBottomRef.current);
 
       // Сообщения, перекрывающие часы, должны отодвигаться и при прокрутке:
       // без сигнала их сдвиг остался бы от того положения, при котором они
@@ -1505,7 +1600,10 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   // больше не перерисовывает шапку/ввод/список целиком, только два пузыря.
   const clearHover = useCallback(() => useMessageHoverStore.getState().setHoveredId(null), []);
   const handleReply = useCallback((m: Message) => {
-    if (activeChat?.type !== 'channel') setReplyTo(m);
+    if (activeChat?.type === 'channel') return;
+    setReplyTo(m);
+    // Сразу ставим курсор в поле ввода — ответ можно печатать без лишнего клика.
+    requestAnimationFrame(() => messageInputRef.current?.focus({ preventScroll: true }));
   }, [activeChat?.type]);
   const handleForward = useCallback((m: Message) => { setForwardError(''); setForwardMsg(m); }, []);
 
@@ -1754,6 +1852,26 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
 
   const chatName = getChatName();
   const chatAvatar = getChatAvatar();
+  // Подпись под именем — общая для мобильной и десктопной шапки.
+  const statusText = typingList.length > 0
+    ? 'печатает...'
+    : partnerOnline
+      ? 'в сети'
+      : activeChat.type === 'group'
+        ? `${activeChat.members?.length || 0} участников`
+        : '';
+  const statusColor = typingList.length > 0 ? theme.accent
+    : partnerOnline ? theme.online
+    : theme.textSec;
+  // «Стеклянная» подложка элементов мобильной шапки (кнопка, пилюля).
+  const mobileHeaderGlassSx = {
+    bgcolor: (theme.bgHeader || '#1c1c1e') + 'D0',
+    backdropFilter: 'blur(24px) saturate(1.4)',
+    WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
+    border: `1px solid ${theme.border}`,
+    boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+    '&:hover': { bgcolor: (theme.bgHeader || '#1c1c1e') + 'E6' },
+  } as const;
   const isLightTheme = (() => {
     const m = String(theme.bg).match(/#([0-9a-f]{6})/i);
     if (!m) return false;
@@ -1809,11 +1927,15 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           overflow: 'hidden',
           position: 'relative',
           transformOrigin: '50% 72%',
-          animation: `chatDepthIn 420ms ${motion.emphasized} both`,
+          // Вход: мягкое появление снизу. Выход: уходит вниз и исчезает.
+          animation: exiting
+            ? `chatExit 220ms ${motion.easeOut} forwards`
+            : `chatDepthIn 420ms ${motion.emphasized} both`,
           '@keyframes chatDepthIn': {
             '0%': { opacity: 0, transform: 'translateY(18px) scale(.972) rotateX(3deg)', filter: 'blur(12px)' },
             '100%': { opacity: 1, transform: 'translateY(0) scale(1) rotateX(0)', filter: 'blur(0)' },
           },
+          '@keyframes chatExit': chatExit,
         }}>
 
         <Snackbar
@@ -1934,9 +2056,76 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             </Typography>
           </Box>
         )}
+        {/* ── Мобильная шапка: круглая «назад» слева, «пилюля» с именем и
+            статусом по центру, круглая аватарка справа. Без сплошной плашки —
+            элементы «плавают» над обоями. Тап по пилюле открывает меню «Ещё»
+            (там же поиск и информация о чате), тап по аватарке — профиль. ── */}
+        <Box sx={{
+          display: { xs: 'grid', md: 'none' },
+          gridTemplateColumns: '44px minmax(0, 1fr) 44px',
+          alignItems: 'center', columnGap: 0.5,
+          px: 1, pt: 'calc(6px + env(safe-area-inset-top))', pb: 0.75,
+          position: 'absolute', top: 0, left: 0, right: 0,
+          zIndex: 4,
+        }}>
+          <IconButton
+            aria-label="К списку чатов"
+            onClick={() => {
+              setExiting(true);
+              setTimeout(() => navigate('/'), 220);
+            }}
+            sx={{
+              ...mobileHeaderGlassSx,
+              width: 44, height: 44, borderRadius: '50%', p: 0,
+              color: theme.text,
+            }}
+          >
+            <ChevronLeft sx={{ fontSize: 30 }} />
+          </IconButton>
+          <Box
+            component="button"
+            type="button"
+            aria-label={`${chatName}${statusText ? `, ${statusText}` : ''}. Открыть меню чата`}
+            aria-haspopup="menu"
+            onClick={(e: React.MouseEvent<HTMLElement>) => setAnchorEl(e.currentTarget)}
+            sx={{
+              ...mobileHeaderGlassSx,
+              justifySelf: 'center', maxWidth: '100%', minWidth: 0,
+              display: 'flex', flexDirection: 'column', alignItems: 'center',
+              px: 2.5, py: 0.5, minHeight: 46, justifyContent: 'center',
+              borderRadius: 999, cursor: 'pointer', font: 'inherit',
+              '&:focus-visible': { outline: `2px solid ${theme.accent}`, outlineOffset: 2 },
+            }}
+          >
+            <Typography noWrap sx={{ fontWeight: 700, fontSize: 16, lineHeight: 1.25, color: theme.text, maxWidth: '100%' }}>
+              {chatName}
+            </Typography>
+            {statusText && (
+              <Typography noWrap sx={{ fontSize: 12, lineHeight: 1.25, color: statusColor, maxWidth: '100%' }}>
+                {statusText}
+              </Typography>
+            )}
+          </Box>
+          <Avatar
+            src={chatAvatar || undefined}
+            onClick={handleAvatarClick}
+            role="button"
+            aria-label="Открыть профиль"
+            sx={{
+              width: 44, height: 44, fontSize: 15,
+              bgcolor: theme.accent + '60',
+              cursor: 'pointer',
+              border: `1px solid ${theme.border}`,
+              boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+            }}
+          >
+            {getInitials(chatName)}
+          </Avatar>
+        </Box>
+
         {/* ── Header ── */}
         <Box sx={{
-          display: 'flex', alignItems: 'center',
+          display: { xs: 'none', md: 'flex' }, alignItems: 'center',
           px: { xs: 0.75, md: 2.5 }, py: { xs: 0.65, md: 1.5 }, gap: { xs: 0.5, md: 2 },
           background: theme.headerGradient || theme.bgHeader,
           backdropFilter: 'blur(22px)',
@@ -1950,14 +2139,6 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           '& .mobile-secondary-action': { display: { xs: 'none', md: 'inline-flex' } },
         }}>
           {/* Avatar — клик открывает профиль/инфо */}
-          <Tooltip title="К списку чатов">
-            <IconButton
-              onClick={() => navigate('/')}
-              sx={{ color: theme.textSec, mr: -0.25, p: 0.75, display: { xs: 'inline-flex', md: 'none' } }}
-            >
-              <ArrowBack />
-            </IconButton>
-          </Tooltip>
           <Avatar
             src={chatAvatar || undefined}
             onClick={handleAvatarClick}
@@ -1977,19 +2158,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             <Typography sx={{ fontWeight: 700, fontSize: { xs: 15, md: 17 }, color: theme.text }} noWrap>
               {chatName}
             </Typography>
-            <Typography sx={{
-              fontSize: { xs: 11, md: 13 },
-              color: typingList.length > 0 ? theme.accent
-                : partnerOnline ? theme.online
-                : theme.textSec,
-            }}>
-              {typingList.length > 0
-                ? 'печатает...'
-                : partnerOnline
-                  ? 'в сети'
-                  : activeChat.type === 'group'
-                    ? `${activeChat.members?.length || 0} участников`
-                    : ''}
+            <Typography sx={{ fontSize: { xs: 11, md: 13 }, color: statusColor }}>
+              {statusText}
             </Typography>
           </Box>
 
@@ -2010,7 +2180,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
                   </IconButton>
                 </span>
               </Tooltip>
-              <Tooltip title="Видео звонок">
+              <Tooltip title="Видеозвонок">
                 <IconButton className="mobile-secondary-action"
                   onClick={() => useCallStore.getState().startCall(id!, 'video')}
                   sx={{ color: theme.textSec, '&:hover': { color: '#3b82f6' } }}
@@ -2479,14 +2649,42 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
         )}
 
         {/* ── Messages ── */}
+        {/* Обёртки доски/холста ОБЯЗАНЫ быть flex-колонкой: корни DeskBoard и
+            Whiteboard тянутся через flex: 1, а содержимое доски целиком
+            absolute — в обычном блоке её высота схлопывается в 0.
+            На телефоне отступ сверху под плавающую шапку со стрелкой «назад»,
+            иначе шапка закрывает тулбар доски. */}
         {isWhiteboard ? (
-          <Whiteboard key={activeChat.id} chatId={activeChat.id} />
+          <Box
+            sx={{
+              flex: 1, minHeight: 0,
+              display: 'flex', flexDirection: 'column',
+              pt: { xs: 'calc(60px + env(safe-area-inset-top))', md: 0 },
+              animation: exiting ? `chatExit 220ms ${motion.easeOut} forwards` : 'none',
+              '@keyframes chatExit': chatExit,
+            }}
+          >
+            <Whiteboard key={activeChat.id} chatId={activeChat.id} />
+          </Box>
         ) : isDesk ? (
-          <DeskBoard
-            key={activeChat.id}
-            chatId={activeChat.id}
-            chatName={chatName}
-          />
+          <Box
+            sx={{
+              flex: 1, minHeight: 0,
+              display: 'flex', flexDirection: 'column',
+              pt: { xs: 'calc(60px + env(safe-area-inset-top))', md: 0 },
+              // Своя стопка ниже мобильной шапки (zIndex 4): плавающие панели
+              // доски не перекроют стрелку «назад».
+              position: 'relative', zIndex: 1,
+              animation: exiting ? `chatExit 220ms ${motion.easeOut} forwards` : 'none',
+              '@keyframes chatExit': chatExit,
+            }}
+          >
+            <DeskBoard
+              key={activeChat.id}
+              chatId={activeChat.id}
+              chatName={chatName}
+            />
+          </Box>
         ) : (
         <Box sx={{
           // overflowY:'scroll' + scrollbarGutter → скроллбар виден ВСЕГДА
@@ -2500,6 +2698,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           willChange: 'scroll-position',
           WebkitOverflowScrolling: 'touch', touchAction: 'pan-y',
           px: { xs: 1, md: 2.5 }, py: { xs: 1.25, md: 2 },
+          pt: { xs: 'calc(72px + env(safe-area-inset-top))', md: 0 },
           pb: { xs: 'calc(1.25rem + env(safe-area-inset-bottom))', md: 2 },
           backgroundImage: theme.chatPattern,
           backgroundSize: patternBackgroundSize(theme.chatPattern, theme.chatPatternSizeMin, theme.chatPatternSizeMax),
@@ -2601,7 +2800,12 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             </Box>
           ))}
           {typingList.length > 0 && (
-            <Box display="flex" alignItems="center" gap={1} ml={1} mt={0.5}>
+            <Box
+              display="flex"
+              alignItems="center"
+              gap={1}
+              sx={{ mt: 0.5, ...(messageAlign === 'right' ? { mr: 1 } : { ml: 1 }) }}
+            >
               <Box sx={{
                 bgcolor: theme.bgBubbleOther, borderRadius: 3, px: 2, py: 1.2,
                 backdropFilter: 'blur(14px)',
@@ -2673,48 +2877,33 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           </Box>
         )}
 
-        {/* ── Edit bar: правка сообщения идёт в строке ввода ниже ── */}
+        {/* ── Edit bar: правка сообщения идёт в строке ввода ниже ──
+            Колонка чата раскладывается через CSS order (шапка 0, лента 2,
+            ввод 4). Без своего order плашки получали 0 и вставали под шапку,
+            вдали от строки ввода. composerAttachOrder ставит их прямо над вводом. */}
         {editing && (
-          <Box sx={{
-            px: 2.5, py: 1,
-            bgcolor: theme.accent + '15',
-            borderTop: `2px solid ${theme.accent}`,
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            flexShrink: 0,
-          }}>
-            <Box minWidth={0} flex={1}>
-              <Typography sx={{ fontSize: 13, color: theme.accent, fontWeight: 600 }}>
-                Редактирование сообщения
-              </Typography>
-              <Typography sx={{ fontSize: 14, color: theme.textSec }} noWrap>
-                {editing.content || 'Вложение'}
-              </Typography>
-            </Box>
-            <IconButton size="small" aria-label="Отменить редактирование" onClick={cancelEdit} sx={{ color: theme.textSec, ml: 1 }}>
-              ✕
-            </IconButton>
-          </Box>
+          <ComposerContextBar
+            theme={theme}
+            order={composerAttachOrder}
+            icon={<EditIcon />}
+            title="Редактирование сообщения"
+            preview={editing.content || 'Вложение'}
+            closeLabel="Отменить редактирование"
+            onClose={cancelEdit}
+          />
         )}
 
         {/* ── Reply bar ── */}
         {replyTo && (
-          <Box sx={{
-            px: 2.5, py: 1,
-            bgcolor: theme.accent + '15',
-            borderTop: `2px solid ${theme.accent}`,
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            flexShrink: 0,
-          }}>
-            <Box minWidth={0} flex={1}>
-              <Typography sx={{ fontSize: 13, color: theme.accent, fontWeight: 600 }}>
-                Ответ → {replyTo.sender?.firstName || replyTo.sender?.username}
-              </Typography>
-              <Typography sx={{ fontSize: 14, color: theme.textSec }} noWrap>{replyTo.content}</Typography>
-            </Box>
-            <IconButton size="small" onClick={() => setReplyTo(null)} sx={{ color: theme.textSec, ml: 1 }}>
-              ✕
-            </IconButton>
-          </Box>
+          <ComposerContextBar
+            theme={theme}
+            order={composerAttachOrder}
+            icon={<ReplyIcon />}
+            title={`Ответ ${replyTo.sender?.firstName || replyTo.sender?.username || ''}`.trim()}
+            preview={replyTo.content || 'Вложение'}
+            closeLabel="Отменить ответ"
+            onClose={() => setReplyTo(null)}
+          />
         )}
 
         {/* ── Pending files preview ── */}
@@ -2725,6 +2914,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             backdropFilter: 'blur(20px)',
             borderTop: `1px solid ${theme.border}`,
             flexShrink: 0,
+            position: 'relative', zIndex: 2,
+            order: composerAttachOrder,
           }}>
             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
               {pendingFiles.map((file, idx) => (
@@ -3022,7 +3213,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
               {EMOJI_LIST.map((emoji) => (
                 <Box
                   key={emoji}
-                  onClick={() => { handleTyping(text + emoji); setEmojiAnchor(null); }}
+                  onClick={() => { handleTyping(text + emoji); }}
                   sx={{
                     fontSize: 24, cursor: 'pointer', p: 0.5, borderRadius: 1.5,
                     transition: 'transform 0.1s',
@@ -3267,6 +3458,92 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       </Dialog>
       {/* Апелляция заблокировавшему меня: уходит администратору. */}
       <AppealDialog open={appealOpen} onClose={() => setAppealOpen(false)} />
+    </Box>
+  );
+}
+
+/**
+ * Плашка над строкой ввода: «Ответ …» / «Редактирование сообщения».
+ *
+ * Раньше это была полоска с фоном accent + 15 (≈8% непрозрачности) — на
+ * чёрных и картиночных фонах она сливалась с лентой. Теперь:
+ * — плотная подложка (bgHeader поверх bg) + лёгкая заливка акцентом,
+ * — толстая акцентная полоса слева и иконка в акцентном кружке,
+ * — заголовок акцентом, превью основным цветом текста (не textSec),
+ * — тень вверх, чтобы плашка отделялась от сообщений.
+ */
+function ComposerContextBar({ theme, order, icon, title, preview, closeLabel, onClose }: {
+  theme: Theme;
+  /** Место в flex-колонке чата: сразу перед строкой ввода (у неё свой order). */
+  order: number | Record<string, number>;
+  icon: React.ReactNode;
+  title: string;
+  preview: string;
+  closeLabel: string;
+  onClose: () => void;
+}) {
+  return (
+    <Box
+      role="status"
+      aria-live="polite"
+      sx={{
+        mx: { xs: 1, md: 1.5 },
+        mb: 0.75,
+        px: 1.25, py: 0.9,
+        display: 'flex', alignItems: 'center', gap: 1.25,
+        flexShrink: 0,
+        position: 'relative',
+        zIndex: 2,
+        order,
+        overflow: 'hidden',
+        borderRadius: '12px',
+        // Подложка непрозрачная независимо от прозрачности шапки темы.
+        bgcolor: theme.bg,
+        backgroundImage: `linear-gradient(${withAlpha(theme.accent, 0.15)}, ${withAlpha(theme.accent, 0.15)}), linear-gradient(${theme.bgHeader}, ${theme.bgHeader})`,
+        border: `1px solid ${withAlpha(theme.accent, 0.4)}`,
+        borderLeft: `4px solid ${theme.accent}`,
+        boxShadow: `0 -6px 18px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.04) inset`,
+        animation: 'veraComposerBarIn 160ms ease-out',
+        '@keyframes veraComposerBarIn': {
+          from: { opacity: 0, transform: 'translateY(6px)' },
+          to: { opacity: 1, transform: 'translateY(0)' },
+        },
+        '@media (prefers-reduced-motion: reduce)': { animation: 'none' },
+      }}
+    >
+      <Box
+        aria-hidden
+        sx={{
+          width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
+          display: 'grid', placeItems: 'center',
+          bgcolor: theme.accent,
+          color: theme.bg,
+          '& svg': { fontSize: 18 },
+        }}
+      >
+        {icon}
+      </Box>
+      <Box minWidth={0} flex={1}>
+        <Typography noWrap sx={{ fontSize: 13, color: theme.accent, fontWeight: 700, lineHeight: 1.3 }}>
+          {title}
+        </Typography>
+        <Typography noWrap sx={{ fontSize: 14, color: theme.text, opacity: 0.9, lineHeight: 1.35 }}>
+          {preview}
+        </Typography>
+      </Box>
+      <IconButton
+        size="small"
+        aria-label={closeLabel}
+        onClick={onClose}
+        sx={{
+          color: theme.text, flexShrink: 0,
+          bgcolor: 'rgba(255,255,255,0.06)',
+          '&:hover': { bgcolor: withAlpha(theme.accent, 0.2) },
+          '&:focus-visible': { outline: `2px solid ${theme.accent}`, outlineOffset: 1 },
+        }}
+      >
+        <Close sx={{ fontSize: 18 }} />
+      </IconButton>
     </Box>
   );
 }

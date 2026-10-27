@@ -5,7 +5,7 @@
  * здесь мы только пробрасываем deep-link `vera://` события в renderer, чтобы
  * клиент мог захватить ссылку привязки (/link?token=...), открытую из ОС.
  */
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, clipboard, nativeImage } = require('electron');
 
 let bufferedDeepLink = null;
 ipcRenderer.on('vera:deeplink', (_e, url) => { bufferedDeepLink = url; });
@@ -30,6 +30,33 @@ const api = {
     setColors(colors) {
       if (!colors || typeof colors !== 'object') return;
       ipcRenderer.send('vera:title-bar-colors', { color: String(colors.color), symbolColor: String(colors.symbolColor) });
+    },
+  },
+  // Буфер обмена ОС напрямую: navigator.clipboard в Electron упирается в
+  // разрешения, а картинку без него не скопировать (у текста есть execCommand).
+  clipboard: {
+    writeText(text) {
+      clipboard.writeText(String(text ?? ''));
+      return true;
+    },
+    /** PNG как ArrayBuffer / Uint8Array. Возвращает false, если картинка не разобралась. */
+    writeImage(pngBytes) {
+      if (!pngBytes) return false;
+      // ArrayBuffer приходит из другого JS-мира (contextIsolation), поэтому
+      // instanceof ненадёжен — заворачиваем в Uint8Array в любом случае.
+      let bytes;
+      try {
+        bytes = ArrayBuffer.isView(pngBytes)
+          ? new Uint8Array(pngBytes.buffer, pngBytes.byteOffset, pngBytes.byteLength)
+          : new Uint8Array(pngBytes);
+      } catch {
+        return false;
+      }
+      if (!bytes.byteLength) return false;
+      const img = nativeImage.createFromBuffer(Buffer.from(bytes));
+      if (img.isEmpty()) return false;
+      clipboard.writeImage(img);
+      return true;
     },
   },
   onDeepLink(handler) {

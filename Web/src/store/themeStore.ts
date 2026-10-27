@@ -1312,9 +1312,9 @@ export const useThemeStore = create<ThemeState>()(
         settingsByTheme: { ...get().settingsByTheme, [String(id)]: settings },
       }),
       setTheme: (id) => {
-        // Сначала ищем в кастомных, потом во встроенных
+        // Сначала ищем в кастомных, потом во встроенных (включая серверный каталог)
         const custom = get().customThemes.find(t => t.id === id);
-        const builtin = THEMES.find(t => t.id === id);
+        const builtin = get().builtinThemes.find(t => t.id === id) || THEMES.find(t => t.id === id);
         const t = custom || builtin || THEMES[0];
         // Настройки, которые сейчас на экране, принадлежат ТЕМЕ, с которой мы
         // уходим: снимаем снимок, чтобы правки не потерялись.
@@ -1373,12 +1373,17 @@ export const useThemeStore = create<ThemeState>()(
         // Если выбрана пользовательская тема — её правки не трогаем.
         const currentId = get().themeId;
         if (!get().customThemes.some(t => t.id === currentId)) {
-          const picked = list.find(t => t.id === currentId) || list[0] || THEMES[0];
-          // Фото-фон чата — личная настройка, её тема не должна затирать.
-          const ownBg = get().chatBgImage;
-          patch.themeId = picked.id;
-          patch.theme = ownBg ? { ...picked, chatBgImage: ownBg } : picked;
-          patch.themeVersion = get().themeVersion + 1;
+          const picked = list.find(t => t.id === currentId);
+          // Если тема не нашлась в новом каталоге (сервер ещё не ответил,
+          // или тема удалена) — не трогаем themeId, оставим как есть.
+          // При следующей загрузке каталога applyBuiltinCatalog сработает повторно.
+          if (picked) {
+            // Фото-фон чата — личная настройка, её тема не должна затирать.
+            const ownBg = get().chatBgImage;
+            patch.themeId = picked.id;
+            patch.theme = ownBg ? { ...picked, chatBgImage: ownBg } : picked;
+            patch.themeVersion = get().themeVersion + 1;
+          }
         }
         set(patch);
       },
@@ -1575,9 +1580,11 @@ export const useThemeStore = create<ThemeState>()(
         const builtinList = buildBuiltinCatalog(catalog);
         const custom = customThemes.find(t => t && t.id === storedId);
         const builtin = builtinList.find(t => t.id === storedId);
-        // Если сохранённая тема была удалена из каталога, themeId приводим к 0:
-        // иначе в переключателе не выделена ни одна тема, а редактор путается.
-        const themeId = custom || builtin ? storedId : 0;
+        // Не сбрасываем themeId в 0, если тема ещё не найдена в каталоге:
+        // каталог загружается с сервера после реигидрации persist, и на этом
+        // этапе тема может ещё не быть встроенной. Оставляем сохранённый ID —
+        // applyBuiltinCatalog при загрузке каталога сама свершит подстановку.
+        const themeId = storedId;
         const baseTheme = custom || builtin || builtinList[0] || THEMES[0];
         // Поверх базовой темы восстанавливаем пользовательское фото-фон чата
         const theme: Theme = {

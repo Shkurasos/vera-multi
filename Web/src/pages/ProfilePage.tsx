@@ -35,6 +35,7 @@ import PetArtwork from '../components/PetArtwork';
 import useMaxPetSize, { MIN_PET_SIZE } from '../hooks/useMaxPetSize';
 // Плашки профиля берут углы из ползунка «Скругление углов интерфейса».
 import { UI_PROFILE_RADIUS, UI_PROFILE_INNER_RADIUS } from '../store/uiPrefsStore';
+import { slidePageSx, leaveSlidePage } from '../utils/slidePanel';
 
 /** Пресеты шрифтов для имени питомца (выбор в карточке «Питомцы»). */
 const PET_FONT_OPTIONS = [
@@ -381,12 +382,14 @@ export default function ProfilePage() {
   };
 
   return (
-    <Box sx={{
+    <Box data-slide-page sx={{
       height: '100%', bgcolor: theme.bg,
       display: 'flex', flexDirection: 'column', overflowY: 'auto',
       pb: { xs: 76, md: 0 }, // запас под мобильную нижнюю панель
       '&::-webkit-scrollbar': { width: 5 },
       '&::-webkit-scrollbar-thumb': { bgcolor: theme.accent + '30', borderRadius: 4 },
+      // Телефон: профиль выезжает справа и уезжает туда же (utils/slidePanel).
+      ...slidePageSx,
     }}>
       {/* ── Header ── */}
       <Box sx={{
@@ -394,7 +397,7 @@ export default function ProfilePage() {
         bgcolor: theme.bgHeader, borderBottom: `1px solid ${theme.border}`,
         flexShrink: 0,
       }}>
-        <IconButton onClick={() => navigate(-1)} sx={{ color: theme.textSec }}>
+        <IconButton aria-label="Назад" onClick={() => leaveSlidePage(() => navigate(-1))} sx={{ color: theme.textSec }}>
           <ArrowBack />
         </IconButton>
         <Typography sx={{ flex: 1, fontSize: 18, fontWeight: 700, color: theme.text }}>

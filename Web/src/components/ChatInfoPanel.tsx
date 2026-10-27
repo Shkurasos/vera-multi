@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
   Box, Avatar, Typography, IconButton, TextField, Button,
   Divider, List, ListItem, ListItemAvatar, ListItemText, Menu, MenuItem,
@@ -23,6 +23,7 @@ import { SHOP_CATALOG, useShopStore } from '../store/shopStore';
 import { useChatSkinStore } from '../store/chatSkinStore';
 import type { ChatSkinSlot } from '../store/chatSkinStore';
 import { frostedPaperSx } from '../styles/frosted';
+import { panelSlideIn, panelSlideOut, motion } from '../styles/motion';
 import {
   CHAT_AVATAR_PRESETS, ChatAvatarPreset, presetBackground, renderChatAvatarPreset,
 } from '../services/chatAvatarPresets';
@@ -99,6 +100,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
   const [newName, setNewName] = useState(chat?.name || '');
   const [newDesc, setNewDesc] = useState(chat?.description || '');
   const [saving, setSaving] = useState(false);
+  const [closing, setClosing] = useState(false);
   const [adminTarget, setAdminTarget] = useState<ChatMember | null>(null);
   const [adminTitle, setAdminTitle] = useState('');
   const [adminRights, setAdminRights] = useState<ChatMember['permissions']>({});
@@ -112,6 +114,17 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
     if (memberHold.current) clearTimeout(memberHold.current);
     memberHold.current = null;
   };
+
+  // Закрытие с анимацией: панель заезжает вправо, только потом вызывается onClose.
+  const handleClose = useCallback((onAfterClose?: () => void) => {
+    setClosing(true);
+    setTimeout(() => {
+      onClose();
+      setClosing(false);
+      onAfterClose?.();
+    }, 220);
+  }, [onClose]);
+
   useEffect(() => {
     setMemberMenu(null);
     setAdminTarget(null);
@@ -458,6 +471,13 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
       bottom: 0,
       zIndex: 1200,
       paddingTop: 'env(safe-area-inset-top)',
+      // Анимация входа/выхода панели информации
+      transition: `transform 220ms ${motion.easeOut}, opacity 220ms ${motion.easeOut}`,
+      animation: closing
+        ? `panelSlideOut 220ms ${motion.easeOut} forwards`
+        : `panelSlideIn 220ms ${motion.easeOut} forwards`,
+      '@keyframes panelSlideIn': panelSlideIn,
+      '@keyframes panelSlideOut': panelSlideOut,
       '@media (min-width: 701px)': {
         position: 'relative',
         width: panelWidth,
@@ -467,6 +487,10 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
         zIndex: 'auto',
         borderLeft: `1px solid ${theme.border}`,
         paddingTop: 0,
+        // На десктопе панель не уезжает за край, а просто появляется/исчезает.
+        animation: closing
+          ? `panelSlideOut 220ms ${motion.easeOut} forwards`
+          : `panelSlideIn 220ms ${motion.easeOut} forwards`,
       },
     }}>
       <Box
@@ -523,7 +547,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
         <Typography sx={{ flex: 1, fontWeight: 700, fontSize: 16, color: theme.text }}>
           {isGroup ? 'Информация о группе' : 'Профиль'}
         </Typography>
-        <IconButton size="small" onClick={onClose}
+        <IconButton size="small" onClick={() => handleClose()}
           sx={{ color: theme.textSec, '&:hover': { color: theme.text } }}>
           <ChevronRight sx={{
             fontSize: 24,
@@ -1017,8 +1041,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
                     // Чистим архив, иначе loadChats вернёт покинутый чат из IndexedDB.
                     await useChatStore.getState().forgetChat(chat.id);
                     await loadChats();
-                    onClose();
-                    navigate('/');
+                    handleClose(() => navigate('/'));
                   } catch (e) { console.error(e); }
                 }}
               >

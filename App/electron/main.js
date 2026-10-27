@@ -214,7 +214,10 @@ app.whenReady().then(() => {
   // ─── WebRTC permissions (микрофон / камера / уведомления) ────────────
   // Без этих handlers Electron блокирует getUserMedia и звонок молча падает.
   const ses = session.defaultSession;
-  const allowed = new Set(['media', 'audioCapture', 'videoCapture', 'display-capture', 'notifications']);
+  // clipboard-sanitized-write — navigator.clipboard.writeText («Копировать» в меню сообщения),
+  // clipboard-read — кнопка «Вставить» в приглашениях.
+  const allowed = new Set(['media', 'audioCapture', 'videoCapture', 'display-capture', 'notifications',
+    'clipboard-sanitized-write', 'clipboard-read']);
   ses.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(allowed.has(permission));
   });

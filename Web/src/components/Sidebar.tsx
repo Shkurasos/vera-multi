@@ -167,14 +167,7 @@ const SidebarChatRow = React.memo(function SidebarChatRow(props: SidebarChatRowP
           transition: `background .22s ${motion.easeOut}, transform .28s ${motion.spring}, box-shadow .22s ${motion.easeOut}`,
         }}
       >
-        <Badge
-          color={avatarOnly && unreadCount ? 'primary' : 'success'}
-          variant={avatarOnly && unreadCount ? 'standard' : 'dot'}
-          badgeContent={avatarOnly ? unreadCount : undefined}
-          invisible={!online && !(avatarOnly && unreadCount)}
-          overlap="circular"
-        >
-          {avatarOnly || showAvatars ? (
+        {avatarOnly || showAvatars ? (
             chat.type === 'saved' ? (
               <Avatar sx={{ width: horizontal ? 52 : 46, height: horizontal ? 52 : 46, bgcolor: theme.accent, ...ringSx[active ? 1 : 0] }}>
                 <StarIcon sx={{ fontSize: 28, color: '#fff' }} />
@@ -187,7 +180,6 @@ const SidebarChatRow = React.memo(function SidebarChatRow(props: SidebarChatRowP
           ) : (
             <Box sx={{ width: horizontal ? 46 : 6, height: horizontal ? 4 : 46, borderRadius: 3, bgcolor: active ? theme.accent : 'transparent' }} />
           )}
-        </Badge>
         {horizontal
           ? <Typography noWrap sx={{ mt: .6, color: theme.text, fontSize: 12, fontWeight: pinned ? 700 : 600, maxWidth: 76 }}>{pinned ? '📌 ' : ''}{name}</Typography>
           : (!avatarOnly && open && (
@@ -202,8 +194,6 @@ const SidebarChatRow = React.memo(function SidebarChatRow(props: SidebarChatRowP
               secondary={<Typography noWrap sx={{ color: theme.textSec, fontSize: 13 }}>{lastText}</Typography>}
             />
           ))}
-        {!horizontal && !avatarOnly && open && !!unreadCount && <Badge badgeContent={unreadCount} color="primary" />}
-        {horizontal && !!unreadCount && <Box sx={{ position: 'absolute', top: 4, right: 6, minWidth: 18, height: 18, px: .6, borderRadius: 999, bgcolor: theme.accent, color: '#fff', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{unreadCount}</Box>}
       </ListItem>
     </Tooltip>
   );
