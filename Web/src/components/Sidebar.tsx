@@ -28,6 +28,7 @@ import { useDraftsStore } from '../store/draftsStore';
 import { useSidebarViewStore } from '../store/sidebarViewStore';
 import { useChatBgPrefsStore } from '../store/chatBgPrefsStore';
 import { usePhotoBgUrl } from '../hooks/usePhotoBgUrl';
+import useWindowWidth from '../hooks/useWindowWidth';
 import { creationKind } from '../utils/deskBoard';
 
 /** Подсказка в диалоге создания: какой чат получится из введённого названия. */
@@ -372,7 +373,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   }, []);
   const layout = useUserSettingsStore((s) => s.layout);
   const setLayout = useUserSettingsStore((s) => s.setLayout);
-  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  const viewportWidth = useWindowWidth();
   const sidebarMax = Math.max(SIDEBAR_MIN, Math.floor(viewportWidth / 2));
   const sidebarWidth = Math.min(Math.max(layout.sidebarWidth, SIDEBAR_MIN), sidebarMax);
   const horizontal = layout.sidebarSide === 'top' || layout.sidebarSide === 'bottom';
@@ -380,11 +381,6 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   const [resizing, setResizing] = useState(false);
 
   useEffect(() => { loadChats(); }, []);
-  useEffect(() => {
-    const updateViewportWidth = () => setViewportWidth(window.innerWidth);
-    window.addEventListener('resize', updateViewportWidth);
-    return () => window.removeEventListener('resize', updateViewportWidth);
-  }, []);
   useEffect(() => () => { if (scrollTimerRef.current) window.clearTimeout(scrollTimerRef.current); }, []);
 
   useEffect(() => {
