@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
-import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { Box, CircularProgress } from '@mui/material';
 import { useAuthStore } from './store/authStore';
 import { useChatStore } from './store/chatStore';
@@ -41,16 +41,10 @@ const DevicesPage = lazyPage(() => import('./pages/DevicesPage'), 'DevicesPage')
  * stays the same. */
 function MainLayoutShell({ onPlayerHost }: { onPlayerHost: (node: HTMLDivElement | null) => void }) {
   const profileOpen = useProfileOpenStore((s) => s.viewProfile);
-  const setProfileOpen = useProfileOpenStore((s) => s.setProfileOpen);
-  const location = useLocation();
 
-  // Opening from a chat → the URL temporarily goes to /profile. As soon as the
-  // router lands back on * (any non-profile path), drop the overlay state.
-  useEffect(() => {
-    if (profileOpen && location.pathname !== '/profile') {
-      setProfileOpen(false);
-    }
-  }, [location.pathname, profileOpen, setProfileOpen]);
+  // No route-driven clear: profile state is owned by user actions. The old
+  // effect would reset an overlay immediately after opening because /profile
+  // is no longer a route that the router lands on.
 
   return (
     <>
