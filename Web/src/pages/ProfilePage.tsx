@@ -36,7 +36,6 @@ import useMaxPetSize, { MIN_PET_SIZE } from '../hooks/useMaxPetSize';
 // Плашки профиля берут углы из ползунка «Скругление углов интерфейса».
 import { UI_PROFILE_RADIUS, UI_PROFILE_INNER_RADIUS } from '../store/uiPrefsStore';
 import { slidePageSx, leaveSlidePage } from '../utils/slidePanel';
-import { useProfileOpenStore } from '../store/profileOpenStore';
 
 /** Пресеты шрифтов для имени питомца (выбор в карточке «Питомцы»). */
 const PET_FONT_OPTIONS = [
@@ -398,7 +397,7 @@ export default function ProfilePage() {
         bgcolor: theme.bgHeader, borderBottom: `1px solid ${theme.border}`,
         flexShrink: 0,
       }}>
-        <IconButton aria-label="Назад" onClick={() => leaveSlidePage(() => useProfileOpenStore.getState().setProfileOpen(false))} sx={{ color: theme.textSec }}>
+        <IconButton aria-label="Назад" onClick={() => leaveSlidePage(() => navigate(-1))} sx={{ color: theme.textSec }}>
           <ArrowBack />
         </IconButton>
         <Typography sx={{ flex: 1, fontSize: 18, fontWeight: 700, color: theme.text }}>

@@ -14,7 +14,6 @@ import {
   ContentCopy, ContentPaste, QrCode, Link,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useProfileOpenStore } from '../store/profileOpenStore';
 import { useChatStore, chatActivityAt } from '../store/chatStore';
 import { useChatPrefsStore } from '../store/chatPrefsStore';
 import { useAuthStore } from '../store/authStore';
@@ -833,7 +832,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
               color={theme.textSec}
               accent={theme.accent}
               items={{
-                profile: { title: 'Профиль', label: 'Профиль', icon: <AccountCircle />, onClick: () => useProfileOpenStore.getState().setProfileOpen(true) },
+                profile: { title: 'Профиль', label: 'Профиль', icon: <AccountCircle />, onClick: () => navigate('/profile') },
                 music: { title: 'Моя музыка и плейлисты', label: 'Музыка', icon: <LibraryMusic />, onClick: () => setMusicOpen(true) },
                 editor: { title: 'Редактор тем', label: 'Редактор', icon: <Palette />, onClick: () => setThemeEditorOpen(true) },
                 archive: { title: archiveView ? 'Назад к чатам' : 'Архив', label: archiveView ? 'Чаты' : 'Архив', icon: <Archive />, onClick: toggleArchiveView, active: archiveView },

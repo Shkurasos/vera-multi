@@ -17,7 +17,6 @@ import { useSidebarViewStore } from '../store/sidebarViewStore';
 import { useMobileNavStore } from '../store/mobileNavStore';
 import type { NavKey } from '../utils/mobileNav';
 import { UI_NAV_RADIUS, UI_NAV_INNER_RADIUS, NAV_HEIGHT_LIMITS, navPanelBackground, useUiPrefsStore } from '../store/uiPrefsStore';
-import { useProfileOpenStore } from '../store/profileOpenStore';
 import MusicLibrary from './MusicLibrary';
 import { SLIDE_IN_MS, SLIDE_OUT_MS, SLIDE_EASE, leaveSlidePage } from '../utils/slidePanel';
 
@@ -79,6 +78,7 @@ export default function MobileBottomNav() {
 
   const activePath = location.pathname;
   const isChatSection = activePath === '/';
+  const isActive = (path: string) => activePath === path;
 
   useEffect(() => {
     setMusicOpen(false);
@@ -127,7 +127,7 @@ export default function MobileBottomNav() {
     setHiding(false);
   };
   const openThemeEditor = () => hideForOpen(() => setThemeEditorOpen(true));
-  const openProfile = () => useProfileOpenStore.getState().setProfileOpen(true);
+  const openProfile = () => hideForOpen(() => navigate('/profile'));
 
   // Закрытие «Тем» обязано вернуть панель на место (иначе она «залипала» скрытой).
   const closeThemeEditor = () => { setThemeEditorOpen(false); setHiding(false); };
@@ -138,7 +138,7 @@ export default function MobileBottomNav() {
 
   const items: Record<NavKey, { active: boolean; label: string; onClick: () => void; icon: React.ReactNode }> = {
     editor: { active: themeEditorOpen, label: 'Редактор', onClick: openThemeEditor, icon: <Palette /> },
-    profile: { active: useProfileOpenStore.getState().viewProfile, label: 'Профиль', onClick: openProfile, icon: <AccountCircle /> },
+    profile: { active: isActive('/profile'), label: 'Профиль', onClick: openProfile, icon: <AccountCircle /> },
     music: { active: musicOpen, label: 'Музыка', onClick: openMusic, icon: <LibraryMusic /> },
     archive: { active: archiveView, label: 'Архив', onClick: toggleArchiveView, icon: <Archive /> },
   };
