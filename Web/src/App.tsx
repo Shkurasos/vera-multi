@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { Box, CircularProgress } from '@mui/material';
 import { useAuthStore } from './store/authStore';
 import { useChatStore } from './store/chatStore';
@@ -14,6 +14,7 @@ import MainLayout from './pages/MainLayout';
 // DeviceEntryPage остаётся статическим: это первый экран без авторизации.
 import DeviceEntryPage from './pages/DeviceEntryPage';
 import ProfilePage from './pages/ProfilePage';
+import { useProfileOpenStore } from './store/profileOpenStore';
 import { StoreOpen } from './components/Store';
 // Vite иногда возвращает namespace-модуль без корректного default при HMR.
 // Явно нормализуем результат dynamic import, иначе React.lazy пытается
@@ -32,6 +33,47 @@ function lazyPage<T extends React.ComponentType<any>>(
 }
 
 const DevicesPage = lazyPage(() => import('./pages/DevicesPage'), 'DevicesPage');
+
+/** Persistent shell for the fallback routes.  Keeps `MainLayout` mounted while a
+ * slide page (profile) is open, so the chat list, sidebar and player do not
+ * remount when the profile slides out / in.  The profile is rendered as an
+ * overlay; `MainLayout` itself never unmounts because the route node for `/*`
+ * stays the same. */
+function MainLayoutShell({ onPlayerHost }: { onPlayerHost: (node: HTMLDivElement | null) => void }) {
+  const profileOpen = useProfileOpenStore((s) => s.viewProfile);
+  const setProfileOpen = useProfileOpenStore((s) => s.setProfileOpen);
+  const location = useLocation();
+
+  // Opening from a chat → the URL temporarily goes to /profile. As soon as the
+  // router lands back on * (any non-profile path), drop the overlay state.
+  useEffect(() => {
+    if (profileOpen && location.pathname !== '/profile') {
+      setProfileOpen(false);
+    }
+  }, [location.pathname, profileOpen, setProfileOpen]);
+
+  return (
+    <>
+      <MainLayout onPlayerHost={onPlayerHost} />
+      {profileOpen && (
+        <Box
+          data-slide-page
+          component="div"
+          sx={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 2000,
+            display: { xs: 'flex', md: 'flex' },
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
+          <ProfilePage />
+        </Box>
+      )}
+    </>
+  );
+}
 const AcceptLinkPage = lazyPage(() => import('./pages/AcceptLinkPage'), 'AcceptLinkPage');
 const DownloadPage = lazyPage(() => import('./pages/DownloadPage'), 'DownloadPage');
 const ContactsPage = lazyPage(() => import('./pages/ContactsPage'), 'ContactsPage');
@@ -620,12 +662,12 @@ export default function App() {
         <Routes>
           <Route path="/link" element={<AcceptLinkPage />} />
           <Route path="/download" element={<DownloadPage />} />
-          <Route path="/profile" element={isAuthenticated ? <ProfilePage /> : <Navigate to="/" />} />
+          {/* /profile is managed by useProfileOpenStore, not a route. */}
           <Route path="/devices" element={isAuthenticated ? <DevicesPage /> : <Navigate to="/" />} />
           <Route path="/contacts" element={isAuthenticated ? <ContactsPage /> : <Navigate to="/" />} />
           <Route path="/calls" element={isAuthenticated ? <CallLogPage /> : <Navigate to="/" />} />
           <Route path="/admin" element={isAuthenticated && user?.isAdmin ? <AdminToolsPage /> : <Navigate to="/" />} />
-          <Route path="/*" element={isAuthenticated ? <MainLayout onPlayerHost={setPlayerHost} /> : (
+          <Route path="/*" element={isAuthenticated ? <MainLayoutShell onPlayerHost={setPlayerHost} /> : (
             <DeviceEntryPage />
           )} />
         </Routes>
