@@ -29,7 +29,29 @@ export function leaveSlidePage(then: () => void): void {
   const el = typeof document !== 'undefined'
     ? document.querySelector<HTMLElement>('[data-slide-page]')
     : null;
-  if (!el || !slideAllowed() || el.hasAttribute('data-slide-leaving')) { then(); return; }
+  if (!el || !slideAllowed() || el.hasAttribute('data-slide-leaving')) {
+    then();
+    return;
+  }
+
+  // The chat list is rendered by a *different* MainLayout instance every time
+  // the slide page unmounts.  Its rows animate in with a staggered fade, so on
+  // the way back from the profile they snap through in a visible flash.  Freeze
+  // the list-entrance animation for the duration of the slide + a little slack,
+  // then let it run again on the next real list mount.
+  const freezeListEntrance = () => {
+    try {
+      delete (document.documentElement.dataset as DOMStringMap).animOffListEntrance;
+    } catch {
+      // No-op if the DOM API is not available (server-side / tests).
+    }
+  };
+  document.documentElement.dataset.animOffListEntrance = '1';
+  window.setTimeout(
+    freezeListEntrance,
+    SLIDE_OUT_MS + 900,
+  );
+
   el.setAttribute('data-slide-leaving', '');
   window.setTimeout(then, SLIDE_OUT_MS);
 }
