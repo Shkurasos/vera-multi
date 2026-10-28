@@ -47,12 +47,6 @@ const PET_FONT_OPTIONS = [
   { value: "'Impact', sans-serif", label: 'Impact' },
 ];
 
-/** Готовые цвета для имени питомца (кругляшки палитры). */
-const PET_COLOR_PALETTE = [
-  '#FF4D4D', '#FF8C42', '#FFD142', '#A8E063', '#4CAF50', '#4DB8FF',
-  '#42A5F5', '#7B61FF', '#E040FB', '#FF5252', '#FF6F00', '#C0CA33',
-];
-
 export default function ProfilePage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -69,7 +63,6 @@ export default function ProfilePage() {
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const bannerInputRef = useRef<HTMLInputElement>(null);
   const aboutMediaInputRef = useRef<HTMLInputElement>(null);
-  const colorInputRef = useRef<HTMLInputElement>(null);
 
   const handleBannerChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -200,20 +193,10 @@ export default function ProfilePage() {
   const renderedPetSize = Math.min(equippedPet?.settings.size || 72, maxPetSize);
   const equipPet = usePetStore((s) => s.equip);
   const updatePetSettings = usePetStore((s) => s.updateSettings);
-  const [petName, setPetName] = useState('');
   const [petSizeDraft, setPetSizeDraft] = useState('');
-  const [petColorDraft, setPetColorDraft] = useState('');
-  const [petNameSizeDraft, setPetNameSizeDraft] = useState('');
-  const [petNameXDraft, setPetNameXDraft] = useState('');
-  const [petNameYDraft, setPetNameYDraft] = useState('');
-  useEffect(() => { setPetName(equippedPet?.settings.name || ''); }, [equippedPet?.id, equippedPet?.settings.name]);
   useEffect(() => {
     setPetSizeDraft(equippedPet?.settings.size ? String(equippedPet.settings.size) : '72');
   }, [equippedPet?.id, equippedPet?.settings.size]);
-  useEffect(() => { setPetColorDraft(equippedPet?.settings.color || ''); }, [equippedPet?.id, equippedPet?.settings.color]);
-  useEffect(() => { setPetNameSizeDraft(equippedPet?.settings.nameSize ? String(equippedPet.settings.nameSize) : '14'); }, [equippedPet?.id, equippedPet?.settings.nameSize]);
-  useEffect(() => { setPetNameXDraft(equippedPet?.settings.nameX ? String(equippedPet.settings.nameX) : '50'); }, [equippedPet?.id, equippedPet?.settings.nameX]);
-  useEffect(() => { setPetNameYDraft(equippedPet?.settings.nameY ? String(equippedPet.settings.nameY) : '50'); }, [equippedPet?.id, equippedPet?.settings.nameY]);
   // Ошибки сервера (например, «Питомец не найден в инвентаре») показываем снеком,
   // иначе rejected promise тихо теряется в void-вызовах.
   const runPetAction = (action: Promise<unknown>, failMessage: string) => {
@@ -239,58 +222,6 @@ export default function ProfilePage() {
     }
   };
 
-  const commitPetColor = () => {
-    const color = petColorDraft.trim();
-    if (!color) {
-      setPetColorDraft(equippedPet?.settings.color || '');
-      return;
-    }
-    if (color !== equippedPet?.settings.color) {
-      runPetAction(updatePetSettings({ color }), 'Не удалось сохранить цвет имени');
-    }
-  };
-
-  const commitPetNameSize = (value = petNameSizeDraft) => {
-    const trimmed = String(value ?? '').trim();
-    const parsed = trimmed === '' ? NaN : Number(trimmed);
-    if (!Number.isFinite(parsed) || parsed < 6 || parsed > 72) {
-      setPetNameSizeDraft(String(equippedPet?.settings.nameSize || 14));
-      return;
-    }
-    const size = Math.round(parsed);
-    setPetNameSizeDraft(String(size));
-    if (size !== equippedPet?.settings.nameSize) {
-      runPetAction(updatePetSettings({ nameSize: size }), 'Не удалось сохранить размер имени');
-    }
-  };
-
-  const commitPetNameX = (value = petNameXDraft) => {
-    const trimmed = String(value ?? '').trim();
-    const parsed = trimmed === '' ? NaN : Number(trimmed);
-    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
-      setPetNameXDraft(String(equippedPet?.settings.nameX || 50));
-      return;
-    }
-    const x = Math.round(parsed);
-    setPetNameXDraft(String(x));
-    if (x !== equippedPet?.settings.nameX) {
-      runPetAction(updatePetSettings({ nameX: x }), 'Не удалось сохранить положение имени');
-    }
-  };
-
-  const commitPetNameY = (value = petNameYDraft) => {
-    const trimmed = String(value ?? '').trim();
-    const parsed = trimmed === '' ? NaN : Number(trimmed);
-    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
-      setPetNameYDraft(String(equippedPet?.settings.nameY || 50));
-      return;
-    }
-    const y = Math.round(parsed);
-    setPetNameYDraft(String(y));
-    if (y !== equippedPet?.settings.nameY) {
-      runPetAction(updatePetSettings({ nameY: y }), 'Не удалось сохранить положение имени');
-    }
-  };
 
   async function openLinkQr() {
     setQrError(null);
@@ -914,66 +845,6 @@ export default function ProfilePage() {
               )}
               {equippedPet && (
                 <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 1.5, flexWrap: 'wrap' }}>
-                  <TextField size="small" label="Имя питомца" value={petName} onChange={(event) => setPetName(event.target.value.slice(0, 32))} sx={{ ...inputSx, flex: '1 1 170px' }} />
-                  <Button onClick={() => runPetAction(updatePetSettings({ name: petName }), 'Не удалось сохранить имя')} variant="contained" sx={{ borderRadius: UI_PROFILE_INNER_RADIUS }}>Сохранить</Button>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                    {PET_COLOR_PALETTE.map((color) => (
-                      <Box
-                        key={color}
-                        sx={{
-                          width: 26, height: 26, borderRadius: '50%',
-                          bgcolor: color,
-                          border: `2px solid ${petColorDraft || equippedPet?.settings.color || '#EEF3F7' === color ? theme.accent : 'transparent'}`,
-                          cursor: 'pointer',
-                          boxShadow: petColorDraft || equippedPet?.settings.color || '#EEF3F7' === color ? '0 0 0 2px rgba(255,255,255,0.4)' : undefined,
-                        }}
-                        onClick={() => {
-                          setPetColorDraft(color);
-                          runPetAction(updatePetSettings({ color }), 'Не удалось сохранить цвет имени');
-                        }}
-                      />
-                    ))}
-                    <Box sx={{ height: 26, width: 1, bgcolor: 'rgba(255,255,255,0.06)' }} />
-                    <Box
-                      sx={{
-                        width: 24, height: 24, borderRadius: 1,
-                        bgcolor: petColorDraft || equippedPet?.settings.color || '#EEF3F7',
-                        border: '1px solid',
-                        borderColor: 'rgba(255,255,255,0.12)',
-                        cursor: 'pointer',
-                      }}
-                      onClick={() => colorInputRef.current?.click()}
-                    />
-                    <input
-                      ref={colorInputRef}
-                      type="color"
-                      style={{ display: 'none' }}
-                      value={petColorDraft || equippedPet?.settings.color || '#EEF3F7'}
-                      onChange={(event) => setPetColorDraft(event.target.value)}
-                    />
-                    <TextField size="small" label="Цвет имени" value={petColorDraft} onChange={(event) => setPetColorDraft(event.target.value)} onBlur={commitPetColor} sx={{ ...inputSx, minWidth: 130 }} />
-                  </Box>
-                  <TextField size="small" label="Размер имени (px)" type="number" value={petNameSizeDraft}
-                    onChange={(event) => setPetNameSizeDraft(event.target.value)}
-                    onBlur={() => commitPetNameSize()}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') { event.preventDefault(); commitPetNameSize(); event.currentTarget.blur(); }
-                    }}
-                    inputProps={{ min: 6, max: 72 }} sx={{ ...inputSx, width: 140 }} />
-                  <TextField size="small" label="Имя X (%)" type="number" value={petNameXDraft}
-                    onChange={(event) => setPetNameXDraft(event.target.value)}
-                    onBlur={() => commitPetNameX()}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') { event.preventDefault(); commitPetNameX(); event.currentTarget.blur(); }
-                    }}
-                    inputProps={{ min: 0, max: 100 }} sx={{ ...inputSx, width: 120 }} />
-                  <TextField size="small" label="Имя Y (%)" type="number" value={petNameYDraft}
-                    onChange={(event) => setPetNameYDraft(event.target.value)}
-                    onBlur={() => commitPetNameY()}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') { event.preventDefault(); commitPetNameY(); event.currentTarget.blur(); }
-                    }}
-                    inputProps={{ min: 0, max: 100 }} sx={{ ...inputSx, width: 120 }} />
                   <TextField
                     size="small" select label="Шрифт имени"
                     value={equippedPet.settings.font || 'inherit'}
@@ -998,7 +869,7 @@ export default function ProfilePage() {
                 </Box>
               )}
               <Typography sx={{ color: theme.textSec, fontSize: 11, mt: 1.5 }}>
-                Питомец живёт на экране рядом с вами: его можно перетаскивать, изменить размер, имя, шрифт, цвет и положение имени. Максимальный размер — ⅕ меньшей стороны окна. Снять питомца можно только через его карточку в инвентаре.
+                Питомец живёт на экране рядом с вами: его можно перетаскивать и изменить размер. Максимальный размер — ⅕ меньшей стороны окна. Снять питомца можно только через его карточку в инвентаре.
               </Typography>
             </Box>
           </Box>

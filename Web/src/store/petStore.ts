@@ -3,20 +3,7 @@ import { registerAccountStore } from '../services/storeSyncSimple';
 import { petsApi } from '../services/api';
 import { findPet } from './petCatalog';
 
-export interface PetSettings {
-  x: number;
-  y: number;
-  size: number;
-  name: string;
-  font: string;
-  // Цвет имени питомца (HEX). Если не задан — цвет текста темы оформления.
-  color: string;
-  // Размер шрифта имени питомца (px).
-  nameSize: number;
-  // Независимая позиция имени на экране (%). Если не заданы — имя следует за питомцем.
-  nameX: number;
-  nameY: number;
-}
+export interface PetSettings { x: number; y: number; size: number; font: string; }
 export interface EquippedPet { id: string; settings: PetSettings; }
 interface PetState {
   ownedPets: string[];
@@ -27,10 +14,7 @@ interface PetState {
   equip: (id: string | null) => Promise<void>;
   updateSettings: (settings: Partial<PetSettings>) => Promise<void>;
 }
-export const DEFAULT_PET_SETTINGS: PetSettings = {
-  x: 78, y: 76, size: 72, name: '', font: 'inherit',
-  color: '#EEF3F7', nameSize: 14, nameX: 50, nameY: 50,
-};
+export const DEFAULT_PET_SETTINGS: PetSettings = { x: 78, y: 76, size: 72, font: 'inherit' };
 
 export const usePetStore = create<PetState>((set, get) => ({
   ownedPets: [], petCounts: {}, equippedPet: null, loading: false,
