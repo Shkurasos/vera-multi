@@ -17,10 +17,20 @@ async function hydrateAccount(user: User): Promise<void> {
   disableSettingsSync();
   await initStoreSyncOnLogin(user.id, () => {
     const themeId = Number((user as any).themeId || 0);
-    const theme = useThemeStore.getState().customThemes.find(t => t.id === themeId)
-      || useThemeStore.getState().builtinThemes.find(t => t.id === themeId)
-      || useThemeStore.getState().builtinThemes[0] || THEMES[0];
-    useThemeStore.setState({ themeId, theme, chatPhoto: (user as any).chatPhoto || undefined });
+
+    if (themeId === 0) {
+      // Новый аккаунт без сохранённой темы — назначаем случайную тему из каталога.
+      // setTheme применяет настройки темы, сохраняет выбор на сервере и
+      // прокидывает themeId/theme в стор. chatPhoto задаём отдельно.
+      const randomTheme = THEMES[Math.floor(Math.random() * THEMES.length)] || THEMES[0];
+      useThemeStore.getState().setTheme(randomTheme.id);
+      useThemeStore.setState({ chatPhoto: (user as any).chatPhoto || undefined });
+    } else {
+      const theme = useThemeStore.getState().customThemes.find((t) => t.id === themeId)
+        || useThemeStore.getState().builtinThemes.find((t) => t.id === themeId)
+        || THEMES[0];
+      useThemeStore.setState({ themeId, theme, chatPhoto: (user as any).chatPhoto || undefined });
+    }
   });
   prepareSettingsForAccount(user.id, changed);
   // Надетые скины хранятся в профиле на сервере: без этого другое устройство
