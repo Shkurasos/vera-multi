@@ -3,7 +3,7 @@ import { registerAccountStore } from '../services/storeSyncSimple';
 import { petsApi } from '../services/api';
 import { findPet } from './petCatalog';
 
-export interface PetSettings { x: number; y: number; size: number; font: string; }
+export interface PetSettings { x: number; y: number; size: number; }
 export interface EquippedPet { id: string; settings: PetSettings; }
 interface PetState {
   ownedPets: string[];
@@ -14,7 +14,7 @@ interface PetState {
   equip: (id: string | null) => Promise<void>;
   updateSettings: (settings: Partial<PetSettings>) => Promise<void>;
 }
-export const DEFAULT_PET_SETTINGS: PetSettings = { x: 78, y: 76, size: 72, font: 'inherit' };
+export const DEFAULT_PET_SETTINGS: PetSettings = { x: 78, y: 76, size: 72 };
 
 export const usePetStore = create<PetState>((set, get) => ({
   ownedPets: [], petCounts: {}, equippedPet: null, loading: false,

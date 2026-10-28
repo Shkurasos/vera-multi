@@ -37,16 +37,6 @@ import useMaxPetSize, { MIN_PET_SIZE } from '../hooks/useMaxPetSize';
 import { UI_PROFILE_RADIUS, UI_PROFILE_INNER_RADIUS } from '../store/uiPrefsStore';
 import { slidePageSx, leaveSlidePage } from '../utils/slidePanel';
 
-/** Пресеты шрифтов для имени питомца (выбор в карточке «Питомцы»). */
-const PET_FONT_OPTIONS = [
-  { value: 'inherit', label: 'По умолчанию' },
-  { value: 'Georgia, serif', label: 'Georgia' },
-  { value: "'Courier New', monospace", label: 'Courier New' },
-  { value: "'Comic Sans MS', cursive", label: 'Comic Sans' },
-  { value: "'Segoe Script', cursive", label: 'Segoe Script' },
-  { value: "'Impact', sans-serif", label: 'Impact' },
-];
-
 export default function ProfilePage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -845,16 +835,6 @@ export default function ProfilePage() {
               )}
               {equippedPet && (
                 <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 1.5, flexWrap: 'wrap' }}>
-                  <TextField
-                    size="small" select label="Шрифт имени"
-                    value={equippedPet.settings.font || 'inherit'}
-                    onChange={(event) => runPetAction(updatePetSettings({ font: event.target.value }), 'Не удалось сохранить шрифт')}
-                    sx={{ ...inputSx, minWidth: 165 }}
-                  >
-                    {PET_FONT_OPTIONS.map((option) => (
-                      <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
-                    ))}
-                  </TextField>
                   <TextField size="small" label="Размер" type="number" value={petSizeDraft}
                     onChange={(event) => setPetSizeDraft(event.target.value)}
                     onBlur={() => commitPetSize()}
@@ -868,9 +848,6 @@ export default function ProfilePage() {
                     inputProps={{ min: MIN_PET_SIZE, max: maxPetSize }} sx={{ ...inputSx, width: 150 }} />
                 </Box>
               )}
-              <Typography sx={{ color: theme.textSec, fontSize: 11, mt: 1.5 }}>
-                Питомец живёт на экране рядом с вами: его можно перетаскивать и изменить размер. Максимальный размер — ⅕ меньшей стороны окна. Снять питомца можно только через его карточку в инвентаре.
-              </Typography>
             </Box>
           </Box>
 
