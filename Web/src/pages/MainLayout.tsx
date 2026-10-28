@@ -151,7 +151,18 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
         <PetArtwork key={equippedPet.id} petId={equippedPet.id} size={petSize} reaction={petReaction} />
       </Box>
       {equippedPet.settings.name && !petDock && (
-        <Typography sx={{ position: 'absolute', top: '100%', width: '100%', color: theme.text, textAlign: 'center', fontSize: 11, fontFamily: equippedPet.settings.font }}>
+        <Typography sx={{
+          position: 'absolute',
+          left: `${equippedPet.settings.nameX ?? 50}%`,
+          top: `${equippedPet.settings.nameY ?? 50}%`,
+          transform: 'translate(-50%, -50%)',
+          color: equippedPet.settings.color ?? theme.text,
+          textAlign: 'center',
+          fontSize: equippedPet.settings.nameSize ?? 11,
+          fontFamily: equippedPet.settings.font,
+          pointerEvents: 'none',
+          userSelect: 'none',
+        }}>
           {equippedPet.settings.name}
         </Typography>
       )}
