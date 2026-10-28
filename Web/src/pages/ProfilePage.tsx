@@ -63,6 +63,7 @@ export default function ProfilePage() {
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const bannerInputRef = useRef<HTMLInputElement>(null);
   const aboutMediaInputRef = useRef<HTMLInputElement>(null);
+  const colorInputRef = useRef<HTMLInputElement>(null);
 
   const handleBannerChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -909,7 +910,26 @@ export default function ProfilePage() {
                 <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 1.5, flexWrap: 'wrap' }}>
                   <TextField size="small" label="Имя питомца" value={petName} onChange={(event) => setPetName(event.target.value.slice(0, 32))} sx={{ ...inputSx, flex: '1 1 170px' }} />
                   <Button onClick={() => runPetAction(updatePetSettings({ name: petName }), 'Не удалось сохранить имя')} variant="contained" sx={{ borderRadius: UI_PROFILE_INNER_RADIUS }}>Сохранить</Button>
-                  <TextField size="small" label="Цвет имени" value={petColorDraft} onChange={(event) => setPetColorDraft(event.target.value)} onBlur={commitPetColor} sx={{ ...inputSx, minWidth: 130 }} />
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box
+                      sx={{
+                        width: 24, height: 24, borderRadius: 1,
+                        bgcolor: petColorDraft || equippedPet?.settings.color || '#EEF3F7',
+                        border: '1px solid',
+                        borderColor: 'rgba(255,255,255,0.12)',
+                        cursor: 'pointer',
+                      }}
+                      onClick={() => colorInputRef.current?.click()}
+                    />
+                    <input
+                      ref={colorInputRef}
+                      type="color"
+                      style={{ display: 'none' }}
+                      value={petColorDraft || equippedPet?.settings.color || '#EEF3F7'}
+                      onChange={(event) => setPetColorDraft(event.target.value)}
+                    />
+                    <TextField size="small" label="Цвет имени" value={petColorDraft} onChange={(event) => setPetColorDraft(event.target.value)} onBlur={commitPetColor} sx={{ ...inputSx, minWidth: 130 }} />
+                  </Box>
                   <TextField size="small" label="Размер имени (px)" type="number" value={petNameSizeDraft}
                     onChange={(event) => setPetNameSizeDraft(event.target.value)}
                     onBlur={() => commitPetNameSize()}
