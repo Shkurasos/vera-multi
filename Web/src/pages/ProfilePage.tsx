@@ -47,6 +47,12 @@ const PET_FONT_OPTIONS = [
   { value: "'Impact', sans-serif", label: 'Impact' },
 ];
 
+/** Готовые цвета для имени питомца (кругляшки палитры). */
+const PET_COLOR_PALETTE = [
+  '#FF4D4D', '#FF8C42', '#FFD142', '#A8E063', '#4CAF50', '#4DB8FF',
+  '#42A5F5', '#7B61FF', '#E040FB', '#FF5252', '#FF6F00', '#C0CA33',
+];
+
 export default function ProfilePage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -910,7 +916,24 @@ export default function ProfilePage() {
                 <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 1.5, flexWrap: 'wrap' }}>
                   <TextField size="small" label="Имя питомца" value={petName} onChange={(event) => setPetName(event.target.value.slice(0, 32))} sx={{ ...inputSx, flex: '1 1 170px' }} />
                   <Button onClick={() => runPetAction(updatePetSettings({ name: petName }), 'Не удалось сохранить имя')} variant="contained" sx={{ borderRadius: UI_PROFILE_INNER_RADIUS }}>Сохранить</Button>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                    {PET_COLOR_PALETTE.map((color) => (
+                      <Box
+                        key={color}
+                        sx={{
+                          width: 26, height: 26, borderRadius: '50%',
+                          bgcolor: color,
+                          border: `2px solid ${petColorDraft || equippedPet?.settings.color || '#EEF3F7' === color ? theme.accent : 'transparent'}`,
+                          cursor: 'pointer',
+                          boxShadow: petColorDraft || equippedPet?.settings.color || '#EEF3F7' === color ? '0 0 0 2px rgba(255,255,255,0.4)' : undefined,
+                        }}
+                        onClick={() => {
+                          setPetColorDraft(color);
+                          runPetAction(updatePetSettings({ color }), 'Не удалось сохранить цвет имени');
+                        }}
+                      />
+                    ))}
+                    <Box sx={{ height: 26, width: 1, bgcolor: 'rgba(255,255,255,0.06)' }} />
                     <Box
                       sx={{
                         width: 24, height: 24, borderRadius: 1,
