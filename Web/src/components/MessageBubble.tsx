@@ -1647,7 +1647,7 @@ function MessageBubble({
         onPointerLeave={(e) => { if (e.pointerType === 'mouse') hoverNone(); }}
         sx={{
           width: singleVisual ? 'fit-content' : 'auto',
-          overflowX: 'hidden',
+
           // Фото и видео не ужимаются настройкой ширины: пузырь по ширине кадра.
           maxWidth: hasVisualMedia ? '100%' : `${maxWidthPct}%`,
           ...(singleVisual ? { display: 'flex', flexDirection: 'column', alignItems: 'stretch' } : {}),
@@ -2043,4 +2043,5 @@ export default memo(
     && prev.isGroupStart === next.isGroupStart
     && prev.isGroupEnd === next.isGroupEnd
 );
+
 
