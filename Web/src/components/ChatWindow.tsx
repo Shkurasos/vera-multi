@@ -993,7 +993,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     // в истории. Удержание низа при догрузке медиа остаётся, но только пока
     // пользователь не ушёл вверх (atBottomRef).
     const openedNow = !restoredRef.current;
-    if (openedNow) {
+    if (openedNow && !hasUserScrollIntent()) {
       pinToBottom();
       atBottomRef.current = true;
       setShowScrollButton(false);
@@ -1005,7 +1005,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     let raf = 0;
     let frames = 0;
     const tick = () => {
-      if (!atBottomRef.current) return;
+      if (!atBottomRef.current || hasUserScrollIntent()) return;
       pinToBottom();
       if (++frames < 90) raf = requestAnimationFrame(tick);
     };
@@ -1015,13 +1015,13 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     //    аудио/шрифтов, которые растягивают контент после нашего jump'а.
     let ticks = 0;
     const timer = setInterval(() => {
-      if (!atBottomRef.current) { clearInterval(timer); return; }
+      if (!atBottomRef.current || hasUserScrollIntent()) { clearInterval(timer); return; }
       const bottom = container.scrollHeight - container.clientHeight;
       // Безусловная фиксация низа в первые 5 тиков — только при открытии
       // чата; при перезапусках из-за новой длины (в т.ч. удалении) пиним
       // лишь если контент вырос ниже текущей позиции.
       if ((openedNow && ticks <= 4) || container.scrollTop < bottom - 2) pinToBottom();
-      if (++ticks >= 120) clearInterval(timer); // ≈6 сек максимум
+      if (++ticks >= 60) clearInterval(timer); // ≈6 сек максимум
     }, 50);
 
     // 3) MutationObserver — в DOM добавились новые сообщения/медиа — дожать низ.
@@ -1035,7 +1035,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       pinScheduled = true;
       requestAnimationFrame(() => {
         pinScheduled = false;
-        if (atBottomRef.current && messagesContainerRef.current === container) pinToBottom();
+        if (atBottomRef.current && !hasUserScrollIntent() && messagesContainerRef.current === container) pinToBottom();
       });
     };
     if (typeof MutationObserver !== 'undefined') {
@@ -3980,3 +3980,5 @@ export default function ChatWindow(props: ChatWindowProps) {
     </ChatErrorBoundary>
   );
 }
+
+
