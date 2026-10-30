@@ -28,6 +28,19 @@ interface SyncManager {
   generation: number;
   socket: SyncSocket | null;
   socketHandler: ((payload: any) => void) | null;
+  hooks: StoreSyncHooks;
+  /** Снапшот с сервера уже разобран в этом входе: стор отражает аккаунт. */
+  ready: boolean;
+}
+
+/** Точки расширения для сторов, которым мало общего снапшота/слияния. */
+export interface StoreSyncHooks {
+  /** Дожать снапшот перед отправкой (например, выкинуть тяжёлые data URL). */
+  snapshot?: (data: any) => any;
+  /** Слить серверный снапшот поверх уже применённого общего слияния. */
+  merge?: (current: any, incoming: any) => any;
+  /** Вызывается после применения снапшота с сервера или другого устройства. */
+  afterRemote?: () => void;
 }
 
 const syncManagers = new Map<string, SyncManager>();
@@ -41,6 +54,9 @@ function getClientId(): string {
   }
   return id;
 }
+
+/** Id этого устройства: по нему другие синки отсеивают своё же эхо. */
+export const getSyncClientId = getClientId;
 
 function storedAccountId(): string | null {
   try {
@@ -113,7 +129,16 @@ async function apiFetch(path: string, token: string, init: RequestInit = {}): Pr
 }
 
 /**
- * Register a persisted account-owned store which does not use the server sync
+ * Стор активен и уже сверен с сервером в текущем входе. До этого его
+ * состояние может быть сброшенным (смена аккаунта) или ещё не догруженным —
+ * производные записи в такой стор ушли бы на сервер поверх данных аккаунта.
+ */
+export function isStoreSyncReady(storeName: string): boolean {
+  const manager = syncManagers.get(storeName);
+  return !!manager && manager.ready && !manager.paused && !manager.isHydrating;
+}
+
+/** Register a persisted account-owned store which does not use the server sync
  * endpoint. It will still be reset before another account is hydrated.
  */
 export function registerAccountStore(storeName: string, api: StoreApi<any>): void {
@@ -121,7 +146,7 @@ export function registerAccountStore(storeName: string, api: StoreApi<any>): voi
 }
 
 /** Connect synchronization to an existing Zustand store. */
-export function enableStoreSync(storeName: string, api: StoreApi<any>, debounce = 800): void {
+export function enableStoreSync(storeName: string, api: StoreApi<any>, debounce = 800, hooks: StoreSyncHooks = {}): void {
   if (syncManagers.has(storeName)) return;
 
   const manager: SyncManager = {
@@ -137,16 +162,21 @@ export function enableStoreSync(storeName: string, api: StoreApi<any>, debounce 
     generation: 0,
     socket: null,
     socketHandler: null,
+    hooks,
+    ready: false,
   };
   syncManagers.set(storeName, manager);
 
-  const localOnly = LOCAL_ONLY_KEYS[storeName] || [];
+  // Поля, которых нет в снапшоте: их изменение не повод для записи.
+  const unsynced = [...(LOCAL_ONLY_KEYS[storeName] || []), ...(SERVER_OWNED_KEYS[storeName] || [])];
   api.subscribe((state: any, prev: any) => {
     if (manager.paused || manager.isHydrating) return;
-    // Открытие/закрытие окна и смена вкладки — не повод слать снапшот на сервер.
-    if (localOnly.length && prev) {
+    // Открытие окна, смена вкладки, опрос кошелька (баланс/владение раз в 10 с)
+    // не меняют снапшот. Раньше каждый такой set() отправлял на сервер весь
+    // стор, и второе устройство затирало только что нажатое «Избранное».
+    if (unsynced.length && prev) {
       const changed = Object.keys(state).filter((k) => state[k] !== prev[k]);
-      if (changed.length && changed.every((k) => localOnly.includes(k))) return;
+      if (changed.every((k) => unsynced.includes(k))) return;
     }
     localStorage.setItem(`vera_sync_${storeName}_local_changed`, String(Date.now()));
     scheduleSync(manager);
@@ -161,17 +191,27 @@ export function enableStoreSync(storeName: string, api: StoreApi<any>, debounce 
  */
 const LOCAL_ONLY_KEYS: Record<string, string[]> = {
   shop: ['open', 'tab'],
+  // Каталог встроенных тем общий для всех и приходит с сервера отдельно
+  // (/api/themes): в снапшоте аккаунта он занимал ~46 КБ из 48. Объект `theme`
+  // выводится из themeId — его пересобирает afterRemote темы.
+  theme: ['builtinThemes', 'builtinThemesLoading', 'publishedBuiltinCatalog', 'themeVersion', 'theme'],
+};
+
+/**
+ * Поля, хозяин которых — сервер (профиль, кошелёк, площадка). В снапшот
+ * не попадают: иначе асинхронная запись перетёрла бы образ или владение.
+ */
+const SERVER_OWNED_KEYS: Record<string, string[]> = {
+  shop: ['activeRing', 'activeSelfCard', 'activeBubble', 'owned', 'balanceVp', 'marketListings'],
 };
 
 function snapshotState(storeName: string, state: any): any {
   const out: any = {};
   const localOnly = LOCAL_ONLY_KEYS[storeName] || [];
+  const serverOwned = SERVER_OWNED_KEYS[storeName] || [];
   for (const key in state) {
     if (typeof state[key] !== 'function') {
-      if (localOnly.includes(key)) continue;
-      // Public outfit fields are authoritative on the user record. Generic
-      // shop snapshots must never overwrite another outfit asynchronously.
-      if (storeName === 'shop' && ['activeRing', 'activeSelfCard', 'activeBubble', 'owned', 'balanceVp', 'marketListings'].includes(key)) continue;
+      if (localOnly.includes(key) || serverOwned.includes(key)) continue;
       out[key] = state[key];
     }
   }
@@ -252,6 +292,35 @@ function mergeSyncedState(storeName: string, current: any, incoming: any): any {
   };
 }
 
+/** Снапшот стора для сервера: общие правила + hook стора (если есть). */
+function buildSnapshot(manager: SyncManager): any {
+  const base = snapshotState(manager.storeName, manager.api.getState());
+  return manager.hooks.snapshot ? manager.hooks.snapshot(base) : base;
+}
+
+/**
+ * Применяет чужой снапшот (сервер / другое устройство). afterRemote идёт уже
+ * после setState, но ещё под isHydrating: побочные записи в этот же стор не
+ * отправятся обратно на сервер эхом.
+ */
+function applyRemote(manager: SyncManager, data: any): void {
+  const current = manager.api.getState();
+  let next = mergeSyncedState(manager.storeName, current, data);
+  if (manager.hooks.merge) next = manager.hooks.merge(current, next);
+  // Своя правка ещё ждёт отправки (дебаунс): чужой снапшот, пришедший в это
+  // окно, старее её. Таймер читает стор в момент отправки, поэтому без этого
+  // он отправил бы уже откатанное значение — нажатие терялось целиком.
+  if (manager.storeName === 'shop' && manager.timer) {
+    for (const key of ['colorModes', 'favoriteIds']) {
+      if (key in current) next[key] = current[key];
+    }
+  }
+  manager.api.setState(next);
+  try { manager.hooks.afterRemote?.(); } catch (e) {
+    console.warn(`[sync:${manager.storeName}] afterRemote:`, e);
+  }
+}
+
 function scheduleSync(manager: SyncManager): void {
   if (manager.paused) return;
   clearTimer(manager);
@@ -265,7 +334,7 @@ function scheduleSync(manager: SyncManager): void {
     manager.timer = null;
     if (!isCurrent(manager, generation, accountId, token)) return;
 
-    const snapshot = snapshotState(manager.storeName, manager.api.getState());
+    const snapshot = buildSnapshot(manager);
     try {
       const response = await apiFetch(`/sync/stores/${manager.storeName}`, token, {
         method: 'PUT',
@@ -315,7 +384,7 @@ async function hydrateFromServer(manager: SyncManager, generation: number, accou
     manager.isHydrating = true;
     try {
       if (isCurrent(manager, generation, accountId, token)) {
-        manager.api.setState(mergeSyncedState(manager.storeName, manager.api.getState(), data));
+        applyRemote(manager, data);
         if (updatedAt) localStorage.setItem(`vera_sync_${manager.storeName}_updated`, updatedAt);
       }
     } finally {
@@ -349,7 +418,7 @@ function bindSocketEvents(manager: SyncManager): void {
       manager.isHydrating = true;
       try {
         if (isCurrent(manager, generation, accountId, token)) {
-          manager.api.setState(mergeSyncedState(manager.storeName, manager.api.getState(), data));
+          applyRemote(manager, data);
           if (payload.updatedAt) localStorage.setItem(`vera_sync_${manager.storeName}_updated`, payload.updatedAt);
         }
       } finally {
@@ -375,6 +444,7 @@ export async function initStoreSyncOnLogin(accountId?: string, prepare?: () => v
     clearTimer(manager);
     unbindSocket(manager);
     manager.paused = true;
+    manager.ready = false;
     manager.isHydrating = false;
     manager.accountId = null;
     manager.generation += 1;
@@ -393,7 +463,10 @@ export async function initStoreSyncOnLogin(accountId?: string, prepare?: () => v
     manager.paused = false;
     const generation = manager.generation;
     await hydrateFromServer(manager, generation, targetAccount, token);
-    if (isCurrent(manager, generation, targetAccount, token)) bindSocketEvents(manager);
+    if (isCurrent(manager, generation, targetAccount, token)) {
+      manager.ready = true;
+      bindSocketEvents(manager);
+    }
   }
 }
 
@@ -403,6 +476,7 @@ export function disableAllStoreSync(): void {
     clearTimer(manager);
     unbindSocket(manager);
     manager.paused = true;
+    manager.ready = false;
     manager.isHydrating = false;
     manager.accountId = null;
     manager.generation += 1;

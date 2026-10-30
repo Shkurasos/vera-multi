@@ -92,7 +92,8 @@ test('legacy pet ids count duplicates against their migrated form', () => {
   user.ownedPets = ['pet-owl'];
   user.caseCounts['case-pets'] = 1;
   // roll=102 попадает в pet-bunny (cat:2 + fox:100 уже выбраны по весу).
-  context.crypto.randomInt = () => 102;
+  // Веса теперь умножаются на 1e12 перед randomInt, поэтому та же точка — 102e12.
+  context.crypto.randomInt = () => 102e12;
   const result = call('/api/cases/open', 'case-pets');
   assert.equal(result.code, 200);
   assert.equal(result.data.drop, 'pet-bunny');
@@ -123,7 +124,7 @@ test('case catalog contains the requested marketplace prices', () => {
   const prices = Object.fromEntries(catalog.map(({ id, price }) => [id, price]));
   assert.deepEqual(prices, {
     'case-ashes': 300,
-    'case-base': 20,
+    'case-base': 100,
     'case-myths': 400,
     'case-nightmares': 500,
     'case-signal': 100,

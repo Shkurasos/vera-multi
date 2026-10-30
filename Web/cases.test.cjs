@@ -34,7 +34,7 @@ test('every server reward has matching client pieces, rarity and weight', () => 
   const { SHOP_CATALOG } = load(path.join(__dirname, 'src/store/shopStore.ts'));
   const { THEMED_MATERIALS, themedSkin } = load(path.join(__dirname, 'src/utils/themedSkin.ts'));
   const redesigned = Object.keys(THEMED_MATERIALS).filter(key => /^(myths|nightmare|ashes)-/.test(key));
-  assert.equal(redesigned.length, 30);
+  assert.equal(redesigned.length, 36);
   for (const key of redesigned) {
     const material = THEMED_MATERIALS[key];
     for (const part of ['bubble', 'ring']) {
@@ -74,7 +74,7 @@ test('every server reward has matching client pieces, rarity and weight', () => 
       const plaque = selfcardSkin(item, SHOP_CATALOG, '#aabbcc', themeMode);
       const expected = bubbleSkin(bubble, '#aabbcc', themeMode);
       for (const key of Object.keys(expected)) {
-        if (['borderRadius', '&::before', '&::after'].includes(key)) continue;
+        if (['borderRadius', '&::before', '&::after', 'marginTop', 'contentVisibility'].includes(key)) continue;
         assert.deepEqual(plaque[key], expected[key], `${item.id}: ${key}`);
       }
       assert.equal(plaque.fontSize, 11);

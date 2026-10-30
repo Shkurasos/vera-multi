@@ -11,6 +11,10 @@ interface Material {
   motion: 'fall' | 'scan' | 'breathe' | 'reveal';
   duration: number;
   staticArt?: boolean;
+  /** Второй цвет легендарки: мягкий перелив по плашке и вращение обводки аватара. */
+  accent2?: string;
+  /** Длительность перелива, с. Медленно, чтобы фон не отвлекал от текста. */
+  shimmer?: number;
 }
 
 const svg = (body: string) => `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120" viewBox="0 0 240 120">${body}</svg>`)}")`;
@@ -113,6 +117,60 @@ export const THEMED_MATERIALS: Record<string, Material> = {
   'ashes-afterglow': material('#fff4c9', '#e9ad52', '#3a2b1d', '<circle cx="120" cy="60" r="45" fill="#e9ad52" opacity=".2"/>' + strokes('M120 15A45 45 0 1 0 120 105A45 45 0 1 0 120 15M120 40V80M100 60H140', '#e9ad52', 3), '50%', '3px double', 'breathe', 11),
 };
 
+// Легендарки: у каждой своя пара цветов и тёмная подложка, текст остаётся светлым.
+// Перелив идёт отдельным полупрозрачным слоем, поэтому плашка не становится «золотой».
+const legend = (ink: string, accent: string, accent2: string, surface: string, pattern: string,
+  radius: string, edge: string, motion: Material['motion'], duration: number, shimmer: number): Material => ({
+  ...material(ink, accent, surface, pattern, radius, edge, motion, duration), accent2, shimmer,
+});
+
+const LEGENDARY_MATERIALS: Record<string, Material> = {
+  // Легенды видеоигр
+  'games-crown': legend('#f7f0ff', '#c79bff', '#5fe1e8', '#241c36',
+    strokes('M150 98L162 46L182 70L200 34L214 70L234 52L224 98ZM20 22H70M20 30H48', '#c79bff', 3), '4px', '3px double', 'breathe', 16, 11),
+  // Корпорация
+  'corp-director': legend('#ecfbf8', '#6fe0c6', '#9aa8ff', '#152b2c',
+    strokes('M150 100V40L190 18L230 40V100M168 100V60H212V100M14 18H64M14 26H40', '#6fe0c6', 3), '6px', '4px double', 'breathe', 12, 12),
+  'corp-citadel': legend('#eef4fb', '#7fb2e5', '#e08a5c', '#1c2532',
+    strokes('M130 112V53L153 33V112M157 112V34L181 12L204 34V112M208 112V54L229 34V112M125 112H235', '#7fb2e5', 3), '2px', '3px double', 'scan', 26, 13),
+  // Уличный стиль
+  'street-mural': legend('#fff7ef', '#ff8f6b', '#4fd1c1', '#2c2430',
+    '<path fill="#4fd1c1" opacity=".5" d="M0 120V60l35-25 45 50 30-40 50 75z"/><path fill="#ff7ba3" opacity=".45" d="M120 120V50l35-35 30 50 35-25 20 80z"/>',
+    '12px 4px 4px 18px', '3px solid', 'reveal', 10, 10),
+  'street-crown': legend('#f6ffe9', '#b6f05a', '#ff5fb4', '#24262a',
+    strokes('M145 90L158 44L179 66L199 30L208 66L229 49L219 90ZM151 99L226 94M14 96L40 88M20 106L60 98', '#b6f05a', 4), '2px', '2px solid', 'reveal', 14, 9),
+  // Культура
+  'culture-heritage': legend('#fff5ee', '#e58a63', '#5fd3c9', '#2f2220',
+    strokes('M0 15H240M0 105H240M10 15V45H40V30H25M60 15V45H90V30H75M110 15V45H140V30H125M160 15V45H190V30H175M210 15V45H240', '#e58a63', 3),
+    '4px 4px 14px 14px', '4px double', 'breathe', 12, 14),
+  'culture-observatory': legend('#eef2ff', '#8ea6ff', '#f2a7d8', '#1a2140',
+    strokes('M137 83L158 39L195 63L221 20M158 39L184 13M137 83L210 106', '#8ea6ff', 1) +
+    '<g fill="#dfe6ff"><circle cx="137" cy="83" r="3"/><circle cx="158" cy="39" r="3"/><circle cx="195" cy="63" r="3"/><circle cx="221" cy="20" r="3"/><circle cx="30" cy="30" r="2"/><circle cx="70" cy="95" r="2"/></g>',
+    '4px', '3px double', 'breathe', 18, 15),
+  // Древние реликвии
+  'myths-orb': legend('#f6efff', '#b48cff', '#6fe3f0', '#221a36',
+    '<circle cx="180" cy="58" r="40" fill="#b48cff" opacity=".22"/>' + strokes('M180 18A40 40 0 1 0 180 98A40 40 0 1 0 180 18M160 50Q170 36 186 38M150 108H210', '#b48cff', 3),
+    '50%', '3px double', 'breathe', 11, 12),
+  'myths-staff': legend('#effff4', '#5fd99a', '#f1e7c4', '#17291f',
+    strokes('M190 12V108M178 24Q190 4 202 24M176 40H204M20 30L34 22L48 30M20 86L34 94L48 86', '#5fd99a', 3), '4px 18px 4px 4px', '2px solid', 'reveal', 15, 13),
+  // Космос
+  'nightmare-galaxy': legend('#f1eeff', '#9b7cff', '#ff72c6', '#141331',
+    strokes('M180 60C180 52 192 52 192 62C192 74 174 76 168 64C160 48 182 38 196 46C212 56 206 84 182 88C156 92 144 66 152 48', '#9b7cff', 3) +
+    '<g fill="#cfe9ff"><circle cx="30" cy="25" r="1.5"/><circle cx="80" cy="96" r="1.5"/><circle cx="120" cy="18" r="1"/><circle cx="226" cy="104" r="1.5"/></g>',
+    '18px 6px 18px 6px', '2px solid', 'fall', 40, 10),
+  'nightmare-supernova': legend('#fff1ee', '#ff7a6b', '#a98bff', '#2a1426',
+    '<circle cx="180" cy="60" r="18" fill="#ff7a6b" opacity=".35"/>' + strokes('M180 26V40M180 80V94M146 60H160M200 60H214M156 36L165 45M204 36L195 45M156 84L165 75M204 84L195 75', '#ff7a6b', 3),
+    '16px', '2px solid', 'breathe', 9, 9),
+  // Кристаллы
+  'ashes-diamond': legend('#f2fbff', '#8fdcff', '#f5b8ff', '#16263a',
+    strokes('M150 30H210L226 46L180 100L134 46ZM134 46H226M150 30L164 46L180 30L196 46L210 30M164 46L180 100L196 46', '#8fdcff', 3),
+    '4px 18px 4px 18px', '3px double', 'reveal', 13, 8),
+  'ashes-moonstone': legend('#f6f3ff', '#c3b8ff', '#9fe7f5', '#22203a',
+    '<circle cx="180" cy="58" r="36" fill="#c3b8ff" opacity=".2"/>' + strokes('M188 30A26 26 0 1 0 200 76A20 20 0 0 1 188 30Z', '#c3b8ff', 3),
+    '50%', '2px solid', 'breathe', 14, 14),
+};
+Object.assign(THEMED_MATERIALS, LEGENDARY_MATERIALS);
+
 // Collection finishes sit below the original transparent illustrations.
 function collectionFinish(key: string, m: Material): Record<string, string> | undefined {
   if (key.startsWith('myths-')) return {
@@ -163,8 +221,14 @@ export function themedSkin(key: string, part: 'ring' | 'selfcard' | 'bubble'): R
       backgroundColor: m.accent, opacity: 0.6, zIndex: 1,
       maskImage: 'linear-gradient(#fff 0 0), linear-gradient(#fff 0 0)',
       maskClip: 'content-box, border-box', maskComposite: 'exclude',
-      WebkitMaskComposite: 'xor' } };
-  return { ...base,
+      WebkitMaskComposite: 'xor',
+      // Легендарка: двухцветное кольцо медленно вращается вокруг аватара.
+      ...(m.accent2 ? { backgroundColor: 'transparent', opacity: 0.75,
+        backgroundImage: `conic-gradient(from 0deg, ${m.accent}, ${m.accent2}, ${m.accent}cc, ${m.accent2}, ${m.accent})`,
+        backgroundSize: '100% 100%', backgroundRepeat: 'no-repeat',
+        animation: `${animation}-spin ${(m.shimmer ?? 12) * 1.5}s linear infinite` } : {}) },
+    ...(m.accent2 ? { [`@keyframes ${animation}-spin`]: { from: { transform: 'rotate(0deg)' }, to: { transform: 'rotate(360deg)' } } } : {}) };
+  const surface = { ...base,
     background: `radial-gradient(ellipse at 100% 0%, ${m.accent}38, transparent 65%), ${m.surface}`,
     color: m.ink, borderRadius: part === 'bubble' ? '18px 18px 6px 18px' : '10px',
     boxShadow: `inset 0 1px 0 ${m.accent}44, inset 0 -1px 0 #00000033, 0 5px 16px #00000026`,
@@ -176,4 +240,30 @@ export function themedSkin(key: string, part: 'ring' | 'selfcard' | 'bubble'): R
       : { ...emblem, flexShrink: 0, width: 20, height: 20, marginLeft: '4px' } } : {}),
     ...(part === 'selfcard' ? { display: 'inline-flex', alignItems: 'center', px: 1, py: 0.5, fontSize: 11, lineHeight: 1.4,
       minWidth: 30, backgroundSize: '120px 60px' } : {}) };
+  if (part !== 'bubble' || !m.accent2) return surface;
+  return withLegendShimmer(surface, m, animation);
+}
+
+/**
+ * Перелив легендарки: узкая полупрозрачная полоса двух цветов медленно
+ * проходит по плашке, а свечение плавно меняет оттенок. Прозрачность полосы
+ * ≤ 14%, поэтому текст сообщения остаётся главным.
+ */
+function withLegendShimmer(style: Record<string, any>, m: Material, animation: string): Record<string, any> {
+  const a2 = m.accent2!;
+  const band = `linear-gradient(110deg, transparent 38%, ${a2}22 46%, ${m.accent}1c 52%, transparent 60%)`;
+  const glowA = `${style.boxShadow}, 0 0 10px ${m.accent}30`;
+  const glowB = `${style.boxShadow}, 0 0 12px ${a2}38`;
+  return { ...style,
+    // Полоса — первый слой размером 300%; остальные слои 100%, поэтому их
+    // процентное смещение не двигает, движется только перелив.
+    background: `${band} 0% 0 / 300% 100% no-repeat, ${style.background}`,
+    animation: `${animation}-shimmer ${m.shimmer ?? 12}s ease-in-out infinite`,
+    [`@keyframes ${animation}-shimmer`]: {
+      '0%': { backgroundPosition: '100% 0', boxShadow: glowA },
+      '50%': { backgroundPosition: '0% 0', boxShadow: glowB },
+      '100%': { backgroundPosition: '100% 0', boxShadow: glowA },
+    },
+    '@media (prefers-reduced-motion: reduce)': { animation: 'none', '&::before, &::after': { animation: 'none' } },
+  };
 }

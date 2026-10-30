@@ -36,5 +36,7 @@ test('фильтры инвентаря (категория, коллекция,
   const src = read('src/components/Store.tsx');
   assert.ok(src.includes("import { frostedPaperSx } from '../styles/frosted';"));
   assert.ok(/filterSelectProps = useMemo\([\s\S]*?\.\.\.frostedPaperSx\(theme\.bgHeader, theme\.border\)/.test(src));
-  assert.equal((src.match(/SelectProps=\{filterSelectProps\}/g) || []).length, 4, 'все четыре списка');
+  // Категория — строка чипов, остальные три фильтра — выпадающие списки с размытием.
+  assert.equal((src.match(/SelectProps=\{filterSelectProps\}/g) || []).length, 3, 'коллекция, редкость, сортировка');
+  assert.ok(src.includes('aria-pressed={category === id}'), 'категории переключаются чипами');
 });

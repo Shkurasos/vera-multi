@@ -160,6 +160,51 @@ test('ошибка SQL откатывает транзакцию целиком,
   });
 });
 
+test('явные таблицы: отсутствующие и нестандартные поля не роняют сохранение', () => {
+  withStore(({ open }) => {
+    const store = open();
+    // Параметр 7 upsertUser — display_name: undefined раньше давал
+    // «Provided value cannot be bound to SQLite parameter 7» и откатывал весь save.
+    const db = {
+      users: [{ id: 'u1', username: 'alice', passwordHash: 'h', displayName: undefined, avatarUrl: undefined, status: { text: 'тут' } }],
+      chats: [{ id: 'c1', isPublic: true }],
+      chatMembers: [{ id: 'cm1', chatId: 'c1', userId: 'u1' }],
+      messages: [{ id: 'm1', chatId: 'c1', senderId: 'u1', editedAt: undefined, readBy: ['u1'] }],
+      devices: [{ id: 'd1', userId: 'u1', deviceId: 'dev-1', lastSeenAt: undefined }],
+      refreshTokens: [{ id: 't1', userId: 'u1', deviceId: 'dev-1', tokenHash: 'x', expiresAt: new Date(0) }],
+    };
+    assert.doesNotThrow(() => store.saveExplicitTables(db));
+    const loaded = {};
+    store.loadExplicitTables(loaded);
+    assert.equal(loaded.users[0].username, 'alice');
+    assert.equal(loaded.users[0].displayName, null);
+    assert.equal(loaded.messages[0].senderId, 'u1');
+  });
+});
+
+test('явные таблицы не дублируют записи, уже загруженные из коллекций', () => {
+  withStore(({ open }) => {
+    const store = open();
+    const full = {
+      users: [{ id: 'u1', username: 'alice', passwordHash: 'h', firstName: 'Алиса' }],
+      chats: [{ id: 'c1', type: 'group', name: 'Группа' }],
+      chatMembers: [{ id: 'cm1', chatId: 'c1', userId: 'u1' }],
+      messages: [{ id: 'm1', chatId: 'c1', senderId: 'u1', text: 'привет', content: 'привет' }],
+    };
+    store.save(full);
+    store.saveExplicitTables(full);
+    const loaded = store.load();
+    store.loadExplicitTables(loaded);
+    // Раньше тут было по две записи: полная из коллекции и урезанная из таблицы.
+    assert.equal(loaded.users.length, 1);
+    assert.equal(loaded.users[0].firstName, 'Алиса', 'осталась полная запись');
+    assert.equal(loaded.chats.length, 1);
+    assert.equal(loaded.chatMembers.length, 1);
+    assert.equal(loaded.messages.length, 1);
+    assert.equal(loaded.messages[0].content, 'привет');
+  });
+});
+
 test('бэкап — полноценная зашифрованная копия', () => {
   withStore(({ open, dir, keyring }) => {
     const store = open();

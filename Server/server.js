@@ -167,7 +167,10 @@ console.log(`[DB] хранилище: ${dataSource.kind} (${dataSource.file})`);
 let db = { users: [], chats: [], messages: [], tracks: [], chatMembers: [], playlists: [], favorites: [], devices: [], linkInvites: [], callLogs: [], bots: [], aiModels: [], aiSessions: [], walletOrders: [], refreshTokens: [], ipBans: [], moderationBans: [], moderationWarnings: [], deletedMessages: [], reports: [], moderationIps: {} };
 {
   const stored = dataSource.load();
-  if (stored) db = stored;
+  if (stored) {
+    db = stored;
+    if (dataSource.loadExplicitTables) dataSource.loadExplicitTables(db);
+  }
 }
 // SEC/ops: возвращаем каталог тем и обоев из репозитория, если в БД его нет.
 // На арендованном сервере диск обычно эфемерный: после рестарта/редеплоя
@@ -193,6 +196,10 @@ require('./backup-content').attachLiveDb(() => db);
 const SAVE_DEBOUNCE_MS = Number(process.env.DB_SAVE_DEBOUNCE_MS) || 300;
 let saveDbTimer = null;
 let saveDbDirty = false;
+// Модуль ботов (bots.js), регистрируется после создания io. Объявлен здесь,
+// в начале файла: handleSendMessage, сокет-отправка и reloadDb обращаются к
+// нему, и обращение к let до объявления было бы ReferenceError.
+let botsModule = null;
 if (!Array.isArray(db.refreshTokens)) db.refreshTokens = [];
 if (!Array.isArray(db.loginEvents)) db.loginEvents = [];
 if (!Array.isArray(db.authChallenges)) db.authChallenges = [];
@@ -252,6 +259,7 @@ if (db.users) {
 // PERF/DoS: записи коалесцируются (см. saveDb выше, объявлен до миграций).
 // Хранилище само пишет только изменившиеся записи одной транзакцией.
 function saveDbNow() {
+  if (dataSource.saveExplicitTables) dataSource.saveExplicitTables(db);
   dataSource.save(db);
 }
 
@@ -318,6 +326,8 @@ function reloadDb() {
       if (!db.moderationIps || typeof db.moderationIps !== 'object' || Array.isArray(db.moderationIps)) db.moderationIps = {};
       normalizeAllUsers();
       if (migrateChatKinds()) saveDb();
+      // Новая база с диска могла прийти без системного бота /hub.
+      if (botsModule && botsModule.ensureHub()) saveDb();
       console.log('[DB] Reloaded from disk. Users:', db.users.length, 'Tracks:', db.tracks.length);
     } catch (e) { console.error('[DB] Reload failed:', e.message); }
   }
@@ -1940,9 +1950,12 @@ blocks.install({ app, getDb: () => db, saveDb, auth: authMiddleware,
   },
 });
 
-// GET /api/users/search?q=...
+// GET /api/users/search?q=...&kind=people|bots
+// kind=bots — только боты (поиск «/ник» в клиенте), kind=people — только люди
+// («@ник»). Без kind — все, кроме удалённых ботов.
 app.get('/api/users/search', authMiddleware, (req, res) => {
-  const rawQuery = String(req.query.q || '').trim().replace(/^@+/, '').slice(0, 50);
+  const rawQuery = String(req.query.q || '').trim().replace(/^[@/]+/, '').slice(0, 50);
+  const kind = req.query.kind === 'bots' || req.query.kind === 'people' ? req.query.kind : null;
   const q = safeLower(rawQuery);
   const phoneQuery = rawQuery.replace(/\D/g, '');
   if (!q) return res.json([]);
@@ -1963,6 +1976,7 @@ app.get('/api/users/search', authMiddleware, (req, res) => {
   }
 
   const results = db.users
+    .filter(u => !u.botDeleted && (!kind || (kind === 'bots') === !!u.isBot))
     .map(u => {
     normalizeUserRecord(u);
     return { user: u, rank: u.id === req.userId ? 99 : getUserSearchRank(u) };
@@ -2006,6 +2020,7 @@ function publicUserFields(user) {
     equippedPet: sanitizedEquippedPet(user.equippedPet),
     pinnedPlaylistId: user.pinnedPlaylistId || null,
     pinnedTrackId: user.pinnedTrackId || null,
+    isBot: !!user.isBot,
   };
 }
 
@@ -2434,6 +2449,14 @@ communityIconPacks.install({
   auth: authMiddleware,
   isAdmin: req => isAdminUser(req, db.users.find(u => u.id === req.userId)),
   dataDir: DATA_DIR,
+  // Свои паки аккаунта изменились — остальные устройства докачают их сами.
+  // userSockets объявлен ниже (рядом с io), но к моменту запроса он уже есть.
+  notify: (userId, payload) => {
+    try {
+      const sockets = userSockets.get(userId);
+      if (sockets) sockets.forEach(sid => io.to(sid).emit('icon-packs:updated', payload));
+    } catch {}
+  },
 });
 
 // Скины реакций: 10 слотов быстрых реакций (кастомизация профиля).
@@ -2953,8 +2976,13 @@ for (const action of ['buy', 'open']) {
       user.walletBalance -= price;
       counts[definition.id]++;
     } else {
-      let roll = crypto.randomInt(definition.rewards.reduce((sum, reward) => sum + reward.weight, 0));
-      const reward = definition.rewards.find(reward => (roll -= reward.weight) < 0);
+      // Веса могут быть дробными (Ночной кот в «Базе» — 0.001%). randomInt принимает
+      // только целые, поэтому доли переводим в целые с общим масштабом.
+      const weights = definition.rewards.map(reward => Math.round(reward.weight * 1e12));
+      const total = weights.reduce((sum, weight) => sum + weight, 0);
+      if (!Number.isSafeInteger(total) || total < 1) return res.status(500).json({ message: 'Некорректные веса кейса' });
+      let roll = crypto.randomInt(total);
+      const reward = definition.rewards[weights.findIndex(weight => (roll -= weight) < 0)];
       const key = reward.key;
       if (key.startsWith('rx-')) {
         // Скин реакции: копия идёт в счётчик, слоты пользователь настраивает сам.
@@ -4551,7 +4579,9 @@ function userBlockedInChat(chatId, userId) {
     ));
 }
 
-function handleSendMessage(chatId, userId, body, res) {
+// internal — поля, которые ставит только сервер (не тело запроса клиента):
+// { sticker } — ссылка на стикер из набора (см. stickers.js).
+function handleSendMessage(chatId, userId, body, res, internal = null) {
   const isMember = db.chatMembers.find(m => m.chatId === chatId && m.userId === userId);
   if (!isMember) return res.status(403).json({ message: 'Нет доступа' });
   // Личная блокировка: если кто-то из участников заблокировал отправителя,
@@ -4657,6 +4687,8 @@ function handleSendMessage(chatId, userId, body, res) {
     ...(chat?.type === 'channel' && !replyToId ? { senderId: chatId, authorId: userId } : {}),
     attachments: normAttachments,
     type: type || (normAttachments.length > 0 ? 'document' : 'text'),
+    // Стикер: ссылку на набор ставит сервер (stickers.js), при пересылке — копия из исходного.
+    ...(forwardedMessage?.sticker ? { sticker: forwardedMessage.sticker } : internal?.sticker ? { sticker: internal.sticker } : {}),
     ...(poll ? { type: 'poll', poll: { question: poll.question.trim().slice(0, 500), multiple: Boolean(poll.multiple), options: poll.options.map((option, index) => ({ id: String(option.id || index + 1), text: String(option.text || '').trim().slice(0, 200), votes: 0, voterIds: [] })).filter(option => option.text).slice(0, 10) } } : {}),
     readBy: [userId],
     editedAt: null,
@@ -4688,6 +4720,9 @@ function handleSendMessage(chatId, userId, body, res) {
   }
   io.to(`chat:${chatId}`).emit('message:new', result);
   res.status(201).json(result);
+  // Личка с ботом: событие для Bot API или ответ встроенного /hub.
+  // typeof — vm-тесты вырезают этот участок без модуля ботов.
+  if (typeof botsModule !== 'undefined' && botsModule) botsModule.onMessage(message);
 }
 
 // POST /api/messages/:chatId  (base route)
@@ -5257,40 +5292,8 @@ app.delete('/api/playlists/:id', authMiddleware, deletePlaylist);
 
 // ─── BOTS / AI / VOICE routes (примитивные, но рабочие) ───────────────────────
 
-// Bots: пользователь создаёт бота, бот может отвечать по правилам
-app.get('/api/bots/my', authMiddleware, (req, res) => {
-  res.json((db.bots || []).filter(b => b.ownerId === req.userId));
-});
-app.post('/api/bots/create', authMiddleware, (req, res) => {
-  const { name, username } = req.body || {};
-  if (!name) return res.status(400).json({ message: 'Укажите имя бота' });
-  const bot = {
-    id: uuidv4(),
-    ownerId: req.userId,
-    name,
-    username: username || ('bot_' + uuidv4().slice(0, 8)),
-    createdAt: new Date().toISOString(),
-    rules: [],
-    token: uuidv4().replace(/-/g, ''),
-  };
-  if (!db.bots) db.bots = [];
-  db.bots.push(bot);
-  saveDb();
-  res.status(201).json(bot);
-});
-app.get('/api/bots/:username', authMiddleware, (req, res) => {
-  const bot = (db.bots || []).find(b => b.username === req.params.username);
-  if (!bot) return res.status(404).json({ message: 'Бот не найден' });
-  res.json(bot);
-});
-app.post('/api/bots/:id/rule', authMiddleware, (req, res) => {
-  const bot = (db.bots || []).find(b => b.id === req.params.id && b.ownerId === req.userId);
-  if (!bot) return res.status(404).json({ message: 'Бот не найден' });
-  bot.rules = bot.rules || [];
-  bot.rules.push(req.body || {});
-  saveDb();
-  res.json(bot);
-});
+// Боты (/api/bots/*, Bot API /bot<token>/*) — модуль bots.js, регистрируется
+// после создания io (см. блок Socket.io ниже).
 
 // AI: простой текстовый чат (без внешних нейросетей, но рабочий)
 app.get('/api/ai/models', authMiddleware, (req, res) => {
@@ -5716,6 +5719,16 @@ if (typeof require === 'function') {
   require('./tictactoe').registerTicTacToe({
     app, getDb: () => db, auth: authMiddleware, saveDb, io,
   });
+  // Стикеры: наборы, загрузка, отправка в чат.
+  const stickersModule = require('./stickers').registerStickers({
+    app, getDb: () => db, auth: authMiddleware, saveDb, uploadsDir: UPLOADS_DIR,
+    multer, handleSendMessage, uploadLimiter, sendLimiter: messageLimiter,
+  });
+  // Боты: /hub, аккаунты-боты, Bot API (/bot<token>/<method>).
+  botsModule = require('./bots').registerBots({
+    app, getDb: () => db, auth: authMiddleware, saveDb, io, userSockets,
+    isPrivateHost, makeRateLimit, resolveSticker: stickersModule.resolveSticker,
+  });
 }
 const socketIpCounts = new Map();
 const socketIpHits = new Map();
@@ -6009,6 +6022,7 @@ io.on('connection', (socket) => {
     }
     io.to(`chat:${chatId}`).emit('message:new', result);
     callback && callback(result);
+    if (botsModule) botsModule.onMessage(message);
   });
 
   // Typing indicators

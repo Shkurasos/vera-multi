@@ -45,6 +45,7 @@ import PlaylistMessageCard, { VeraPlaylistPayload } from './PlaylistMessageCard'
 import GroupInviteCard from './GroupInviteCard';
 import WarshipGameCard from './WarshipGameCard';
 import TicTacToeCard from './TicTacToeCard';
+import BotButtons from './BotButtons';
 import CallSummaryCard from './CallSummaryCard';
 import ContextMenu from './ContextMenu';
 import ChannelComments from './ChannelComments';
@@ -54,6 +55,7 @@ import { motion } from '../styles/motion';
 import { useClockAvoid } from '../hooks/useClockAvoid';
 import { useReactionSkinStore, reactionLabel } from '../store/reactionSkinStore';
 import ReactionGlyph from './ReactionGlyph';
+import { useAvatarFill } from '../hooks/useAvatarColor';
 
 interface Props {
   message: Message;
@@ -911,6 +913,7 @@ function MessageBubble({
   const chatFont = useChatFontStore((s) => s.perChatFonts[message.chatId]);
   const globalFontFamily = useUserSettingsStore((s) => s.globalFontFamily);
   const fontFamily = chatFont || globalFontFamily;
+  const photoTextPos = useUserSettingsStore((s) => s.layout.photoTextPos ?? 'bottom');
 
   // На какой стороне показывать сообщение.
   // auto — как обычно (свои справа, чужие слева); left/right — все с одной стороны.
@@ -1033,8 +1036,19 @@ function MessageBubble({
     activeSelfCard: 'selfcard' in senderChatSkins ? senderChatSkins.selfcard : (baseSender as any).activeSelfCard,
     activeBubble: 'bubble' in senderChatSkins ? senderChatSkins.bubble : (baseSender as any).activeBubble,
   } : baseSender;
-  const selfCardItem = findShopItem('selfCard', isOwn ? ownSkinId('selfcard', shopActiveSelfCard) : sender?.activeSelfCard);
-  const bubbleItem = findShopItem('bubbleStyle', isOwn ? ownSkinId('bubble', shopActiveBubble) : sender?.activeBubble);
+  // Настройки отображения: скины можно скрыть у себя на экране — отдельно на
+  // своих и на чужих сообщениях. Скрывается только оформление: плашка с
+  // именем остаётся, но в обычном виде темы.
+  const showOwnSkins = useUserSettingsStore((s) => s.showOwnSkins !== false);
+  const showOthersSkins = useUserSettingsStore((s) => s.showOthersSkins !== false);
+  const othersSkinColor = useUserSettingsStore((s) => s.othersSkinColor);
+  const skinsShown = isOwn ? showOwnSkins : showOthersSkins;
+  const plaqueItem = findShopItem('selfCard', isOwn ? ownSkinId('selfcard', shopActiveSelfCard) : sender?.activeSelfCard);
+  const hasPlaque = isOwn || !!plaqueItem;
+  const selfCardItem = skinsShown ? plaqueItem : undefined;
+  const bubbleItem = skinsShown ? findShopItem('bubbleStyle', isOwn ? ownSkinId('bubble', shopActiveBubble) : sender?.activeBubble) : undefined;
+  // Кастомные предметы авторов бывают только на своих сообщениях.
+  const ownCustomShown = isOwn && showOwnSkins;
   const senderName = sender ? [sender.firstName, sender.lastName].filter(Boolean).join(' ') || sender.username : 'Бот';
   // Добавляем cache-busting параметр по themeVersion, чтобы браузер перечитал
   // картинку аватара после смены (иначе кэш держит старую).
@@ -1070,12 +1084,17 @@ function MessageBubble({
   }, [userId, senderAvatarUrl, getCachedFileUrl, fetchAndCacheFile]);
 
   const senderAvatar = avatarCacheRef.current.get(userId || '') || senderAvatarUrl;
+  // Аватарка без фото — цвет отправителя из палитры (как в списке чатов).
+  const senderAvatarFill = useAvatarFill(userId);
 
   const attachment = message.attachments?.[0];
   // Кружок без подписи/ответа рисуем без пузыря: только круг и время под ним.
   const isRoundNote = message.attachments?.length === 1
     && isRoundNoteName(attachment?.fileName)
     && !message.content && !message.replyToId && !message.forwardFromId && !channelPost;
+  // Стикер, как и кружок, рисуем без пузыря: картинка с прозрачным фоном.
+  const isSticker = message.type === 'sticker' && message.attachments?.length === 1
+    && !message.content && !channelPost;
 
   // ── VK-альбом: все вложения сообщения — картинки ──────────────────────────
   const messageAttachments = message.attachments || [];
@@ -1125,7 +1144,11 @@ function MessageBubble({
   // ── Стиль пузырей из магазина (перебивает тему; кастом авторов перебивает магазин) ──
   const shopBubbleVal = bubbleItem?.value as any;
   const ownColorModes = useShopStore(s => s.colorModes);
-  const colorModes = isOwn ? ownColorModes : {};
+  // Свои скины — как выбрал владелец (стоковый цвет или «под тему»).
+  // Чужие — по настройке отображения: по умолчанию под МОЮ тему (у собеседника
+  // может быть другая тема, и стоковые цвета смотрелись бы пёстро), либо в
+  // стоковых цветах, как их задумал магазин.
+  const skinThemed = (id: string | undefined) => !!id && (isOwn ? ownColorModes[id] === 'theme' : othersSkinColor !== 'stock');
   const shopBubbleSx: Record<string, any> = {};
   let shopBubbleText: string | undefined;
   if (shopBubbleVal) {
@@ -1188,12 +1211,12 @@ function MessageBubble({
   }
 
   if (shopBubbleVal) {
-    Object.assign(shopBubbleSx, bubbleSkin(bubbleItem, accent, colorModes[bubbleItem!.id] === 'theme'));
+    Object.assign(shopBubbleSx, bubbleSkin(bubbleItem, accent, skinThemed(bubbleItem?.id)));
     shopBubbleText = shopBubbleSx.color;
   }
   const equippedBubbleSx = {
     ...shopBubbleSx,
-    ...(isOwn && customBubbleSpec && !ownOverrideSet('bubble') ? specToStyle(customBubbleSpec) : {}),
+    ...(ownCustomShown && customBubbleSpec && !ownOverrideSet('bubble') ? specToStyle(customBubbleSpec) : {}),
   };
   // backdrop-filter реально виден только если сквозь фон что-то просвечивает.
   // За непрозрачной заливкой блюр(18px) не даёт картинки, но заставляет браузер
@@ -1221,22 +1244,22 @@ function MessageBubble({
   // Обводка аватара: для своих сообщений — своя покупка; для чужих — обводка ОТПРАВИТЕЛЯ,
   // переданная сервером (sender.activeRing). Так обводка привязана к аккаунту покупателя.
   const ownRingId = ownSkinId('ring', shopActiveRing);
-  const ringIdForAvatar = isOwn ? ownRingId : (sender?.activeRing || '');
+  const ringIdForAvatar = !skinsShown ? '' : isOwn ? ownRingId : (sender?.activeRing || '');
   const ringItemForAvatar = findShopItem('avatarRing', ringIdForAvatar);
   const ringValForAvatar = ringItemForAvatar?.value as any;
   const avatarSx: Record<string, any> = {
     width: 34, height: 34, cursor: 'pointer', flexShrink: 0,
-    bgcolor: accent + '70',
+    ...senderAvatarFill,
     border: `2px solid ${isOwn ? accent : 'transparent'}`,
     transition: 'box-shadow 0.3s ease, border-color 0.3s ease',
   };
   if (ringValForAvatar) {
     // Единый стиль обводки из магазина (с анимациями для gradient/glow/pulse/aurora).
-    Object.assign(avatarSx, skinColors(buildShopRingSx(ringValForAvatar, accent, false, 1), ringItemForAvatar, accent, isOwn && colorModes[ringItemForAvatar!.id] === 'theme'));
+    Object.assign(avatarSx, skinColors(buildShopRingSx(ringValForAvatar, accent, false, 1), ringItemForAvatar, accent, skinThemed(ringItemForAvatar?.id)));
   }
   // Кастомная обводка (spec от авторов) — только для собственной аватарки
   // и только если в этом чате не выбран явный свой скин.
-  if (isOwn && customProfileSpec && !ownOverrideSet('ring')) {
+  if (ownCustomShown && customProfileSpec && !ownOverrideSet('ring')) {
     const st = specToStyle(customProfileSpec);
     avatarSx.border = st.border || avatarSx.border;
     avatarSx.background = st.background;
@@ -1269,11 +1292,11 @@ function MessageBubble({
       selfPlaqueSx.px = 0.8;
     }
   }
-  Object.assign(selfPlaqueSx, skinColors(selfPlaqueSx, selfCardItem, accent, !!selfCardItem && colorModes[selfCardItem.id] === 'theme'));
-  if (selfVal?.pack) Object.assign(selfPlaqueSx, selfcardSkin(selfCardItem!, SHOP_CATALOG, accent, colorModes[selfCardItem!.id] === 'theme'));
+  Object.assign(selfPlaqueSx, skinColors(selfPlaqueSx, selfCardItem, accent, skinThemed(selfCardItem?.id)));
+  if (selfVal?.pack) Object.assign(selfPlaqueSx, selfcardSkin(selfCardItem!, SHOP_CATALOG, accent, skinThemed(selfCardItem?.id)));
   // Кастомная плашка от авторов перебивает, если в чате не выбран свой скин.
   let selfPlaqueClass = '';
-  if (isOwn && customSelfcardSpec && !ownOverrideSet('selfcard')) {
+  if (ownCustomShown && customSelfcardSpec && !ownOverrideSet('selfcard')) {
     Object.assign(selfPlaqueSx, specToStyle(customSelfcardSpec));
     selfPlaqueClass = specAnimationClass(customSelfcardSpec);
   }
@@ -1367,6 +1390,26 @@ function MessageBubble({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDeleting]);
+
+  // Подпись к фото: по настройке темы — над изображением или под ним.
+  const captionBelow = photoTextPos === 'bottom' && imageAttachments.length > 0 && !!message.content;
+  const messageTextNode = message.content ? (
+    <Typography ref={textRef} sx={{ flex: 1, minWidth: 0, mt: captionBelow ? 0.75 : 0, textAlign: wallTextAlign, fontSize: bubbleTextSize || fontSize, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', fontFamily }}>
+      {contentParts.map((part, i) => part.type === 'emoji'
+        ? <span key={i} style={{ fontSize: emojiSize, lineHeight: 1.2 }}>{part.value}</span>
+        : part.type === 'link'
+          ? <a key={i} href={part.href} target={part.href?.startsWith('http') ? '_blank' : undefined}
+            rel={part.href?.startsWith('http') ? 'noopener noreferrer' : undefined}
+            onClick={(event) => event.stopPropagation()}
+            // Цвет — как у текста сообщения (тема/скин пузыря): акцент
+            // сливался с плашкой. Ссылку выделяет подчёркивание.
+            style={{ color: 'inherit', textDecoration: 'underline', textUnderlineOffset: 2, overflowWrap: 'anywhere' }}>
+            {part.value}
+          </a>
+          : <span key={i}>{part.value}</span>
+      )}
+    </Typography>
+  ) : null;
 
   return (
     <Box
@@ -1488,12 +1531,12 @@ function MessageBubble({
             : 'none',
         }}
       >
-        {!isOwn && !selfCardItem && isGroupStart && (
+        {!isOwn && !hasPlaque && isGroupStart && (
           <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 0.3, ml: 0.5 }}>
             {senderName}{senderTitle ? ` · ${senderTitle}` : ''}
           </Typography>
         )}
-        {!isDeleting && (isOwn || selfCardItem) && isGroupStart && (
+        {!isDeleting && hasPlaque && isGroupStart && (
           <Box sx={{ display: 'flex', justifyContent: isOwnSide ? 'flex-end' : 'flex-start', mb: 0.4 }}>
             <Typography component="span" sx={{ ...selfPlaqueSx, display: 'inline-flex', alignItems: 'center' }} className={selfPlaqueClass}>
               {isOwn ? 'Вы' : senderName}{senderTitle ? ` · ${senderTitle}` : ''}
@@ -1516,7 +1559,7 @@ function MessageBubble({
             setContextMenu({ x: e.clientX, y: e.clientY });
           }}
           onPointerDown={(e) => { if (e.pointerType === 'mouse') touchOrigin.current = null; }}
-          className={bubbleEnabled && isOwn && customBubbleSpec && !ownOverrideSet('bubble') ? specAnimationClass(customBubbleSpec) : ''}
+          className={bubbleEnabled && ownCustomShown && customBubbleSpec && !ownOverrideSet('bubble') ? specAnimationClass(customBubbleSpec) : ''}
           sx={{
             position: 'relative',
             // Экономим layout/paint сообщений, которые сейчас вне экрана.
@@ -1561,8 +1604,8 @@ function MessageBubble({
             paddingBottom: bubbleEnabled && !channelPost ? `${clampBubble('padding', bubblePadding)}px` : 0,
             minWidth: 0, overflowWrap: 'anywhere',
             '& > *': { maxWidth: '100%', minWidth: 0, boxSizing: 'border-box' },
-            ...(!bubbleEnabled || isRoundNote ? { background: 'transparent', backgroundImage: 'none', border: 'none', boxShadow: 'none', backdropFilter: 'none', color: theme.text, animation: 'none', '&::before': { display: 'none' }, '&::after': { display: 'none' } } : {}),
-            ...(isRoundNote ? { padding: 0, transform: 'none', contentVisibility: 'visible' } : {}),
+            ...(!bubbleEnabled || isRoundNote || isSticker ? { background: 'transparent', backgroundImage: 'none', border: 'none', boxShadow: 'none', backdropFilter: 'none', color: theme.text, animation: 'none', '&::before': { display: 'none' }, '&::after': { display: 'none' } } : {}),
+            ...(isRoundNote || isSticker ? { padding: 0, transform: 'none', contentVisibility: 'visible' } : {}),
           }}
         >
           <Box sx={channelPost ? {
@@ -1590,23 +1633,7 @@ function MessageBubble({
           <Box data-vera-meta-pos={metaPos} sx={metaInline && message.content && !attachment && !message.replyToId && !message.isEdited
             ? { display: 'flex', flexDirection: metaPos === 'inlineLeft' ? 'row-reverse' : 'row', alignItems: 'center', gap: 1 }
             : {}}>
-              {message.content && (
-                <Typography ref={textRef} sx={{ flex: 1, minWidth: 0, textAlign: wallTextAlign, fontSize: bubbleTextSize || fontSize, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', fontFamily }}>
-                  {contentParts.map((part, i) => part.type === 'emoji'
-                    ? <span key={i} style={{ fontSize: emojiSize, lineHeight: 1.2 }}>{part.value}</span>
-                    : part.type === 'link'
-                      ? <a key={i} href={part.href} target={part.href?.startsWith('http') ? '_blank' : undefined}
-                        rel={part.href?.startsWith('http') ? 'noopener noreferrer' : undefined}
-                        onClick={(event) => event.stopPropagation()}
-                        // Цвет — как у текста сообщения (тема/скин пузыря): акцент
-                        // сливался с плашкой. Ссылку выделяет подчёркивание.
-                        style={{ color: 'inherit', textDecoration: 'underline', textUnderlineOffset: 2, overflowWrap: 'anywhere' }}>
-                        {part.value}
-                      </a>
-                      : <span key={i}>{part.value}</span>
-                  )}
-                </Typography>
-              )}
+              {!captionBelow && messageTextNode}
 
               {message.type === 'poll' && message.poll && (() => {
                 const totalVotes = new Set(message.poll.options.flatMap(option => option.voterIds || [])).size;
@@ -1673,7 +1700,7 @@ function MessageBubble({
                 <IconButton aria-label="Предыдущее вложение" onClick={e => { e.stopPropagation(); const el = attachmentsRef.current; el?.scrollBy({ left: -el.clientWidth, behavior: 'smooth' }); }} sx={{ color: 'inherit' }}>←</IconButton>
                 <IconButton aria-label="Следующее вложение" onClick={e => { e.stopPropagation(); const el = attachmentsRef.current; el?.scrollBy({ left: el.clientWidth, behavior: 'smooth' }); }} sx={{ color: 'inherit' }}>→</IconButton>
               </Box>}
-              <Box ref={attachmentsRef} tabIndex={message.attachments?.length ? 0 : undefined} role="region" aria-label="Вложения поста" sx={{ display: 'flex', width: message.attachments?.length && !isRoundNote ? 360 : undefined, maxWidth: '100%', overflowX: 'auto', scrollSnapType: 'x mandatory', gap: 1 }}>
+              <Box ref={attachmentsRef} tabIndex={message.attachments?.length ? 0 : undefined} role="region" aria-label="Вложения поста" sx={{ display: 'flex', width: message.attachments?.length && !isRoundNote && !isSticker ? 360 : undefined, maxWidth: '100%', overflowX: 'auto', scrollSnapType: 'x mandatory', gap: 1 }}>
               {(message.attachments || []).map((attachment, index, attachments) => {
                 const attachmentUrl = resolveFileUrl(attachment.fileUrl);
                 const isAudio = attachment.mimeType?.startsWith('audio/') || (attachments.length === 1 && message.type === 'voice');
@@ -1694,7 +1721,19 @@ function MessageBubble({
               )}
 
               {isImage && attachment && (
-                <ImageViewer src={attachmentUrl} border={theme.border} onContextMenu={openImageMenu} />
+                isSticker ? (
+                  <Box
+                    component="img"
+                    src={attachmentUrl}
+                    alt={message.sticker?.emoji ? `Стикер ${message.sticker.emoji}` : 'Стикер'}
+                    title={message.sticker?.packName ? `Набор ${message.sticker.packName}` : undefined}
+                    loading="lazy"
+                    draggable={false}
+                    sx={{ display: 'block', width: { xs: 140, md: 168 }, height: { xs: 140, md: 168 }, objectFit: 'contain', userSelect: 'none' }}
+                  />
+                ) : (
+                  <ImageViewer src={attachmentUrl} border={theme.border} onContextMenu={openImageMenu} />
+                )
               )}
 
               {isDocument && attachment && (
@@ -1719,6 +1758,10 @@ function MessageBubble({
               </Box>
                 </>
               )}
+
+              {captionBelow && messageTextNode}
+
+              {!!message.replyMarkup?.inline_keyboard?.length && <BotButtons message={message} />}
 
               {message.isEdited && (
                 <Typography sx={{ fontSize: 11, color: messageTimeText, opacity: editedTextOpacity, mt: 0.3, fontStyle: 'italic', fontFamily }}>

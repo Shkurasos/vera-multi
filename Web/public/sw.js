@@ -1,13 +1,16 @@
 /* Vera Messenger — сервис-воркер для офлайн-режима.
  * - Precache: оболочка приложения (index.html + ассеты).
- * - Runtime: Stale-While-Revalidate для /api/chats, /api/messages/:chatId,
- *   /api/music/*, аватаров (/api/users/*, /api/auth/me, /uploads/*).
+ * - Runtime: NetworkFirst для /api/chats, /api/messages/:chatId, /api/music/*,
+ *   /api/users/*, /api/auth/me (кэш — только без сети);
+ *   Stale-While-Revalidate для /uploads/*.
  * - CacheFirst для /assets/** и статические медиа.
  * - Fallback: если сеть недоступна и есть кэш — отдаём его,
  *   данные подгружаются из IndexedDB-архива (offlineStore / localArchive).
  */
-const CACHE = 'vera-v9';
-const RUNTIME_CACHE = 'vera-runtime-v9';
+// v11: API перешли на NetworkFirst; смена имени сносит старый runtime-кэш
+// с устаревшим /api/auth/me.
+const CACHE = 'vera-v11';
+const RUNTIME_CACHE = 'vera-runtime-v11';
 const APP_SHELL = ['./', './index.html', './vera.svg', './vera-icon.png', './favicon.ico', './icons/icon-192.png', './icons/icon-512.png', './manifest.webmanifest'];
 
 // Runtime-кэшируемые API-префиксы (Stale-While-Revalidate).
@@ -61,6 +64,10 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+  // Проверка связи (vera-probe) должна идти в сеть: ответ из кэша выдал бы
+  // офлайн за онлайн. Скачивание медиатеки (x-vera-offline) само пишет в
+  // IndexedDB — второй копии аудио в кэше SW не нужно.
+  if (url.searchParams.has('vera-probe') || req.headers.has('x-vera-offline')) return;
   // Внешние запросы, Vite-модули, socket.io не кэшируем.
   if (url.origin !== self.location.origin ||
       url.pathname.startsWith('/src/') ||
@@ -84,8 +91,24 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // --- Stale-While-Revalidate для API + аватаров/обложек ---
-  if (API_CACHE_PREFIXES.some((p) => url.pathname.startsWith(p)) || url.pathname.startsWith('/uploads/')) {
+  // --- API: NetworkFirst, кэш только без сети ---
+  // Stale-While-Revalidate здесь опасен: /api/auth/me из кэша отдавал профиль
+  // прошлого аккаунта (после пересоздания базы у того же ника новый id), и
+  // свои сообщения рисовались как чужие. Данные API должны быть свежими.
+  if (API_CACHE_PREFIXES.some((p) => url.pathname.startsWith(p))) {
+    event.respondWith(
+      caches.open(RUNTIME_CACHE).then((cache) =>
+        fetch(req).then((res) => {
+          if (res.ok) cache.put(req, res.clone()).catch(() => {});
+          return res;
+        }).catch(() => cache.match(req).then((cached) => cached || new Response('Offline', { status: 503 }))),
+      ),
+    );
+    return;
+  }
+
+  // --- Stale-While-Revalidate для аватаров/обложек/вложений ---
+  if (url.pathname.startsWith('/uploads/')) {
     event.respondWith(
       caches.open(RUNTIME_CACHE).then((cache) => {
         return cache.match(req).then((cached) => {

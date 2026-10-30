@@ -1,6 +1,7 @@
 
 import axios, { AxiosError, AxiosRequestConfig } from 'axios';
 import { useOfflineStore } from '../store/offlineStore';
+import { isAppOffline } from './offlineMode';
 
 const api = axios.create({
   baseURL: '/api',
@@ -8,16 +9,10 @@ const api = axios.create({
 });
 
 /* ─── Офлайн-определение ───────────────────────────────────────────────────
- * В Electron спрашиваем главный процесс (veraDesktop.isOnline),
- * в браузере — navigator.onLine.
+ * navigator.onLine или флаг «сервер не ответил при входе» (см. offlineMode).
  */
 function isOffline(): boolean {
-  if (typeof window !== 'undefined' && (window as any).veraDesktop) {
-    // Синхронно не получится — isOnline возвращает Promise.
-    // Используем navigator.onLine как быструю оценку, уточнение приходит по IPC.
-    return !navigator.onLine;
-  }
-  return !navigator.onLine;
+  return isAppOffline();
 }
 
 /** Эндпоинты, которые кэшируются для офлайн (путь -> имя стора в IndexedDB). */
@@ -70,11 +65,12 @@ async function cacheResponse(url: string, data: any): Promise<void> {
       return;
     }
     if (Array.isArray(data)) {
-      await offlineStore.cacheMusicLibrary(data); // по умолчанию музыка
+      // Раньше любой массив (темы, скины) писался ещё и в music_library.
+      if (store === 'music_library') await offlineStore.cacheMusicLibrary(data);
       if (store === 'themes') await offlineStore.cacheThemes(data);
       if (store === 'skins') await offlineStore.cacheSkins(data);
       if (store === 'icons') await offlineStore.cacheIcons(data);
-    } else if (data && data.items) {
+    } else if (data && data.items && store === 'music_library') {
       await offlineStore.cacheMusicLibrary(data.items);
     }
   } catch { /* офлайн-кэш не критичен */ }
@@ -212,7 +208,10 @@ export const authApi = {
   setPassword: (newPassword: string, currentPassword?: string) => api.post('/auth/password', { newPassword, currentPassword }, { timeout: 30000 }),
   loginEvents: () => api.get('/auth/login-events'),
   passkey: { registerOptions: () => api.post('/auth/passkey/register/options'), registerVerify: (response: unknown) => api.post('/auth/passkey/register/verify', response), loginOptions: (identifier?: string) => api.post('/auth/passkey/login/options', { identifier }), loginVerify: (response: unknown) => api.post('/auth/passkey/login/verify', response) },
-  me: () => api.get('/auth/me', { timeout: 15000 }),
+  // vera-probe: сервис-воркер пропускает запрос мимо кэша. Профиль из кэша
+  // мог принадлежать прошлому аккаунту (другой id) — свои сообщения тогда
+  // рисовались как чужие.
+  me: () => api.get('/auth/me', { timeout: 15000, params: { 'vera-probe': Date.now() } }),
   logout: () => api.post('/auth/logout'),
 };
 
@@ -292,7 +291,8 @@ export const usersApi = {
   me: () => api.get('/auth/me'),
   update: (data: any) => api.patch('/users/me', data),
   updateMe: (data: any) => api.patch('/users/me', data),
-  search: (q: string) => api.get(`/users/search?q=${encodeURIComponent(q)}`),
+  search: (q: string, kind?: 'people' | 'bots') =>
+    api.get(`/users/search?q=${encodeURIComponent(q)}${kind ? `&kind=${kind}` : ''}`),
   getById: (id: string) => api.get(`/users/${id}`),
   getReputation: (id: string) => api.get(`/users/${id}/reputation`),
   rateUser: (id: string, value: string, comment?: string) => api.put(`/users/${id}/reputation`, { value, comment }),
@@ -575,6 +575,71 @@ export const ticTacToeApi = {
   /** Ход в клетку 0..8 (слева направо, сверху вниз). */
   move: (messageId: string, cell: number) =>
     api.post(`/tictactoe/${encodeURIComponent(messageId)}/move`, { cell }),
+};
+
+export interface Sticker {
+  id: string;
+  emoji: string;
+  fileUrl: string;
+  width?: number;
+  height?: number;
+  animated?: boolean;
+}
+
+export interface StickerPack {
+  id: string;
+  name: string;
+  title: string;
+  ownerId?: string;
+  isMine: boolean;
+  installed: boolean;
+  stickers: Sticker[];
+}
+
+/** Набор в результатах поиска: превью вместо полного списка. */
+export interface StickerPackSummary {
+  id: string;
+  name: string;
+  title: string;
+  isMine: boolean;
+  installed: boolean;
+  count: number;
+  preview: Sticker[];
+}
+
+/** Стикеры: наборы, загрузка, отправка. */
+export const stickersApi = {
+  my: () => api.get<{ installed: StickerPack[]; own: StickerPack[] }>('/stickers/my'),
+  search: (q: string) => api.get<StickerPackSummary[]>('/stickers/search', { params: { q } }),
+  byName: (name: string) => api.get<StickerPack>(`/stickers/packs/by-name/${encodeURIComponent(name)}`),
+  createPack: (name: string, title: string) => api.post<StickerPack>('/stickers/packs', { name, title }),
+  renamePack: (id: string, title: string) => api.patch<StickerPack>(`/stickers/packs/${encodeURIComponent(id)}`, { title }),
+  deletePack: (id: string) => api.delete(`/stickers/packs/${encodeURIComponent(id)}`),
+  addSticker: (packId: string, file: File, emoji: string) => {
+    const form = new FormData();
+    form.append('emoji', emoji);
+    form.append('file', file);
+    return api.post<StickerPack>(`/stickers/packs/${encodeURIComponent(packId)}/stickers`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  setEmoji: (packId: string, stickerId: string, emoji: string) =>
+    api.patch<StickerPack>(`/stickers/packs/${encodeURIComponent(packId)}/stickers/${encodeURIComponent(stickerId)}`, { emoji }),
+  removeSticker: (packId: string, stickerId: string) =>
+    api.delete<StickerPack>(`/stickers/packs/${encodeURIComponent(packId)}/stickers/${encodeURIComponent(stickerId)}`),
+  install: (id: string) => api.post<StickerPack>(`/stickers/packs/${encodeURIComponent(id)}/install`),
+  uninstall: (id: string) => api.delete(`/stickers/packs/${encodeURIComponent(id)}/install`),
+  /** ZIP набора (WEBP + pack.json) — как Blob, чтобы скачать с авторизацией. */
+  download: (id: string) => api.get<Blob>(`/stickers/packs/${encodeURIComponent(id)}/download`, { responseType: 'blob' }),
+  send: (chatId: string, stickerId: string, clientTempId?: string) =>
+    api.post('/stickers/send', { chatId, stickerId, clientTempId }),
+};
+
+/** Кнопки сообщений ботов и мини-приложения. */
+export const botButtonsApi = {
+  callback: (messageId: string, data: string) => api.post<{ ok: boolean }>('/bots/callback', { messageId, data }),
+  webAppInit: (messageId: string, url: string) =>
+    api.post<{ initData: string; bot: { username: string; name: string } }>('/bots/webapp-init', { messageId, url }),
 };
 
 /** Вид дуэли глазами текущего игрока (чужой флот сервер не отдаёт). */

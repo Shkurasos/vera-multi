@@ -100,3 +100,82 @@ test('remote snapshot with wallpapers replaces local list', async () => {
   assert.equal(store.getState().userWallpapers.global[0].id, 'b');
   assert.equal(store.getState().userPhotoWallpaper, 'global:b');
 });
+
+test('theme snapshot leaves out the shared builtin catalog and derived fields', async () => {
+  const env = setup(null);
+  const store = createStore(() => ({
+    themeId: 5, customThemes: [], settingsByTheme: { 5: { layout: { mobileHeaderStyle: 'island' } } },
+    builtinThemes: new Array(30).fill({ big: 'x'.repeat(1000) }), builtinThemesLoading: false,
+    publishedBuiltinCatalog: {}, themeVersion: 3, theme: { id: 5 },
+  }));
+  env.sync.enableStoreSync('theme', store);
+  await env.sync.initStoreSyncOnLogin('owner');
+  for (const callback of env.timers.values()) await callback();
+  const sent = env.writes[0].data;
+  assert.equal(sent.themeId, 5);
+  assert.equal(sent.settingsByTheme[5].layout.mobileHeaderStyle, 'island');
+  for (const key of ['builtinThemes', 'builtinThemesLoading', 'publishedBuiltinCatalog', 'themeVersion', 'theme']) {
+    assert.ok(!(key in sent), `${key} не уходит на сервер`);
+  }
+});
+
+test('incoming theme keeps local derived fields and runs the store hooks', async () => {
+  const env = setup({ themeId: 9, theme: { id: 'stale-from-server' }, builtinThemes: [] });
+  const local = { themeId: 1, theme: { id: 1 }, builtinThemes: [{ id: 1 }], themeVersion: 0 };
+  const store = createStore(() => local);
+  let after = 0;
+  env.sync.enableStoreSync('theme', store, 800, {
+    snapshot: (d) => ({ ...d, compacted: true }),
+    merge: (current, next) => ({ ...next, merged: current.themeId }),
+    afterRemote: () => { after += 1; assert.equal(env.sync.isStoreSyncReady('theme'), false, 'ещё под гидратацией'); },
+  });
+  assert.equal(env.sync.isStoreSyncReady('theme'), false, 'до входа стор не готов');
+  await env.sync.initStoreSyncOnLogin('owner');
+  const s = store.getState();
+  assert.equal(s.themeId, 9);
+  assert.equal(s.theme.id, 1, 'производная тема не берётся с сервера');
+  assert.equal(s.builtinThemes.length, 1, 'каталог встроенных тем остаётся локальным');
+  assert.equal(s.merged, 1);
+  assert.equal(after, 1);
+  assert.equal(env.sync.isStoreSyncReady('theme'), true);
+  // Снапшот с другого устройства по сокету тоже проходит через hooks.
+  await new Promise((r) => setImmediate(r));
+  env.handlers['store:updated']({ storeName: 'theme', clientId: 'phone', data: { themeId: 12 } });
+  assert.equal(store.getState().themeId, 12);
+  assert.equal(after, 2);
+  store.setState({ themeId: 13 });
+  for (const callback of env.timers.values()) await callback();
+  assert.equal(env.writes.at(-1).data.compacted, true, 'снапшот прошёл через hook');
+  env.sync.disableAllStoreSync();
+  assert.equal(env.sync.isStoreSyncReady('theme'), false);
+});
+
+test('shop wallet polling does not upload a stale snapshot over favorites', async () => {
+  const env = setup(null);
+  const store = createStore(() => ({ owned: { a: true }, balanceVp: 5, favoriteIds: [], colorModes: {} }));
+  env.sync.enableStoreSync('shop', store);
+  await env.sync.initStoreSyncOnLogin('owner');
+  for (const [id, callback] of env.timers) { env.timers.delete(id); await callback(); }
+  const before = env.writes.length;
+  // Опрос кошелька: баланс, владение и пустой set() не должны уходить на сервер.
+  store.setState({ balanceVp: 6 });
+  store.setState({ owned: { a: true, b: true } });
+  store.setState({});
+  assert.equal(env.timers.size, 0, 'запись не запланирована');
+  assert.equal(env.writes.length, before);
+});
+
+test('remote shop snapshot does not undo a favorite that is still being sent', async () => {
+  const env = setup(null);
+  const store = createStore(() => ({ favoriteIds: [], colorModes: {} }));
+  env.sync.enableStoreSync('shop', store);
+  await env.sync.initStoreSyncOnLogin('owner');
+  for (const [id, callback] of env.timers) { env.timers.delete(id); await callback(); }
+  await new Promise((r) => setImmediate(r));
+  store.setState({ favoriteIds: ['a'], colorModes: { a: 'theme' } });
+  env.handlers['store:updated']({ storeName: 'shop', clientId: 'phone', data: { favoriteIds: [], colorModes: {} } });
+  assert.deepEqual(store.getState().favoriteIds, ['a']);
+  assert.equal(store.getState().colorModes.a, 'theme');
+  for (const callback of env.timers.values()) await callback();
+  assert.deepEqual(env.writes.at(-1).data.favoriteIds, ['a']);
+});

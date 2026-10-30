@@ -47,7 +47,7 @@ test('обводка в списке пересчитывается только
 
 test('в сообщениях кольцо остаётся у того, кто его поставил', () => {
   assert.ok(
-    /const ringIdForAvatar = isOwn \? ownRingId : \(sender\?\.activeRing \|\| ''\)/.test(bubble),
+    /const ringIdForAvatar = !skinsShown \? '' : isOwn \? ownRingId : \(sender\?\.activeRing \|\| ''\)/.test(bubble),
     'своё — своё кольцо, чужое — кольцо отправителя',
   );
 });
@@ -58,4 +58,48 @@ test('в профиле кольцо принадлежит тому, чей э�
     /isMe \? ownRing : remoteRing\?\.userId === user\.id \? remoteRing\.id : user\.activeRing/.test(profileModal),
     'в чужом профиле — кольцо этого пользователя',
   );
+});
+
+// ── Настройки отображения: видимость и цвет скинов ─────────────────────────
+
+const settingsStore = read('src/store/userSettingsStore.ts');
+const chatWindow = read('src/components/ChatWindow.tsx');
+
+test('настройки видимости скинов есть в сторе, по умолчанию всё видно, синхронизируются', () => {
+  assert.match(settingsStore, /showOwnSkins: boolean;/);
+  assert.match(settingsStore, /showOthersSkins: boolean;/);
+  assert.match(settingsStore, /othersSkinColor: OthersSkinColor;/);
+  assert.match(settingsStore, /showOwnSkins: true,\s*showOthersSkins: true,\s*othersSkinColor: 'theme',/);
+  const sync = settingsStore.slice(settingsStore.indexOf('const SYNC_KEYS'));
+  for (const k of ['showOwnSkins', 'showOthersSkins', 'othersSkinColor']) {
+    assert.ok(sync.slice(0, sync.indexOf('];')).includes(`'${k}'`), `${k} уходит на другие устройства`);
+  }
+});
+
+test('выключенные скины снимают пузырь, плашку и обводку, но не саму плашку с именем', () => {
+  assert.match(bubble, /const skinsShown = isOwn \? showOwnSkins : showOthersSkins;/);
+  assert.match(bubble, /const selfCardItem = skinsShown \? plaqueItem : undefined;/);
+  assert.match(bubble, /const bubbleItem = skinsShown \? findShopItem\('bubbleStyle'/);
+  assert.match(bubble, /const ringIdForAvatar = !skinsShown \? '' : isOwn/);
+  // Плашка с именем зависит от наличия скина у отправителя, а не от видимости:
+  // иначе выключение скинов меняло бы подпись над сообщением.
+  assert.match(bubble, /const hasPlaque = isOwn \|\| !!plaqueItem;/);
+  assert.match(bubble, /\{!isDeleting && hasPlaque && isGroupStart &&/);
+  // Кастомные предметы авторов тоже скрываются.
+  assert.match(bubble, /const ownCustomShown = isOwn && showOwnSkins;/);
+  assert.ok(!/isOwn && custom(Bubble|Selfcard|Profile)Spec/.test(bubble), 'кастом проверяет ownCustomShown');
+});
+
+test('чужие скины — под мою тему или стоковые, свои — как выбрал владелец', () => {
+  assert.match(bubble, /isOwn \? ownColorModes\[id\] === 'theme' : othersSkinColor !== 'stock'/);
+  assert.match(profileModal, /isMe \? colorModes\[ringItem\.id\] === 'theme' : othersSkinColor !== 'stock'/);
+  assert.match(profileModal, /const ringShown = isMe \? showOwnSkins : showOthersSkins;/);
+});
+
+test('переключатели стоят в диалоге «Настройки отображения»', () => {
+  const dlg = chatWindow.slice(chatWindow.indexOf('Диалог настроек отображения'));
+  const body = dlg.slice(0, dlg.indexOf('</DialogContent>'));
+  assert.match(body, /set\('showOwnSkins', e\.target\.checked\)/);
+  assert.match(body, /set\('showOthersSkins', e\.target\.checked\)/);
+  assert.match(body, /set\('othersSkinColor', e\.target\.checked \? 'theme' : 'stock'\)/);
 });

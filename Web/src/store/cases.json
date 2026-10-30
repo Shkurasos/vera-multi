@@ -16,7 +16,7 @@
       "r-uncommon",
       "r-cult"
     ],
-    "price": 20,
+    "price": 100,
     "rewards": [
       {
         "key": "shadow",
@@ -60,7 +60,7 @@
       },
       {
         "key": "pet-cat",
-        "weight": 1
+        "weight": 0.008810088100881009
       }
     ]
   },

@@ -5,20 +5,22 @@ import {
   Menu, MenuItem, Tooltip, LinearProgress, Popover,
   Dialog, DialogTitle, DialogContent, DialogActions, Button,
   Slider, Divider as MuiDivider, Snackbar, Alert, Checkbox, FormControlLabel,
+  Drawer, useMediaQuery,
   createTheme, ThemeProvider, useTheme as useMuiTheme,
 } from '@mui/material';
 import {
   Send, Send as SendIcon, AttachFile, MoreVert, Search,
   EmojiEmotions, InfoOutlined, Close, PushPin, Reply as ReplyIcon, Edit as EditIcon,
   Call, Videocam, NotificationsOff, NotificationsActive,
-  FormatSize, ExitToApp, ChevronLeft, Palette, KeyboardArrowDown, KeyboardArrowUp,
+  FormatSize, ExitToApp, ArrowBack, Palette, KeyboardArrowDown, KeyboardArrowUp,
   // Send и RestartAlt есть в шиме иконок (mui-icons-shim); Handshake там нет.
   RestartAlt, AutoAwesome,
+  Image as GalleryIcon, MusicNote, Description, PhotoCamera,
 } from '@mui/icons-material';
 import HowToVote from '@mui/icons-material/HowToVote';
 import { CallModal } from './CallModal';
 import { useCallStore } from '../store/callStore';
-import { useChatStore } from '../store/chatStore';
+import { useChatStore, isDraftChatId, draftDirectUserId } from '../store/chatStore';
 import { useChatPrefsStore } from '../store/chatPrefsStore';
 import { useChatSoundStore } from '../store/chatSoundStore';
 import NotificationSettingsDialog from './NotificationSettingsDialog';
@@ -38,8 +40,10 @@ import { hasGroupRight } from '../services/groupPermissions';
 import { Delete, Forward } from '@mui/icons-material';
 import { useChatFontStore, STOCK_FONTS } from '../store/chatFontStore';
 import { sendTypingStart, sendTypingStop, getSocket } from '../services/socket';
-import { chatsApi, filesApi, languageApi, messagesApi, warshipsApi } from '../services/api';
+import { chatsApi, filesApi, languageApi, messagesApi, stickersApi, usersApi, warshipsApi, type Sticker } from '../services/api';
 import MessageBubble from './MessageBubble';
+import StickerPicker from './StickerPicker';
+import BotCommandsMenu from './BotCommandsMenu';
 import { externalSiteUrl } from '../utils/externalSite';
 import ExternalSiteDialog from './ExternalSiteDialog';
 import HoldRecorder from './HoldRecorder';
@@ -73,6 +77,7 @@ import { isDeskChat, isWhiteboardChat } from '../utils/deskBoard';
 import { parseTimeCommand, formatDelay, TIME_USAGE } from '../utils/timeCommand';
 import { useClockLayout } from '../store/wallClockLayout';
 import { playDefaultChime } from '../utils/notificationSound';
+import { useAvatarFill } from '../hooks/useAvatarColor';
 
 // Крупные разные тайлы не дают SVG-паттернам превращаться в мелкую сетку.
 function patternBackgroundSize(pattern?: string, min = 860, max = 1400): string | undefined {
@@ -188,6 +193,19 @@ const EMPTY_TYPING_LIST: string[] = [];
 // Окно растёт шагами RENDER_STEP заранее — за PREFETCH_AHEAD_MESSAGES
 // сообщений до верха (см. utils/messagePagination).
 const RENDER_CHUNK = 80;
+// Первое окно рендера на телефоне меньше: 80 тяжёлых пузырей (медиа, скины,
+// реакции) при открытии чата давали заметный лаг. Остальное догружается
+// при прокрутке вверх тем же механизмом maybePrefetchOlder.
+const RENDER_CHUNK_PHONE = 30;
+// Мобильная шапка: фиксированные цвета, не зависят от темы (всегда читается).
+const MOBILE_HEADER_H = 56;
+const MOBILE_HEADER_BG = '#17181D';
+const MOBILE_HEADER_TEXT = '#FFFFFF';
+const MOBILE_HEADER_TEXT_SEC = 'rgba(255,255,255,0.62)';
+// Высота полосы «острова» без выреза: 6 сверху + 46 пилюля + 6 снизу.
+// Лента получает такой отступ сверху, чтобы первое сообщение не пряталось.
+const ISLAND_STRIP_H = 58;
+const ISLAND_STRIP_CSS = `calc(${ISLAND_STRIP_H}px + env(safe-area-inset-top))`;
 
 interface ChatWindowProps {
   onPlayerHost: (node: HTMLDivElement | null) => void;
@@ -215,6 +233,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     (s) => (activeChat && activeChat.id !== id ? s.messages[activeChat.id] : undefined),
   );
   const setActiveChat = useChatStore((s) => s.setActiveChat);
+  const draftChat = useChatStore((s) => s.draftChat);
+  const materializeDraft = useChatStore((s) => s.materializeDraft);
   const updateChatList = useChatStore((s) => s.updateChatList);
   const sendMessage = useChatStore((s) => s.sendMessage);
   const editMessage = useChatStore((s) => s.editMessage);
@@ -240,6 +260,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     ? activeChat?.members?.find((m) => m.userId !== user?.id)?.user?.id
     : undefined;
   const partnerOnline = useChatStore((s) => (partnerUserId ? s.onlineUsers.has(partnerUserId) : false));
+  // Аватарка без фото: личка — цвет собеседника, группа — цвет чата.
+  const headerAvatarFill = useAvatarFill(partnerUserId || activeChat?.id);
   const chatBgBrightness = useChatBgPrefsStore((s) => id ? s.getBrightness(id) : s.defaultBrightness);
   const setBgBrightness = useChatBgPrefsStore((s) => s.setBrightness);
   const getChatWallpaper = useChatBgPrefsStore((s) => s.getChatWallpaper);
@@ -263,6 +285,10 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const globalFontFamily = useUserSettingsStore((s) => s.globalFontFamily);
   // Плашка даты в ленте: слева / по центру / справа. Неизвестное значение — по центру.
   const chatDateAlign = useUserSettingsStore((s) => s.chatDateAlign);
+  // Видимость скинов (диалог «Настройки отображения»).
+  const showOwnSkins = useUserSettingsStore((s) => s.showOwnSkins !== false);
+  const showOthersSkins = useUserSettingsStore((s) => s.showOthersSkins !== false);
+  const othersSkinColor = useUserSettingsStore((s) => s.othersSkinColor);
   const dateJustify = chatDateAlign === 'left' ? 'flex-start' : chatDateAlign === 'right' ? 'flex-end' : 'center';
   const layoutBubbleEnabled = useUserSettingsStore((s) => s.layout.bubbleEnabled);
   const layoutBubbleTextSize = useUserSettingsStore((s) => s.layout.bubbleTextSize);
@@ -326,6 +352,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const [dragOver, setDragOver] = useState(false);
   const [profileUser, setProfileUser] = useState<User | null>(null);
   const [emojiAnchor, setEmojiAnchor] = useState<null | HTMLElement>(null);
+  const [pickerTab, setPickerTab] = useState<'emoji' | 'stickers'>('emoji');
+  const [stickerSending, setStickerSending] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [serverSearchResults, setServerSearchResults] = useState<Message[]>([]);
@@ -395,6 +423,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   // перерисовывало всё окно чата.
   const chatHeaderPos = useUserSettingsStore((s) => s.layout.chatHeaderPos);
   const chatInputPos = useUserSettingsStore((s) => s.layout.chatInputPos);
+  // «Остров» — плавающие стеклянные кнопки поверх обоев; иначе сплошная полоса.
+  const mobileIsland = useUserSettingsStore((s) => s.layout.mobileHeaderStyle) === 'island';
   // Плашки «Ответ» / «Редактирование» / вложения: строка ввода стоит на order 4
   // (или 1, если её подняли наверх), лента на 2. Order 3 ставит плашки ровно
   // между лентой и вводом; при вводе сверху они идут сразу перед ним.
@@ -407,6 +437,20 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTypingStart = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Телефон: скрепка открывает меню вложений (как в Telegram). У каждого
+  // пункта свой input: accept="image/*,video/*" открывает системную галерею,
+  // capture — камеру, а accept="*/*" — файловый менеджер.
+  const [attachSheetOpen, setAttachSheetOpen] = useState(false);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
+  const cameraPhotoInputRef = useRef<HTMLInputElement>(null);
+  const cameraVideoInputRef = useRef<HTMLInputElement>(null);
+  // noSsr: без него первый рендер всегда false, и чат открывался бы с окном 80.
+  const isPhone = useMediaQuery('(max-width: 700px)', { noSsr: true });
+  const pickAttachment = (ref: React.RefObject<HTMLInputElement>) => {
+    setAttachSheetOpen(false);
+    ref.current?.click();
+  };
   const chatBgInputRef = useRef<HTMLInputElement>(null);
   const liveBgInputRef = useRef<HTMLInputElement>(null);
   const [liveBgUrl, setLiveBgUrl] = useState<string | null>(null);
@@ -459,7 +503,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   // При скролле вверх порция растёт заранее, позиция сохраняется якорем
   // (scrollAnchorRef): первое отрисованное сообщение остаётся на том же
   // месте экрана, сколько бы контента ни добавилось над ним.
-  const [renderLimit, setRenderLimit] = useState(RENDER_CHUNK);
+  const firstChunk = isPhone ? RENDER_CHUNK_PHONE : RENDER_CHUNK;
+  const [renderLimit, setRenderLimit] = useState(firstChunk);
   const scrollAnchorRef = useRef<{ id: string; top: number } | null>(null);
   // Метка времени последнего тика часов: ограничивает частоту пересчёта
   // отодвижения при прокрутке.
@@ -472,7 +517,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const [renderLimitChatId, setRenderLimitChatId] = useState(id);
   if (renderLimitChatId !== id) {
     setRenderLimitChatId(id);
-    setRenderLimit(RENDER_CHUNK);
+    setRenderLimit(firstChunk);
   }
   useEffect(() => { scrollAnchorRef.current = null; }, [id]);
   const loadOlderMessages = useChatStore((s) => s.loadOlderMessages);
@@ -626,9 +671,22 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       draftRevisionRef.current += 1;
       setLanguageCorrectionBusy(false);
       setLanguageCorrectionExplanation('');
-      const chat = chats.find((c) => c && c.id === id);
+      const chat = chats.find((c) => c && c.id === id)
+        || (draftChat?.id === id ? draftChat : undefined);
       if (chat) {
         setActiveChat(chat);
+      } else if (isDraftChatId(id)) {
+        // Черновик лички после перезагрузки: собираем его заново по userId.
+        // Если личка с этим человеком уже есть — уходим в неё.
+        const targetUserId = draftDirectUserId(id)!;
+        const openDraft = () => usersApi.getById(targetUserId).then(({ data }) => {
+          if (activeChatIdRef.current !== id) return;
+          const opened = useChatStore.getState().openDirectDraft(data as User);
+          setActiveChat(opened);
+          if (opened.id !== id) navigate(`/chat/${opened.id}`, { replace: true });
+        });
+        (chats.length ? openDraft() : useChatStore.getState().loadChats().then(openDraft))
+          .catch(() => setChatNotFound(true));
       } else {
         // chats not loaded yet — load them first
         useChatStore.getState().loadChats().then(() => {
@@ -868,6 +926,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     };
     container.addEventListener('wheel', stopSmoothScroll, { passive: true });
     container.addEventListener('touchstart', stopSmoothScroll, { passive: true });
+    container.addEventListener('touchstart', markIntent, { passive: true });
     container.addEventListener('wheel', markIntent, { passive: true });
     container.addEventListener('touchmove', markIntent, { passive: true });
     container.addEventListener('pointerdown', onPointerDown, { passive: true });
@@ -877,6 +936,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     return () => {
       container.removeEventListener('wheel', stopSmoothScroll);
       container.removeEventListener('touchstart', stopSmoothScroll);
+      container.removeEventListener('touchstart', markIntent);
       container.removeEventListener('wheel', markIntent);
       container.removeEventListener('touchmove', markIntent);
       container.removeEventListener('pointerdown', onPointerDown);
@@ -908,7 +968,12 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       // Пока идёт плавный твин вниз — не перехватываем позицию мгновенно,
       // иначе effect (1) рывком отменял бы анимацию из effect (2).
       if (smoothScrollActiveRef.current) return;
-      try { messagesEndRef.current?.scrollIntoView({ block: 'end' }); } catch {}
+      // Палец/колесо на ленте — пользователь листает сам. Раньше пин срабатывал
+      // каждый кадр и возвращал ленту вниз, пока свайп не набирал 40 px.
+      if (hasUserScrollIntent()) return;
+      // Пишем scrollTop только если низ действительно ушёл: запись на каждом
+      // кадре (плюс scrollIntoView) форсировала layout и тормозила открытие.
+      if (container.scrollHeight - container.clientHeight - container.scrollTop <= 1) return;
       container.scrollTop = container.scrollHeight;
     };
 
@@ -1006,6 +1071,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       raf = requestAnimationFrame(() => {
         raf = 0;
         if (!atBottomRef.current || smoothScrollActiveRef.current) return;
+        if (hasUserScrollIntent()) return;
         if (messagesContainerRef.current !== container) return;
         container.scrollTop = container.scrollHeight;
       });
@@ -1114,8 +1180,10 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
       // Прилипаем к низу всегда, отлипаем — только по жесту пользователя.
       // Программные сдвиги (scroll anchoring, рост медиа) низ не отменяют.
-      if (distanceFromBottom < 40) atBottomRef.current = true;
-      else if (hasUserScrollIntent()) atBottomRef.current = false;
+      // При жесте отлипаем сразу (> 2 px), иначе короткий свайп вверх
+      // не набирал 40 px и пин возвращал ленту обратно.
+      if (hasUserScrollIntent()) atBottomRef.current = distanceFromBottom <= 2;
+      else if (distanceFromBottom < 40) atBottomRef.current = true;
       setShowScrollButton(distanceFromBottom > 200 && !atBottomRef.current);
 
       // Сообщения, перекрывающие часы, должны отодвигаться и при прокрутке:
@@ -1205,6 +1273,57 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     return activeChat.members?.find((m) => m.userId !== user?.id)?.user || null;
   };
 
+  // Защита от двойного Enter, пока черновик лички превращается в настоящий чат.
+  const materializingRef = useRef(false);
+
+  // Собеседник-бот: над полем ввода показываем меню его команд.
+  const partnerUser = getPartnerUser();
+  const botPartner = partnerUser?.isBot ? partnerUser : null;
+
+  // Команда из меню бота уходит сразу, как в Telegram; набранный текст не трогаем.
+  const handleBotCommand = async (command: string) => {
+    if (!id || blockReadOnly || materializingRef.current) return;
+    const message = '/' + command;
+    try {
+      if (isDraftChatId(id)) {
+        materializingRef.current = true;
+        try {
+          const realId = (await materializeDraft(id)).id;
+          navigate(`/chat/${realId}`, { replace: true });
+          await sendMessage(realId, message);
+        } finally {
+          materializingRef.current = false;
+        }
+        return;
+      }
+      // Строка «/команда» без своего текста — это и была команда: очищаем поле.
+      if (/^\/[a-z0-9_]*$/i.test(text)) { setText(''); clearDraft(id); }
+      await sendMessage(id, message);
+    } catch (e: any) {
+      setToast({ message: e?.response?.data?.message || 'Не удалось отправить команду', severity: 'error' });
+    }
+  };
+
+  // Стикер из панели: черновик лички сначала превращаем в настоящий чат.
+  const handleSendSticker = async (sticker: Sticker) => {
+    if (!id || blockReadOnly || stickerSending) return;
+    setStickerSending(true);
+    try {
+      let chatId = id;
+      if (isDraftChatId(id)) {
+        chatId = (await materializeDraft(id)).id;
+        navigate(`/chat/${chatId}`, { replace: true });
+      }
+      const res = await stickersApi.send(chatId, sticker.id);
+      useChatStore.getState().replaceOrAddMessage(res.data);
+      setEmojiAnchor(null);
+    } catch (e: any) {
+      setToast({ message: e?.response?.data?.message || 'Не удалось отправить стикер', severity: 'error' });
+    } finally {
+      setStickerSending(false);
+    }
+  };
+
   const handleSend = async () => {
     if (blockReadOnly || uploading) return;
     // ── Режим правки: Enter/кнопка сохраняют изменение вместо отправки ──
@@ -1233,6 +1352,32 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       return;
     }
     if ((!text.trim() && pendingFiles.length === 0) || !id) return;
+    // ── Черновик лички (открыт из поиска по @username): первое сообщение
+    // создаёт чат на сервере, и только тогда он появляется в списке чатов. ──
+    if (isDraftChatId(id)) {
+      if (materializingRef.current) return;
+      materializingRef.current = true;
+      const draftId = id;
+      const msg = text.trim();
+      const files = pendingFiles;
+      try {
+        let realId: string;
+        try {
+          realId = (await materializeDraft(draftId)).id;
+        } catch (e: any) {
+          setToast({ message: e?.response?.data?.message || 'Не удалось начать чат', severity: 'error' });
+          return;
+        }
+        setText(''); clearDraft(draftId);
+        // Сначала уходим на настоящий id: окно читает сообщения по id из URL.
+        navigate(`/chat/${realId}`, { replace: true });
+        if (files.length) await uploadAndSendFiles(files, msg, realId);
+        else if (msg) await sendMessage(realId, msg);
+      } finally {
+        materializingRef.current = false;
+      }
+      return;
+    }
     // ── /time ЧЧ:ММ:СС "текст": отложенная отправка, срок держит сервер ──
     const timeCommand = parseTimeCommand(text);
     if (timeCommand) {
@@ -1340,7 +1485,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
     setLanguageCorrectionExplanation('');
     setText(value);
     if (id) setDraft(id, value); // Сохраняем черновик при каждом изменении
-    if (!id) return;
+    // Черновика лички на сервере нет — «печатает…» слать некуда.
+    if (!id || isDraftChatId(id)) return;
     try {
       // Раньше typing:start уходил на КАЖДЫЙ символ — собеседник получал
       // десятки событий в секунду и столько же ререндеров своего окна чата.
@@ -1443,8 +1589,10 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   };
 
   // Загрузить массив File[] и отправить ОДНИМ сообщением-«альбомом» (как в ВК).
-  const uploadAndSendFiles = async (files: File[], caption = '') => {
-    if (blockReadOnly || !files.length || !id) return;
+  // targetChatId — когда чат только что создан из черновика и id в URL ещё старый.
+  const uploadAndSendFiles = async (files: File[], caption = '', targetChatId?: string) => {
+    const chatId = targetChatId || id;
+    if (blockReadOnly || !files.length || !chatId) return;
     setUploading(true); setUploadProgress(0);
     let allUploaded = false;
     try {
@@ -1470,7 +1618,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       if (uploaded.every(a => (a.mimeType || '').startsWith('image/'))) msgType = 'photo';
       else if (uploaded.every(a => (a.mimeType || '').startsWith('video/'))) msgType = 'video';
       else if (uploaded.every(a => (a.mimeType || '').startsWith('audio/'))) msgType = 'audio';
-      await sendMessageWithFile(id, uploaded, activeChat?.type === 'channel' ? undefined : replyTo?.id, msgType, caption);
+      await sendMessageWithFile(chatId, uploaded, activeChat?.type === 'channel' ? undefined : replyTo?.id, msgType, caption);
       allUploaded = true;
       setReplyTo(null);
     } catch (err) {
@@ -1484,7 +1632,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       // Текст и файлы не теряем: возвращаем подпись в поле ввода.
       if (caption && !textRef.current) {
         setText(caption);
-        if (id) setDraft(id, caption);
+        if (chatId) setDraft(chatId, caption);
       }
     } finally {
       setUploading(false); setUploadProgress(0);
@@ -1855,23 +2003,33 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   // Подпись под именем — общая для мобильной и десктопной шапки.
   const statusText = typingList.length > 0
     ? 'печатает...'
-    : partnerOnline
-      ? 'в сети'
-      : activeChat.type === 'group'
-        ? `${activeChat.members?.length || 0} участников`
-        : '';
+    : getPartnerUser()?.isBot
+      ? 'бот'
+      : partnerOnline
+        ? 'в сети'
+        : activeChat.type === 'group'
+          ? `${activeChat.members?.length || 0} участников`
+          : '';
   const statusColor = typingList.length > 0 ? theme.accent
     : partnerOnline ? theme.online
     : theme.textSec;
-  // «Стеклянная» подложка элементов мобильной шапки (кнопка, пилюля).
-  const mobileHeaderGlassSx = {
-    bgcolor: (theme.bgHeader || '#1c1c1e') + 'D0',
-    backdropFilter: 'blur(24px) saturate(1.4)',
-    WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
+  // Непрозрачная подложка элементов «острова» (кнопка, пилюля, аватар).
+  // Цвет шапки темы кладём поверх сплошного тёмного: даже если в теме
+  // bgHeader полупрозрачный, сквозь кнопки сообщения не просвечивают.
+  const islandSolidSx = {
+    bgcolor: MOBILE_HEADER_BG,
+    backgroundImage: `linear-gradient(${theme.bgHeader || MOBILE_HEADER_BG}, ${theme.bgHeader || MOBILE_HEADER_BG})`,
     border: `1px solid ${theme.border}`,
-    boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
-    '&:hover': { bgcolor: (theme.bgHeader || '#1c1c1e') + 'E6' },
+    boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+    pointerEvents: 'auto',
+    '&:hover': {
+      bgcolor: MOBILE_HEADER_BG,
+      backgroundImage: `linear-gradient(${theme.bgHover}, ${theme.bgHover}), linear-gradient(${theme.bgHeader || MOBILE_HEADER_BG}, ${theme.bgHeader || MOBILE_HEADER_BG})`,
+    },
   } as const;
+  // Плашки поиска/закрепа/загрузки стоят в потоке под шапкой: с «островом»
+  // им нужна прокладка, иначе они уедут под плавающие кнопки.
+  const islandBarsShown = mobileIsland && (showSearch || !!(activeChat && currentPinned) || uploading);
   const isLightTheme = (() => {
     const m = String(theme.bg).match(/#([0-9a-f]{6})/i);
     if (!m) return false;
@@ -2056,17 +2214,30 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             </Typography>
           </Box>
         )}
-        {/* ── Мобильная шапка: круглая «назад» слева, «пилюля» с именем и
-            статусом по центру, круглая аватарка справа. Без сплошной плашки —
-            элементы «плавают» над обоями. Тап по пилюле открывает меню «Ещё»
-            (там же поиск и информация о чате), тап по аватарке — профиль. ── */}
+        {/* ── Мобильная шапка (как в Telegram): сплошная тёмная полоса со
+            стрелкой «назад», аватаркой, именем/статусом и поиском. Цвета
+            фиксированные — не зависят от темы, поэтому шапка одинаково
+            читается и в светлых, и в тёмных темах. Тап по имени открывает
+            меню «Ещё», по аватарке — профиль/информацию о чате.
+            Вариант «Остров» (настройка «Макет → Шапка чата на телефоне»):
+            круглая «назад», пилюля с именем и круглая аватарка — сплошные
+            кнопки, а полоса под ними прозрачная и висит поверх ленты:
+            сквозь неё видны сообщения и аватарки. ── */}
+        {mobileIsland ? (
         <Box sx={{
           display: { xs: 'grid', md: 'none' },
           gridTemplateColumns: '44px minmax(0, 1fr) 44px',
-          alignItems: 'center', columnGap: 0.5,
+          alignItems: 'center', columnGap: 0.75,
           px: 1, pt: 'calc(6px + env(safe-area-inset-top))', pb: 0.75,
+          height: ISLAND_STRIP_CSS,
+          boxSizing: 'border-box',
+          // Поверх ленты, а не в потоке: сообщения прокручиваются под
+          // полосой. Сама полоса пропускает тапы и прокрутку насквозь,
+          // ловят их только кнопки (pointerEvents: 'auto' в islandSolidSx).
           position: 'absolute', top: 0, left: 0, right: 0,
           zIndex: 4,
+          bgcolor: 'transparent',
+          pointerEvents: 'none',
         }}>
           <IconButton
             aria-label="К списку чатов"
@@ -2074,13 +2245,9 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
               setExiting(true);
               setTimeout(() => navigate('/'), 220);
             }}
-            sx={{
-              ...mobileHeaderGlassSx,
-              width: 44, height: 44, borderRadius: '50%', p: 0,
-              color: theme.text,
-            }}
+            sx={{ ...islandSolidSx, width: 44, height: 44, borderRadius: '50%', p: 0, color: theme.text }}
           >
-            <ChevronLeft sx={{ fontSize: 30 }} />
+            <ArrowBack sx={{ fontSize: 24 }} />
           </IconButton>
           <Box
             component="button"
@@ -2089,11 +2256,11 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             aria-haspopup="menu"
             onClick={(e: React.MouseEvent<HTMLElement>) => setAnchorEl(e.currentTarget)}
             sx={{
-              ...mobileHeaderGlassSx,
+              ...islandSolidSx,
               justifySelf: 'center', maxWidth: '100%', minWidth: 0,
-              display: 'flex', flexDirection: 'column', alignItems: 'center',
-              px: 2.5, py: 0.5, minHeight: 46, justifyContent: 'center',
-              borderRadius: 999, cursor: 'pointer', font: 'inherit',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              px: 2.5, py: 0.5, minHeight: 46, boxSizing: 'border-box',
+              borderRadius: 999, cursor: 'pointer', font: 'inherit', color: theme.text,
               '&:focus-visible': { outline: `2px solid ${theme.accent}`, outlineOffset: 2 },
             }}
           >
@@ -2113,15 +2280,89 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             aria-label="Открыть профиль"
             sx={{
               width: 44, height: 44, fontSize: 15,
-              bgcolor: theme.accent + '60',
+              ...headerAvatarFill,
               cursor: 'pointer',
+              pointerEvents: 'auto',
               border: `1px solid ${theme.border}`,
-              boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
             }}
           >
             {getInitials(chatName)}
           </Avatar>
         </Box>
+        ) : (
+        <Box sx={{
+          display: { xs: 'flex', md: 'none' },
+          alignItems: 'center', gap: 0.5,
+          px: 0.5, pt: 'env(safe-area-inset-top)',
+          height: `calc(${MOBILE_HEADER_H}px + env(safe-area-inset-top))`,
+          boxSizing: 'border-box', flexShrink: 0,
+          // В потоке (а не absolute): поиск, закреп и лента встают под шапкой.
+          position: 'relative', order: 0,
+          zIndex: 4,
+          bgcolor: MOBILE_HEADER_BG,
+          borderBottom: '1px solid rgba(255,255,255,0.08)',
+          boxShadow: '0 2px 10px rgba(0,0,0,0.35)',
+          color: MOBILE_HEADER_TEXT,
+        }}>
+          <IconButton
+            aria-label="К списку чатов"
+            onClick={() => {
+              setExiting(true);
+              setTimeout(() => navigate('/'), 220);
+            }}
+            sx={{ width: 44, height: 44, color: MOBILE_HEADER_TEXT, flexShrink: 0 }}
+          >
+            <ArrowBack sx={{ fontSize: 26 }} />
+          </IconButton>
+          <Avatar
+            src={chatAvatar || undefined}
+            onClick={handleAvatarClick}
+            role="button"
+            aria-label="Открыть профиль"
+            sx={{
+              width: 40, height: 40, fontSize: 15, flexShrink: 0,
+              ...headerAvatarFill,
+              cursor: 'pointer',
+            }}
+          >
+            {getInitials(chatName)}
+          </Avatar>
+          <Box
+            component="button"
+            type="button"
+            aria-label={`${chatName}${statusText ? `, ${statusText}` : ''}. Открыть меню чата`}
+            aria-haspopup="menu"
+            onClick={(e: React.MouseEvent<HTMLElement>) => setAnchorEl(e.currentTarget)}
+            sx={{
+              flex: 1, minWidth: 0, ml: 0.75,
+              display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center',
+              height: 48, p: 0, border: 0, bgcolor: 'transparent', color: 'inherit',
+              cursor: 'pointer', font: 'inherit', textAlign: 'left',
+              '&:focus-visible': { outline: '2px solid #8AB4FF', outlineOffset: 2, borderRadius: 1 },
+            }}
+          >
+            <Typography noWrap sx={{ fontWeight: 600, fontSize: 17, lineHeight: 1.25, color: MOBILE_HEADER_TEXT, maxWidth: '100%' }}>
+              {chatName}
+            </Typography>
+            {statusText && (
+              <Typography noWrap sx={{
+                fontSize: 13, lineHeight: 1.25, maxWidth: '100%',
+                color: typingList.length > 0 ? '#8AB4FF' : partnerOnline ? '#6FD38C' : MOBILE_HEADER_TEXT_SEC,
+              }}>
+                {statusText}
+              </Typography>
+            )}
+          </Box>
+          <IconButton
+            aria-label="Поиск по чату"
+            onClick={() => { setShowSearch(true); setSearchQuery(''); }}
+            sx={{ width: 44, height: 44, color: MOBILE_HEADER_TEXT, flexShrink: 0 }}
+          >
+            <Search sx={{ fontSize: 26 }} />
+          </IconButton>
+        </Box>
+        )}
 
         {/* ── Header ── */}
         <Box sx={{
@@ -2144,7 +2385,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             onClick={handleAvatarClick}
             sx={{
               width: { xs: 40, md: 46 }, height: { xs: 40, md: 46 }, fontSize: { xs: 15, md: 17 },
-              bgcolor: theme.accent + '60',
+              ...headerAvatarFill,
               cursor: 'pointer',
               border: `2px solid ${theme.accent}40`,
               '&:hover': { border: `2px solid ${theme.accent}`, opacity: 0.9 },
@@ -2506,6 +2747,34 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
 
               <MuiDivider sx={{ borderColor: theme.border, my: 2 }} />
 
+              {/* Скины: только у меня на экране, во всех чатах */}
+              <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5, fontWeight: 600 }}>
+                Скины в сообщениях
+              </Typography>
+              <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 1 }}>
+                Действует во всех чатах и только у вас на экране. Скрывается оформление
+                пузыря, плашки с именем и обводки аватара; сама плашка с именем остаётся.
+              </Typography>
+              <FormControlLabel
+                sx={{ display: 'flex', color: theme.text, m: 0 }}
+                control={<Checkbox size="small" checked={showOwnSkins}
+                  onChange={(e) => useUserSettingsStore.getState().set('showOwnSkins', e.target.checked)} />}
+                label="Показывать мои скины"
+              />
+              <FormControlLabel
+                sx={{ display: 'flex', color: theme.text, m: 0 }}
+                control={<Checkbox size="small" checked={showOthersSkins}
+                  onChange={(e) => useUserSettingsStore.getState().set('showOthersSkins', e.target.checked)} />}
+                label="Показывать скины собеседников"
+              />
+              <FormControlLabel
+                sx={{ display: 'flex', color: theme.text, m: 0, pl: 3.5 }}
+                disabled={!showOthersSkins}
+                control={<Checkbox size="small" checked={othersSkinColor !== 'stock'}
+                  onChange={(e) => useUserSettingsStore.getState().set('othersSkinColor', e.target.checked ? 'theme' : 'stock')} />}
+                label="Чужие скины под цвет моей темы (без галочки — стоковые цвета)"
+              />
+
             </DialogContent>
             <DialogActions sx={{ px: 3, pb: 2 }}>
               <Button onClick={() => setShowDisplaySettings(false)}
@@ -2515,6 +2784,11 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             </DialogActions>
           </Dialog>
         </Box>
+
+        {/* Прокладка под «островом» для плашек поиска/закрепа/загрузки. */}
+        {islandBarsShown && (
+          <Box aria-hidden sx={{ display: { xs: 'block', md: 'none' }, height: ISLAND_STRIP_CSS, flexShrink: 0, order: 1 }} />
+        )}
 
         {/* ── Поиск по чату ── */}
         {showSearch && (
@@ -2659,7 +2933,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             sx={{
               flex: 1, minHeight: 0,
               display: 'flex', flexDirection: 'column',
-              pt: { xs: 'calc(60px + env(safe-area-inset-top))', md: 0 },
+              pt: { xs: mobileIsland && !islandBarsShown ? ISLAND_STRIP_CSS : 0, md: 0 },
               animation: exiting ? `chatExit 220ms ${motion.easeOut} forwards` : 'none',
               '@keyframes chatExit': chatExit,
             }}
@@ -2671,7 +2945,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             sx={{
               flex: 1, minHeight: 0,
               display: 'flex', flexDirection: 'column',
-              pt: { xs: 'calc(60px + env(safe-area-inset-top))', md: 0 },
+              pt: { xs: mobileIsland && !islandBarsShown ? ISLAND_STRIP_CSS : 0, md: 0 },
               // Своя стопка ниже мобильной шапки (zIndex 4): плавающие панели
               // доски не перекроют стрелку «назад».
               position: 'relative', zIndex: 1,
@@ -2698,7 +2972,9 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           willChange: 'scroll-position',
           WebkitOverflowScrolling: 'touch', touchAction: 'pan-y',
           px: { xs: 1, md: 2.5 }, py: { xs: 1.25, md: 2 },
-          pt: { xs: 'calc(72px + env(safe-area-inset-top))', md: 0 },
+          // С «островом» лента начинается под самым верхом экрана, а первое
+          // сообщение отодвигаем на высоту полосы — дальше оно уезжает под неё.
+          pt: { xs: mobileIsland && !islandBarsShown ? `calc(${ISLAND_STRIP_CSS} + 10px)` : 1.25, md: 0 },
           pb: { xs: 'calc(1.25rem + env(safe-area-inset-bottom))', md: 2 },
           backgroundImage: theme.chatPattern,
           backgroundSize: patternBackgroundSize(theme.chatPattern, theme.chatPatternSizeMin, theme.chatPatternSizeMax),
@@ -2723,7 +2999,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
               role="status"
               aria-label="Загрузка старых сообщений"
               sx={{
-                position: 'sticky', top: 8, height: 0, zIndex: 3,
+                position: 'sticky', height: 0, zIndex: 3,
+                top: { xs: mobileIsland && !islandBarsShown ? `calc(${ISLAND_STRIP_CSS} + 8px)` : 8, md: 8 },
                 display: 'flex', justifyContent: 'center', overflow: 'visible', pointerEvents: 'none',
               }}
             >
@@ -3125,13 +3402,23 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
               <IconButton aria-label="Создать опрос" onClick={() => setPollOpen(true)} disabled={uploading} sx={{ width: 42, height: 42, bgcolor: theme.bgInput, color: theme.textSec, flexShrink: 0, '&:hover': { bgcolor: theme.bgHover, color: theme.text } }}><HowToVote sx={{ fontSize: 21 }} /></IconButton>
             </Tooltip>
           )}
+          {botPartner?.username && (
+            <BotCommandsMenu
+              username={botPartner.username}
+              text={text}
+              theme={theme}
+              disabled={blockReadOnly || uploading || !!editing}
+              onPick={(command) => { void handleBotCommand(command); }}
+            />
+          )}
           {/* Кнопка скрепки */}
           <Tooltip title="Прикрепить файл">
             <span style={{ display: 'inline-flex', flexShrink: 0 }}>
               <IconButton
                 disabled={uploading}
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => (isPhone ? setAttachSheetOpen(true) : fileInputRef.current?.click())}
                 aria-label="Прикрепить файл"
+                aria-haspopup={isPhone ? 'dialog' : undefined}
                 sx={{
                   width: 42, height: 42,
                   bgcolor: theme.bgInput,
@@ -3157,6 +3444,78 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
               display: 'none',
             }}
           />
+          {/* Входы меню вложений на телефоне: галерея, музыка, камера. */}
+          <input ref={galleryInputRef} type="file" multiple accept="image/*,video/*"
+            disabled={uploading} onChange={handleFileUpload} style={{ display: 'none' }} />
+          <input ref={audioInputRef} type="file" multiple accept="audio/*"
+            disabled={uploading} onChange={handleFileUpload} style={{ display: 'none' }} />
+          <input ref={cameraPhotoInputRef} type="file" accept="image/*" capture="environment"
+            disabled={uploading} onChange={handleFileUpload} style={{ display: 'none' }} />
+          <input ref={cameraVideoInputRef} type="file" accept="video/*" capture="environment"
+            disabled={uploading} onChange={handleFileUpload} style={{ display: 'none' }} />
+          <Drawer
+            anchor="bottom"
+            open={attachSheetOpen}
+            onClose={() => setAttachSheetOpen(false)}
+            PaperProps={{
+              'aria-label': 'Прикрепить',
+              sx: {
+                bgcolor: theme.bgHeader, color: theme.text,
+                borderTopLeftRadius: 20, borderTopRightRadius: 20,
+                borderTop: `1px solid ${theme.border}`,
+                px: 1.5, pt: 1,
+                pb: 'calc(12px + env(safe-area-inset-bottom))',
+              },
+            }}
+          >
+            <Box aria-hidden sx={{ width: 40, height: 4, borderRadius: 2, bgcolor: theme.border, mx: 'auto', mb: 1.5 }} />
+            <Box role="list" sx={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 0.5 }}>
+              {([
+                { label: 'Галерея', Icon: GalleryIcon, ref: galleryInputRef },
+                { label: 'Музыка', Icon: MusicNote, ref: audioInputRef },
+                { label: 'Файл', Icon: Description, ref: fileInputRef },
+                { label: 'Камера', Icon: PhotoCamera, ref: cameraPhotoInputRef },
+              ] as const).map(({ label, Icon, ref }) => (
+                <Box key={label} role="listitem" sx={{ display: 'flex' }}>
+                  <Box
+                    component="button"
+                    type="button"
+                    onClick={() => pickAttachment(ref)}
+                    sx={{
+                      flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.75,
+                      py: 1, border: 0, bgcolor: 'transparent', color: theme.text, font: 'inherit',
+                      cursor: 'pointer', borderRadius: 3,
+                      '&:focus-visible': { outline: `2px solid ${theme.accent}`, outlineOffset: 2 },
+                    }}
+                  >
+                    <Box sx={{
+                      width: 56, height: 56, borderRadius: '50%',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      bgcolor: theme.bgInput, color: theme.accent,
+                    }}>
+                      <Icon sx={{ fontSize: 28 }} />
+                    </Box>
+                    <Typography component="span" sx={{ fontSize: 13, color: theme.text }}>{label}</Typography>
+                  </Box>
+                </Box>
+              ))}
+            </Box>
+            <Button
+              fullWidth
+              startIcon={<Videocam />}
+              onClick={() => pickAttachment(cameraVideoInputRef)}
+              sx={{ mt: 1, py: 1.1, borderRadius: 3, textTransform: 'none', fontSize: 15, color: theme.accent }}
+            >
+              Снять видео
+            </Button>
+            <Button
+              fullWidth
+              onClick={() => setAttachSheetOpen(false)}
+              sx={{ mt: 0.5, py: 1.2, borderRadius: 3, textTransform: 'none', fontSize: 16, fontWeight: 600, bgcolor: theme.bgInput, color: theme.text, '&:hover': { bgcolor: theme.bgHover } }}
+            >
+              Отменить
+            </Button>
+          </Drawer>
 
           <Tooltip title="Эмодзи">
             <IconButton
@@ -3194,7 +3553,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             </Tooltip>
           )}
 
-          {/* Эмодзи попап */}
+          {/* Эмодзи и стикеры: попап с вкладками */}
           <Popover
             open={Boolean(emojiAnchor)}
             anchorEl={emojiAnchor}
@@ -3204,11 +3563,22 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             PaperProps={{
               sx: {
                 bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
-                borderRadius: 3, p: 1.5, width: 300,
+                borderRadius: 3, p: 1.5, width: 320,
                 boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
               }
             }}
           >
+            <Box role="tablist" aria-label="Эмодзи или стикеры" sx={{ display: 'flex', gap: 0.5, mb: 1 }}>
+              {(['emoji', 'stickers'] as const).map((tab) => (
+                <Button key={tab} size="small" role="tab" aria-selected={pickerTab === tab} onClick={() => setPickerTab(tab)}
+                  sx={{ flex: 1, textTransform: 'none', color: pickerTab === tab ? theme.accent : theme.textSec, bgcolor: pickerTab === tab ? theme.accent + '1f' : 'transparent' }}>
+                  {tab === 'emoji' ? 'Эмодзи' : 'Стикеры'}
+                </Button>
+              ))}
+            </Box>
+            {pickerTab === 'stickers' ? (
+              <StickerPicker disabled={stickerSending} onPick={(s) => { void handleSendSticker(s); }} />
+            ) : (
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.25 }}>
               {EMOJI_LIST.map((emoji) => (
                 <Box
@@ -3224,6 +3594,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
                 </Box>
               ))}
             </Box>
+            )}
           </Popover>
 
           <TextField

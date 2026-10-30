@@ -46,6 +46,8 @@ export function wallClockAnchor(pos: WallClockPos): { v: 'top' | 'middle' | 'bot
 }
 /** Где в ленте стоит плашка даты («Сегодня», «10 февраля»). */
 export type ChatDateAlign = 'left' | 'center' | 'right';
+/** Цвета чужих скинов: под акцент моей темы или как задумал магазин. */
+export type OthersSkinColor = 'theme' | 'stock';
 /** Где стоит дата относительно времени: над ним, под ним, слева или справа. */
 export type WallClockDatePos = 'above' | 'below' | 'left' | 'right';
 /**
@@ -88,6 +90,8 @@ export interface LayoutSettings {
   chatInfoWidth: number;
   chatHeaderPos: VertPos;      // top | bottom (шапка чата)
   chatInputPos: VertPos;       // bottom | top (поле ввода)
+  /** Стиль мобильной шапки чата: сплошная или плавающий «остров». */
+  mobileHeaderStyle: 'solid' | 'island';
   density: Density;            // плотность отступов
   radius: number;              // 0..28 радиус углов панелей
   chatOuterMargin: number;     // 0..24 внешний отступ окна чата (десктоп)
@@ -101,6 +105,8 @@ export interface LayoutSettings {
   bubbleWallAlign: boolean;
   /** Где в пузыре время и галочки. */
   bubbleMetaPos: BubbleMetaPos;
+  /** Где текст относительно фото в сообщении: над ним или под ним. */
+  photoTextPos: 'top' | 'bottom';
   showAvatarsInList: boolean;  // аватары в списке чатов
   showTabs: boolean;           // вкладки Диалоги/Архив/Группы
 }
@@ -115,6 +121,7 @@ export const defaultLayout: LayoutSettings = {
   chatInfoWidth: 300,
   chatHeaderPos: 'top',
   chatInputPos: 'bottom',
+  mobileHeaderStyle: 'solid',
   density: 'cozy',
   radius: 10,
   chatOuterMargin: 8,
@@ -126,6 +133,7 @@ export const defaultLayout: LayoutSettings = {
   bubblePadding: 6,
   bubbleWallAlign: false,
   bubbleMetaPos: 'belowLeft',
+  photoTextPos: 'bottom',
   showAvatarsInList: true,
   showTabs: true,
 };
@@ -170,6 +178,12 @@ export interface UserSettingsState {
   wallClockHudHeight: number;
   /** Плашка даты в ленте сообщений: слева / по центру / справа. */
   chatDateAlign: ChatDateAlign;
+  /** Показывать скины (пузырь, плашка, обводка) на моих сообщениях — у меня на экране. */
+  showOwnSkins: boolean;
+  /** Показывать скины собеседников на их сообщениях. */
+  showOthersSkins: boolean;
+  /** Чужие скины: под мою тему или в стоковых цветах владельца. */
+  othersSkinColor: OthersSkinColor;
   /** Форма отправляемых кружков (видеосообщений): круг / квадрат / сердце. */
   roundShape: RoundShape;
 
@@ -243,6 +257,9 @@ const initial: Omit<UserSettingsState, 'set' | 'reset' | 'setLayout' | 'resetLay
   wallClockHudUrl: '',
   wallClockHudHeight: 160,
   chatDateAlign: 'center',
+  showOwnSkins: true,
+  showOthersSkins: true,
+  othersSkinColor: 'theme',
   roundShape: 'circle',
 
   autoDownloadMedia: true,
@@ -346,6 +363,7 @@ const SYNC_KEYS: (keyof UserSettingsState)[] = [
   'wallClockEnabled', 'wallClockAvoid', 'wallClockPos', 'wallClockDatePos', 'wallClockSeconds', 'wallClockSecondsPos', 'wallClockSecondsScale', 'wallClockTimeScale', 'wallClockDateScale',
   'wallClockHudMode', 'wallClockHudHtml', 'wallClockHudUrl', 'wallClockHudHeight',
   'chatDateAlign', 'roundShape',
+  'showOwnSkins', 'showOthersSkins', 'othersSkinColor',
   'autoDownloadMedia', 'compressUploads', 'streamingHighQuality',
   'inAppSounds', 'inAppVibration', 'vibrationEnabled', 'ledIndicator',
   'popupPreview', 'pinnedPriority',

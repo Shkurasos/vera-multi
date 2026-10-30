@@ -10,7 +10,7 @@ import { PhoneOutlined } from '../mui-icons-shim';
 import {
   Link as LinkIcon, DevicesOther, ChevronRight, ExpandMore, AutoAwesome,
   Language, DataUsage, Notifications, Security, Lock, Public,
-  Download, Refresh,
+  Download, Refresh, ExitToApp,
 } from '@mui/icons-material';
 import { useUpdateStore } from '../store/updateStore';
 import { applyUpdate } from '../services/appUpdate';
@@ -39,6 +39,7 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
   const s = useUserSettingsStore();
   const { enabled: animEnabled, set: setAnim, setAll: setAllAnims } = useAnimStore();
   const currentUser = useAuthStore((state) => state.user);
+  const { logout } = useAuthStore((state) => ({ logout: state.logout }));
   const isAdmin = Boolean(currentUser?.isAdmin);
   const allAnimsOn = ANIM_GROUPS.every((g) => animEnabled[g.key]);
   const updateAvailable = useUpdateStore((x) => x.available);
@@ -308,6 +309,12 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
               Индивидуальные звуки уведомлений настраиваются в меню чата (три точки в шапке → «🔔 Уведомления чата»).
             </Typography>
           </Box>
+
+          <ListItemButton onClick={async () => { onClose(); await logout(); }} sx={{ px: 0, mb: 2 }}
+            style={{ color: '#b3261e' }}>
+            <ListItemIcon sx={{ color: '#b3261e', minWidth: 40 }}><ExitToApp /></ListItemIcon>
+            <ListItemText primary="Выйти из аккаунта" secondary="Завершить сессию и удалить локальные данные" />
+          </ListItemButton>
         </DialogContent>
         <DialogActions>
           <Button onClick={onClose} sx={{ color: theme.textSec }}>Закрыть</Button>

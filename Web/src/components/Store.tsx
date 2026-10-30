@@ -1,5 +1,6 @@
 import React, { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Button, Checkbox, Dialog, DialogContent, DialogTitle, FormControlLabel, MenuItem, TextField, Typography } from '@mui/material';
+import { Box, Button, ButtonBase, Checkbox, Collapse, Dialog, DialogContent, DialogTitle, FormControlLabel, IconButton, MenuItem, TextField, Typography } from '@mui/material';
+import { AccountBalanceWallet, Close, Inventory2, Search, Storefront } from '@mui/icons-material';
 import { SHOP_CATALOG, MarketListing, ShopItem, selectShopItem, useShopStore } from '../store/shopStore';
 import { caseCount, casePacks, drawPack, packChance, SkinPack, useLootStore } from '../store/lootStore';
 import { CASE_CATALOG, CaseDefinition, caseDescription, findCase, isHiddenCase } from '../store/caseCatalog';
@@ -18,6 +19,10 @@ import ReactionGlyph from './ReactionGlyph';
 import { findReactionSkin, useReactionSkinStore } from '../store/reactionSkinStore';
 import { frostedPaperSx } from '../styles/frosted';
 import { UI_SURFACE_RADIUS, UI_INNER_RADIUS } from '../store/uiPrefsStore';
+import { readableTextOn } from '../utils/contrast';
+
+/** Доли ниже 0.01% показываем с тысячными, иначе 0.001% схлопывается в «0.00%». */
+const formatChance = (percent: number) => `${percent.toFixed(percent < 0.01 ? 3 : 2)}%`;
 
 const rarity = (p: SkinPack) => SHOP_CATALOG.find(i => i.id === p.ring)?.rarity || 'common';
 const categories = [['all', 'Все'], ['case', 'Кейсы'], ['pet', 'Питомцы'], ['profile', 'Обводки'], ['selfcard', 'Плашки'], ['bubble', 'Пузыри']];
@@ -70,48 +75,64 @@ function useEvent<A extends unknown[], R>(fn: (...args: A) => R) {
   return useCallback((...args: A) => ref.current(...args), []);
 }
 
-// Минималистичная карточка кейса: узнаваемый силуэт сундука, явная цена
-// и метка «КЕЙС». Название кейса внутри арта не дублируем — его показывают
-// заголовок диалога и подпись карточки в сетке.
-const CaseArt = memo(function CaseArt({ definition, price }: { definition: CaseDefinition; price?: number | null }) {
+// Сундук кейса: силуэт с эмблемой коллекции на мягком свечении цвета кейса.
+// Рамку и подписи даёт контейнер (плитка сетки или шапка диалога), поэтому
+// здесь только иллюстрация и, если передана, плашка с ценой.
+const CaseArt = memo(function CaseArt({ definition, price, size = 96 }: { definition: CaseDefinition; price?: number | null; size?: number }) {
   const theme = useThemeStore(s => s.theme);
-  const accent = definition.color;
-  const value = price === undefined ? definition.price : price;
-  const priceLabel = Number.isSafeInteger(value) && Number(value) > 0 ? `${value} ВП` : '—';
-  return <Box sx={{ width: 'min(100%, 240px)', aspectRatio: '1.42', mx: 'auto', my: 2, p: 1.25, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 0.5, border: `1px solid ${theme.border}`, borderTop: `3px solid ${accent}`, borderRadius: UI_SURFACE_RADIUS, bgcolor: theme.bgInput }}>
-    <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 1, minWidth: 0 }}>
-      <Typography component="span" sx={{ color: accent, fontSize: 9, fontWeight: 900, letterSpacing: 1.4 }}>КЕЙС</Typography>
-      <Typography component="span" sx={{ color: theme.text, fontSize: 13, fontWeight: 800, whiteSpace: 'nowrap' }}>{priceLabel}</Typography>
-    </Box>
-    <Box sx={{ flex: 1, minHeight: 0, display: 'grid', placeItems: 'center', overflow: 'hidden' }}>
-      <svg viewBox="0 0 100 100" style={{ width: '62%', height: 'auto', maxWidth: 88, maxHeight: '100%' }} aria-hidden="true">
-        <ellipse cx="50" cy="88" rx="26" ry="3" fill={accent} opacity=".18" />
-        <path d="M16 50V44C16 33.5 31.5 26 50 26C68.5 26 84 33.5 84 44V50H16Z" fill={`${accent}26`} stroke={accent} strokeWidth="2.4" strokeLinejoin="round" />
-        <path d="M14 50H86V76C86 79.3 83.3 82 80 82H20C16.7 82 14 79.3 14 76V50Z" fill={`${accent}14`} stroke={accent} strokeWidth="2.4" strokeLinejoin="round" />
-        <g transform="translate(37 56) scale(0.26)" fill="none" stroke={accent} strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" opacity=".9">
-          <path d={definition.mark} />
-        </g>
-        <rect x="45" y="44" width="10" height="14" rx="2.5" fill={accent} />
-        <circle cx="50" cy="50.5" r="1.8" fill={theme.bgInput} />
-      </svg>
-    </Box>
+  const accent = definition.color || theme.accent;
+  const priceLabel = Number.isSafeInteger(price) && Number(price) > 0 ? `${price} ВП` : null;
+  return <Box sx={{ position: 'relative', display: 'grid', placeItems: 'center', width: '100%', height: size + 24 }}>
+    <Box aria-hidden sx={{ position: 'absolute', width: size * 1.1, height: size * 1.1, borderRadius: '50%', bgcolor: accent, opacity: 0.16, filter: 'blur(26px)' }} />
+    <svg viewBox="0 0 100 100" width={size} height={size} style={{ position: 'relative' }} aria-hidden="true">
+      <ellipse cx="50" cy="88" rx="30" ry="3.5" fill="#000" opacity=".28" />
+      <path d="M16 50V44C16 33.5 31.5 26 50 26C68.5 26 84 33.5 84 44V50H16Z" fill={`${accent}3a`} stroke={accent} strokeWidth="2.6" strokeLinejoin="round" />
+      <path d="M14 50H86V76C86 79.3 83.3 82 80 82H20C16.7 82 14 79.3 14 76V50Z" fill={`${accent}22`} stroke={accent} strokeWidth="2.6" strokeLinejoin="round" />
+      <path d="M22 34C30 30 40 28.5 50 28.5" fill="none" stroke="#fff" strokeOpacity=".35" strokeWidth="2" strokeLinecap="round" />
+      <g transform="translate(37 56) scale(0.26)" fill="none" stroke={accent} strokeWidth="7" strokeLinecap="round" strokeLinejoin="round">
+        <path d={definition.mark} />
+      </g>
+      <rect x="45" y="44" width="10" height="14" rx="2.5" fill={accent} />
+      <circle cx="50" cy="50.5" r="1.8" fill={theme.bgInput} />
+    </svg>
+    {priceLabel && <Box sx={{ position: 'absolute', bottom: 0, px: 1.25, py: 0.25, borderRadius: 999, bgcolor: theme.bgHeader, border: `1px solid ${accent}66`, color: theme.text, fontSize: 12, fontWeight: 800, whiteSpace: 'nowrap' }}>{priceLabel}</Box>}
   </Box>;
 });
-const Preview = memo(function Preview({ item }: { item: ShopItem }) {
+const Preview = memo(function Preview({ item, height = 110 }: { item: ShopItem; height?: number }) {
   const theme = useThemeStore(s => s.theme);
   // Подписка только на режим цвета своего предмета, а не на весь словарь.
   const mode = useShopStore(s => s.colorModes[item.id]);
-  if (item.stock) return <Box sx={{ height: 110, display: 'grid', placeItems: 'center' }}>
+  if (item.stock) return <Box sx={{ height, display: 'grid', placeItems: 'center' }}>
     {item.category === 'profile' ? <Box sx={{ width: 48, height: 48, borderRadius: '50%', bgcolor: theme.bgActive, color: theme.text, display: 'grid', placeItems: 'center' }}>V</Box>
       : item.category === 'selfcard' ? <Typography sx={{ color: theme.textSec, fontSize: 12 }}>Вы</Typography>
       : <Box sx={{ bgcolor: theme.bgActive, color: theme.text, px: 2, py: 1, borderRadius: '16px 16px 4px 16px' }}>Привет!</Box>}
   </Box>;
   const stock = item.rarity ? RARITY_META[item.rarity].color : typeof item.previewColor === 'string' ? item.previewColor.match(/#[\da-f]{6}/i)?.[0] || '#ff4870' : '#ff4870';
   const color = mode === 'theme' ? theme.accent : stock;
-  return <Box sx={{ height: 110, display: 'grid', placeItems: 'center' }}>
+  return <Box sx={{ height, display: 'grid', placeItems: 'center' }}>
     {item.category === 'profile' ? <Box sx={{ width: 48, height: 48, borderRadius: '50%', display: 'grid', placeItems: 'center', ...skinColors(buildShopRingSx(item.value, color), item, color, mode === 'theme') }}>V</Box> : item.category === 'selfcard' ? <Box sx={item.value.pack ? selfcardSkin(item, SHOP_CATALOG, theme.accent, mode === 'theme') : item.rarity ? buildPlaqueSx(item.rarity, color) : { bgcolor: color, px: 2, py: 1, borderRadius: 2 }}>Вы</Box> : <Box sx={{ px: 2, py: 1.5, maxWidth: '90%', fontSize: 13, ...bubbleSkin(item, theme.accent, mode === 'theme') }}>Привет!</Box>}
   </Box>;
 });
+// Иллюстрация любого предмета: скин, кейс, питомец или реакция.
+const ItemArt = memo(function ItemArt({ id, price, height = 110, animate = false }: { id: string; price?: number | null; height?: number; animate?: boolean }) {
+  const i = itemInfo(id);
+  if (i.item) return <Preview item={i.item} height={height} />;
+  if (i.definition) return <CaseArt definition={i.definition} price={price} size={Math.round(height * 0.78)} />;
+  if (i.pet) return <Box sx={{ height, display: 'grid', placeItems: 'center' }}><PetArtwork petId={i.pet.id} size={Math.round(height * 0.76)} animate={animate} /></Box>;
+  if (i.reaction) return <Box sx={{ height, display: 'grid', placeItems: 'center' }}><ReactionGlyph value={i.reaction.id} size={Math.round(height * 0.5)} /></Box>;
+  return <Box sx={{ height }} />;
+});
+const CATEGORY_LABELS: Record<string, string> = { case: 'Кейс', pet: 'Питомец', reaction: 'Реакция', profile: 'Обводка', selfcard: 'Плашка', bubble: 'Пузырь', wallpaper: 'Обои', theme: 'Тема' };
+// Звезда избранного своим SVG: в шиме иконок (mui-icons-shim) нет Star/StarBorder.
+const StarGlyph = ({ filled, size = 18 }: { filled: boolean; size?: number }) => <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+  <path d="M12 3.2l2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 17l-5.4 2.9 1.1-6.1-4.5-4.2 6.1-.8z" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+</svg>;
+const caseContents = (definition: CaseDefinition) => definition.packs.length ? `${definition.packs.length} паков`
+  : definition.rewards.some(r => r.key.startsWith('rx-')) ? `${definition.rewards.length} скинов` : `${definition.rewards.length} питомцев`;
+const itemSubtitle = (id: string) => {
+  const i = itemInfo(id);
+  return i.definition ? `Кейс · ${caseContents(i.definition)}` : `${RARITY_META[i.rarity].label} · ${CATEGORY_LABELS[i.category || ''] || 'Предмет'}`;
+};
 type StoreRow = { key: string; id: string; count: number };
 type CardProps = {
   row: StoreRow;
@@ -122,34 +143,59 @@ type CardProps = {
   price: number | null;
   listing?: MarketListing;
   alreadyOwned: boolean;
-  canSell: boolean;
+  equipped: boolean;
   favorite: boolean;
   onShow: (id: string) => void;
   onBuyCase: (id: string) => void;
   onListing: (listing: MarketListing, buy: boolean, isPet: boolean) => void;
   onToggleFavorite: (id: string) => void;
 };
-// Карточка сетки. memo + примитивные/стабильные пропсы: при опросе маркета,
-// вводе в поиск и т.п. перерисовываются только реально изменившиеся карточки.
-const StoreCard = memo(function StoreCard({ row, tab, theme, busy, balanceVp, price, listing, alreadyOwned, canSell, favorite, onShow, onBuyCase, onListing, onToggleFavorite }: CardProps) {
+// Плитка сетки в духе инвентаря Steam: фон подсвечен цветом редкости снизу,
+// полоса редкости по нижнему краю, счётчик копий и отметка «надето» сверху.
+// memo + примитивные/стабильные пропсы: при опросе маркета, вводе в поиск
+// и т.п. перерисовываются только реально изменившиеся карточки.
+const StoreCard = memo(function StoreCard({ row, tab, theme, busy, balanceVp, price, listing, alreadyOwned, equipped, favorite, onShow, onBuyCase, onListing, onToggleFavorite }: CardProps) {
   const i = itemInfo(row.id);
+  const tone = i.definition?.color || RARITY_META[i.rarity].color;
   const priced = Number.isSafeInteger(price) && Number(price) > 0;
+  const canFavorite = tab === 'inventory' && !!i.item && !i.item.stock;
   // content-visibility: браузер не верстает и не рисует карточки вне экрана.
-  return <Box sx={{ p: { xs: 0.75, sm: 2 }, minWidth: 0, border: `1px solid ${theme.border}`, borderBottom: `3px solid ${RARITY_META[i.rarity].color}`, bgcolor: theme.bgHover, borderRadius: UI_SURFACE_RADIUS, contentVisibility: 'auto', containIntrinsicSize: 'auto 260px' }}>
-    <Button onClick={() => { if (tab === 'inventory' || i.definition) onShow(row.id); }} sx={{ display: 'block', width: '100%', color: theme.text, textTransform: 'none' }}>{i.item ? <Preview item={i.item} /> : i.definition ? <CaseArt definition={i.definition} price={price} /> : i.pet ? <Box sx={{ height: 110, display: 'grid', placeItems: 'center' }}><PetArtwork petId={i.pet.id} size={84} animate={false} /></Box> : i.reaction ? <Box sx={{ height: 110, display: 'grid', placeItems: 'center' }}><ReactionGlyph value={i.reaction.id} size={56} /></Box> : null}<Typography>{i.name}</Typography></Button><Typography variant="caption">{row.count} шт. · {i.definition ? (i.definition.packs.length ? `${i.definition.packs.length} паков` : i.definition.rewards.some(r => r.key.startsWith('rx-')) ? `${i.definition.rewards.length} скинов` : `${i.definition.rewards.length} питомцев`) : RARITY_META[i.rarity].label}</Typography>
-    {tab === 'market' && i.definition && <Box sx={{ mt: 1 }}>
-      <Typography sx={{ fontWeight: 800 }}>{priced ? `${price} ВП` : 'Скоро'}</Typography>
+  return <Box sx={{
+    position: 'relative', minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+    borderRadius: UI_SURFACE_RADIUS, border: `1px solid ${equipped ? theme.accent : theme.border}`,
+    background: `linear-gradient(180deg, ${theme.bgInput} 35%, ${tone}24 100%)`,
+    transition: 'border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease',
+    '&:hover': { borderColor: tone, transform: 'translateY(-2px)', boxShadow: `0 8px 22px ${tone}26` },
+    '&::after': { content: '""', position: 'absolute', left: 0, right: 0, bottom: 0, height: 3, bgcolor: tone, pointerEvents: 'none' },
+    '@media (prefers-reduced-motion: reduce)': { transition: 'none', '&:hover': { transform: 'none' } },
+    contentVisibility: 'auto', containIntrinsicSize: 'auto 230px',
+  }}>
+    <ButtonBase onClick={() => onShow(row.id)} aria-label={`${i.name}, ${itemSubtitle(row.id)}`}
+      sx={{ display: 'block', width: '100%', textAlign: 'left', color: theme.text, px: 1.25, pt: 1.25, pb: 1.25, '&.Mui-focusVisible': { outline: `2px solid ${theme.accent}`, outlineOffset: -2 } }}>
+      <ItemArt id={row.id} height={112} animate={false} />
+      <Typography sx={{ mt: 1, fontSize: 13.5, fontWeight: 700, lineHeight: 1.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.name}</Typography>
+      <Typography sx={{ fontSize: 11.5, color: i.definition ? theme.textSec : tone, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{itemSubtitle(row.id)}</Typography>
+    </ButtonBase>
+    {tab === 'inventory' && (row.count > 1 || i.definition) && <Box aria-hidden sx={{ position: 'absolute', top: 8, left: 8, px: 0.75, borderRadius: 999, bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`, fontSize: 11, fontWeight: 800, color: theme.text, pointerEvents: 'none' }}>{row.count} шт.</Box>}
+    {equipped && <Box sx={{ position: 'absolute', top: 8, right: canFavorite ? 40 : 8, px: 0.75, borderRadius: 999, bgcolor: theme.accent, color: readableTextOn(theme.accent), fontSize: 10.5, fontWeight: 800, pointerEvents: 'none' }}>Надето</Box>}
+    {canFavorite && <IconButton size="small" aria-pressed={favorite} aria-label={favorite ? `Убрать из избранного: ${i.name}` : `В избранное: ${i.name}`} onClick={() => onToggleFavorite(row.id)}
+      sx={{ position: 'absolute', top: 4, right: 4, color: favorite ? '#f5c518' : theme.textSec, '&:hover': { color: '#f5c518' } }}>
+      <StarGlyph filled={favorite} size={18} />
+    </IconButton>}
+    {tab === 'market' && i.definition && <Box sx={{ px: 1.25, pb: 1.5, mt: 'auto' }}>
       <Button fullWidth variant="contained" disabled={busy || !priced || balanceVp < Number(price)} onClick={() => onBuyCase(row.id)}
-        sx={{ '&&&': { fontWeight: 800, border: 'none', background: priced && balanceVp >= Number(price) ? `linear-gradient(135deg, ${theme.accent}, ${theme.accent}aa)` : undefined, '&:hover': { background: priced && balanceVp >= Number(price) ? `linear-gradient(135deg, ${theme.accent}, ${theme.accent}cc)` : undefined } } }}>
+        sx={{ '&&&': { my: 0, fontWeight: 800, border: 'none', background: priced && balanceVp >= Number(price) ? `linear-gradient(135deg, ${theme.accent}, ${theme.accent}aa)` : undefined, '&:hover': { background: priced && balanceVp >= Number(price) ? `linear-gradient(135deg, ${theme.accent}, ${theme.accent}cc)` : undefined } } }}>
         {priced ? (balanceVp < Number(price) ? `Не хватает ${Number(price) - balanceVp} ВП` : `Купить за ${price} ВП`) : 'Цена не назначена'}
       </Button>
     </Box>}
-    {tab === 'market' && !i.definition && listing && <Box><Typography>{listing.price} ВП · {listing.seller}</Typography>
-      {listing.isMine ? <Button disabled={busy} onClick={() => onListing(listing, false, !!i.pet)}>Снять с продажи</Button>
-        : <Button disabled={busy || alreadyOwned || balanceVp < listing.price} onClick={() => onListing(listing, true, !!i.pet)}>Купить за {listing.price} ВП</Button>}
+    {tab === 'market' && !i.definition && listing && <Box sx={{ px: 1.25, pb: 1.5, mt: 'auto' }}>
+      <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 1, mb: 0.5, minWidth: 0 }}>
+        <Typography sx={{ fontSize: 15, fontWeight: 800, whiteSpace: 'nowrap' }}>{listing.price.toLocaleString('ru-RU')} ВП</Typography>
+        <Typography title={listing.seller} sx={{ fontSize: 11, color: theme.textSec, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{listing.isMine ? 'ваш лот' : `@${listing.seller}`}</Typography>
+      </Box>
+      {listing.isMine ? <Button fullWidth disabled={busy} onClick={() => onListing(listing, false, !!i.pet)} sx={{ '&&': { my: 0 } }}>Снять с продажи</Button>
+        : <Button fullWidth variant="contained" disabled={busy || alreadyOwned || balanceVp < listing.price} onClick={() => onListing(listing, true, !!i.pet)} sx={{ '&&': { my: 0 } }}>{alreadyOwned ? 'Уже есть' : balanceVp < listing.price ? `Не хватает ${listing.price - balanceVp} ВП` : 'Купить'}</Button>}
     </Box>}
-    {tab === 'inventory' && canSell && <Button fullWidth disabled={busy} onClick={() => onShow(row.id)}>Выставить на продажу</Button>}
-    {tab === 'inventory' && i.item && !i.item.stock && <Button size="small" aria-pressed={favorite} onClick={() => onToggleFavorite(row.id)}>{favorite ? '★ В избранном' : '☆ В избранное'}</Button>}
   </Box>;
 });
 
@@ -463,54 +509,124 @@ export default function Store({ onClose }: { onClose: () => void }) {
     setError('');
     void loot.buyCase(caseId).catch(reportError);
   });
+  const [topupOpen, setTopupOpen] = useState(false);
+  const equippedIds = useMemo(() => new Set([shop.activeRing, shop.activeSelfCard, shop.activeBubble].filter(Boolean)), [shop.activeRing, shop.activeSelfCard, shop.activeBubble]);
+  const tabs = [
+    { id: 'inventory', label: 'Инвентарь', icon: <Inventory2 sx={{ fontSize: 18 }} /> },
+    { id: 'market', label: 'Площадка', icon: <Storefront sx={{ fontSize: 18 }} /> },
+  ];
   return <Dialog open fullWidth maxWidth="xl" onClose={() => !busy && onClose()} PaperProps={{ sx: { ...panelSx, width: { xs: 'calc(100vw - 12px)', sm: 'calc(100% - 64px)' }, minHeight: { xs: 'calc(100dvh - 12px)', sm: '70vh' } } }}>
-    <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, px: { xs: 1.5, sm: 3 }, py: { xs: 1.25, sm: 2 }, fontSize: { xs: 18, sm: 20 } }}>Инвентарь VERA<Button disabled={busy} onClick={onClose}>Закрыть</Button></DialogTitle>
-    <DialogContent sx={{ px: { xs: 1, sm: 3 }, py: { xs: 1, sm: 2 }, overflowX: 'hidden' }}>
-      <WalletTopup />
-      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 0.75, mb: 1.5 }}><Button variant={tab === 'inventory' ? 'contained' : 'text'} onClick={() => setTab('inventory')}>Инвентарь</Button><Button variant={tab === 'market' ? 'contained' : 'text'} onClick={() => setTab('market')}>Площадка</Button></Box>
-      {error && <Typography role="alert" color="error">{error}</Typography>}
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0,1fr)', md: tab === 'inventory' ? '260px minmax(0,1fr)' : 'minmax(0,1fr)' }, gap: { xs: 1, md: 2 }, alignItems: 'start' }}>
-      {tab === 'inventory' && <Box component="aside" aria-label="Надетые и избранные скины" sx={{ p: { xs: 1, sm: 2 }, bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`, borderRadius: UI_SURFACE_RADIUS, display: { xs: 'grid', md: 'block' }, gridTemplateColumns: { xs: 'repeat(3, minmax(0, 1fr))', md: 'none' }, gap: { xs: 0.75, md: 0 }, '& > h6': { gridColumn: '1 / -1' } }}>
-        <Typography variant="h6" sx={{ fontSize: { xs: 14, sm: 18 } }}>Надето</Typography>
-        {slots.map(slot => {
-          const equipped = SHOP_CATALOG.find(i => i.id === slot.id && !i.stock);
-          return <Box key={slot.label} sx={{ py: { xs: 0.5, sm: 1.5 }, minWidth: 0, borderBottom: { xs: 'none', md: `1px solid ${theme.border}` } }}>
-            <Typography variant="caption" sx={{ color: theme.textSec, display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{slot.label}</Typography>
-            {equipped ? <>
-              <Button fullWidth onClick={() => showItem(equipped.id)} sx={{ display: 'block', minWidth: 0, px: { xs: 0.25, sm: 1 }, textTransform: 'none', fontSize: { xs: 11, sm: 14 } }}><Preview item={equipped} />{equipped.name}</Button>
-              <Button size="small" onClick={slot.clear} aria-label={`Снять: ${equipped.name}`} sx={{ minHeight: 30, fontSize: 11 }}>Снять</Button>
-            </> : <Typography sx={{ color: theme.textSec, fontSize: 13 }}>Стандартный вид</Typography>}
-          </Box>;
-        })}
-        <Typography variant="h6" sx={{ mt: { xs: 1, md: 2 }, gridColumn: '1 / -1', fontSize: { xs: 14, sm: 18 } }}>Избранные · {favorites.length}</Typography>
-        {!favorites.length && <Typography sx={{ mt: 1, gridColumn: '1 / -1', color: theme.textSec, fontSize: 13 }}>Добавляйте скины в избранное кнопкой на карточке предмета.</Typography>}
-        <Box sx={{ maxHeight: { xs: 170, md: 360 }, overflowY: 'auto', gridColumn: '1 / -1', display: { xs: 'grid', md: 'block' }, gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', md: 'none' }, gap: { xs: 0.75, md: 0 } }}>{favorites.map(favorite => <Box key={favorite.id} sx={{ mt: { xs: 0, md: 1.5 }, minWidth: 0 }}>
-          <Button fullWidth onClick={() => showItem(favorite.id)} sx={{ display: 'block', minWidth: 0, px: { xs: 0.25, sm: 1 }, textTransform: 'none', fontSize: { xs: 11, sm: 14 } }}><Preview item={favorite} />{favorite.name}</Button>
-          <Button size="small" onClick={() => selectShopItem(favorite.id)}>{slots.some(slot => slot.id === favorite.id) ? 'Снять' : 'Надеть'}</Button>
-          <Button size="small" onClick={() => shop.toggleFavorite(favorite.id)} aria-label={`Убрать из избранного: ${favorite.name}`}>Убрать ★</Button>
-        </Box>)}</Box>
+    {/* Шапка: название, переключатель разделов, баланс и закрытие в одну строку. */}
+    <DialogTitle component="div" sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: { xs: 1, sm: 2 }, px: { xs: 1.5, sm: 3 }, py: { xs: 1.25, sm: 1.75 }, borderBottom: `1px solid ${theme.border}`, bgcolor: theme.bgHeader }}>
+      <Typography component="h2" sx={{ fontSize: { xs: 17, sm: 19 }, fontWeight: 800, letterSpacing: 0.2, mr: { sm: 1 } }}>VERA <Box component="span" sx={{ color: theme.textSec, fontWeight: 600 }}>· {tab === 'inventory' ? 'инвентарь' : 'площадка'}</Box></Typography>
+      <Box role="tablist" aria-label="Раздел" sx={{ order: { xs: 3, md: 0 }, width: { xs: '100%', md: 'auto' }, display: 'flex', p: 0.5, gap: 0.5, borderRadius: UI_SURFACE_RADIUS, bgcolor: theme.bgInput, border: `1px solid ${theme.border}` }}>
+        {tabs.map(t => <ButtonBase key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}
+          sx={{ flex: 1, gap: 0.75, px: 2, py: 0.85, borderRadius: UI_INNER_RADIUS, fontSize: 14, fontWeight: 700, color: tab === t.id ? readableTextOn(theme.accent) : theme.textSec, bgcolor: tab === t.id ? theme.accent : 'transparent', transition: 'background-color 140ms ease, color 140ms ease', '&:hover': { color: tab === t.id ? undefined : theme.text }, '&.Mui-focusVisible': { outline: `2px solid ${theme.accent}`, outlineOffset: 2 } }}>
+          {t.icon}{t.label}
+        </ButtonBase>)}
+      </Box>
+      <Box sx={{ flex: 1 }} />
+      <ButtonBase onClick={() => setTopupOpen(v => !v)} aria-expanded={topupOpen} aria-label={`Баланс ${shop.balanceVp} ВП, пополнить`}
+        sx={{ gap: 1, px: 1.5, py: 0.75, borderRadius: UI_SURFACE_RADIUS, border: `1px solid ${topupOpen ? theme.accent : theme.border}`, bgcolor: theme.bgInput, color: theme.text, '&:hover': { borderColor: theme.accent }, '&.Mui-focusVisible': { outline: `2px solid ${theme.accent}`, outlineOffset: 2 } }}>
+        <AccountBalanceWallet sx={{ fontSize: 18, color: theme.accent }} />
+        <Box component="span" sx={{ fontSize: 15, fontWeight: 800, whiteSpace: 'nowrap' }}>{shop.balanceVp.toLocaleString('ru-RU')} ВП</Box>
+        <Box component="span" sx={{ fontSize: 12, fontWeight: 700, color: theme.accent, display: { xs: 'none', sm: 'inline' } }}>{topupOpen ? 'Скрыть' : '+ Пополнить'}</Box>
+      </ButtonBase>
+      <IconButton aria-label="Закрыть" disabled={busy} onClick={onClose} sx={{ color: theme.textSec, '&:hover': { color: theme.text, bgcolor: theme.bgHover } }}><Close /></IconButton>
+    </DialogTitle>
+    <DialogContent sx={{ px: { xs: 1, sm: 3 }, py: { xs: 1.5, sm: 2.5 }, overflowX: 'hidden' }}>
+      <Collapse in={topupOpen} unmountOnExit>
+        <Box sx={{ mt: 1.5, mb: 2, p: 2, borderRadius: UI_SURFACE_RADIUS, border: `1px solid ${theme.border}`, bgcolor: theme.bgInput, '& > .MuiBox-root': { mb: 0 } }}><WalletTopup /></Box>
+      </Collapse>
+      {error && <Typography role="alert" sx={{ mt: 1.5, mb: 1, px: 1.5, py: 1, borderRadius: UI_INNER_RADIUS, bgcolor: '#f4433618', border: '1px solid #f4433655', color: '#ff8a80', fontSize: 13.5 }}>{error}</Typography>}
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0,1fr)', md: tab === 'inventory' ? '260px minmax(0,1fr)' : 'minmax(0,1fr)' }, gap: { xs: 1.5, md: 2.5 }, alignItems: 'start', mt: 1.5 }}>
+      {tab === 'inventory' && <Box component="aside" aria-label="Надетые и избранные скины" sx={{ position: { md: 'sticky' }, top: { md: 0 }, p: { xs: 1.25, sm: 1.75 }, bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`, borderRadius: UI_SURFACE_RADIUS, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+        <Box>
+          <Typography component="h3" sx={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.2, textTransform: 'uppercase', color: theme.textSec, mb: 1 }}>Надето</Typography>
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(3, minmax(0, 1fr))', md: 'minmax(0, 1fr)' }, gap: 0.75 }}>
+            {slots.map(slot => {
+              const equipped = SHOP_CATALOG.find(i => i.id === slot.id && !i.stock);
+              const tone = equipped?.rarity ? RARITY_META[equipped.rarity].color : theme.border;
+              return <Box key={slot.label} sx={{ position: 'relative', minWidth: 0, display: 'flex', flexDirection: { xs: 'column', md: 'row' }, alignItems: 'center', gap: 1, p: 0.75, borderRadius: UI_INNER_RADIUS, bgcolor: theme.bgInput, border: `1px solid ${equipped ? tone + '88' : theme.border}`, borderStyle: equipped ? 'solid' : 'dashed' }}>
+                <ButtonBase disabled={!equipped} onClick={() => equipped && showItem(equipped.id)} aria-label={equipped ? `${slot.label}: ${equipped.name}` : `${slot.label}: стандартный вид`}
+                  sx={{ flex: 1, minWidth: 0, width: '100%', display: 'flex', flexDirection: { xs: 'column', md: 'row' }, alignItems: 'center', gap: 1, textAlign: { xs: 'center', md: 'left' }, borderRadius: UI_INNER_RADIUS, color: theme.text }}>
+                  <Box sx={{ width: { xs: '100%', md: 72 }, flexShrink: 0, overflow: 'hidden', transform: { md: 'scale(0.82)' }, transformOrigin: 'center' }}>
+                    {equipped ? <Preview item={equipped} height={64} /> : <Box sx={{ height: 64, display: 'grid', placeItems: 'center', color: theme.textSec, fontSize: 22 }}>—</Box>}
+                  </Box>
+                  <Box sx={{ minWidth: 0, flex: 1, width: '100%' }}>
+                    <Typography sx={{ fontSize: 11, color: theme.textSec, lineHeight: 1.2 }}>{slot.label}</Typography>
+                    <Typography sx={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{equipped ? equipped.name : 'Стандартный вид'}</Typography>
+                  </Box>
+                </ButtonBase>
+                {equipped && <IconButton size="small" onClick={slot.clear} aria-label={`Снять: ${equipped.name}`} sx={{ position: { xs: 'absolute', md: 'static' }, top: 2, right: 2, color: theme.textSec, '&:hover': { color: theme.text } }}><Close sx={{ fontSize: 16 }} /></IconButton>}
+              </Box>;
+            })}
+          </Box>
+        </Box>
+        <Box>
+          <Typography component="h3" sx={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.2, textTransform: 'uppercase', color: theme.textSec, mb: 1 }}>Избранные · {favorites.length}</Typography>
+          {!favorites.length && <Typography sx={{ color: theme.textSec, fontSize: 12.5, lineHeight: 1.5 }}>Отмечайте скины звёздочкой на карточке, чтобы быстро переключаться между ними.</Typography>}
+          <Box sx={{ maxHeight: { xs: 200, md: 380 }, overflowY: 'auto', display: 'grid', gridTemplateColumns: { xs: 'repeat(3, minmax(0, 1fr))', md: 'repeat(2, minmax(0, 1fr))' }, gap: 0.75 }}>{favorites.map(favorite => {
+            const on = equippedIds.has(favorite.id);
+            return <Box key={favorite.id} sx={{ minWidth: 0, borderRadius: UI_INNER_RADIUS, bgcolor: theme.bgInput, border: `1px solid ${on ? theme.accent : theme.border}`, overflow: 'hidden' }}>
+              <ButtonBase onClick={() => showItem(favorite.id)} aria-label={favorite.name} sx={{ display: 'block', width: '100%', color: theme.text, px: 0.5, pt: 0.5 }}>
+                <Box sx={{ overflow: 'hidden' }}><Preview item={favorite} height={60} /></Box>
+                <Typography sx={{ fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'center' }}>{favorite.name}</Typography>
+              </ButtonBase>
+              <Box sx={{ display: 'flex' }}>
+                <ButtonBase onClick={() => selectShopItem(favorite.id)} sx={{ flex: 1, py: 0.6, fontSize: 11.5, fontWeight: 700, color: on ? theme.accent : theme.text, '&:hover': { bgcolor: theme.bgHover } }}>{on ? 'Снять' : 'Надеть'}</ButtonBase>
+                <IconButton size="small" onClick={() => shop.toggleFavorite(favorite.id)} aria-label={`Убрать из избранного: ${favorite.name}`} sx={{ borderRadius: 0, color: '#f5c518' }}><StarGlyph filled size={16} /></IconButton>
+              </Box>
+            </Box>;
+          })}</Box>
+        </Box>
       </Box>}
       <Box sx={{ minWidth: 0 }}>
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr) minmax(0, 1fr)', sm: 'repeat(auto-fit, minmax(140px, max-content))' }, gap: 0.75, mb: 1.5, '& .MuiInputBase-root': { color: theme.text }, '& .MuiFormControl-root, & .MuiTextField-root': { minWidth: 0, width: '100%' } }}>
-        <TextField size="small" placeholder="Поиск" value={query} onChange={e => setQuery(e.target.value)} sx={{ gridColumn: { xs: '1 / -1', sm: 'auto' } }} />
-        <TextField select size="small" SelectProps={filterSelectProps} value={category} onChange={e => setCategory(e.target.value)}>{categories.map(([id, label]) => <MenuItem key={id} value={id}>{label}</MenuItem>)}</TextField>
-        <TextField select size="small" SelectProps={filterSelectProps} label="Коллекция" value={collection} onChange={e => setCollection(e.target.value)}>
+      {/* Панель фильтров: поиск во всю ширину, быстрые категории чипами,
+          затем коллекция/редкость/сортировка. */}
+      <Box sx={{ p: { xs: 1, sm: 1.25 }, mb: 1.5, borderRadius: UI_SURFACE_RADIUS, bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`, display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <Box role="group" aria-label="Категория" sx={{ display: 'flex', gap: 0.5, overflowX: 'auto', pb: 0.25, scrollbarWidth: 'thin' }}>
+        {categories.map(([id, label]) => <ButtonBase key={id} aria-pressed={category === id} onClick={() => setCategory(id)}
+          sx={{ flexShrink: 0, px: 1.5, py: 0.6, borderRadius: 999, fontSize: 13, fontWeight: 700, border: `1px solid ${category === id ? theme.accent : theme.border}`, bgcolor: category === id ? theme.accent + '22' : 'transparent', color: category === id ? theme.text : theme.textSec, '&:hover': { color: theme.text, borderColor: theme.accent + '88' }, '&.Mui-focusVisible': { outline: `2px solid ${theme.accent}`, outlineOffset: 1 } }}>
+          {label}
+        </ButtonBase>)}
+      </Box>
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr) minmax(0, 1fr)', sm: 'minmax(180px, 2fr) repeat(3, minmax(0, 1fr))' }, gap: 0.75, '& .MuiInputBase-root': { color: theme.text, bgcolor: theme.bgInput, borderRadius: UI_INNER_RADIUS }, '& .MuiOutlinedInput-notchedOutline': { borderColor: theme.border }, '& .MuiInputLabel-root': { color: theme.textSec }, '& .MuiSvgIcon-root': { color: theme.textSec }, '& .MuiFormControl-root, & .MuiTextField-root': { minWidth: 0, width: '100%' } }}>
+        <TextField size="small" placeholder={tab === 'market' ? 'Поиск по площадке' : 'Поиск в инвентаре'} inputProps={{ 'aria-label': 'Поиск' }} value={query} onChange={e => setQuery(e.target.value)} sx={{ gridColumn: { xs: '1 / -1', sm: 'auto' } }} />
+        <TextField select size="small" SelectProps={filterSelectProps} label="Коллекция" value={collection} onChange={e => setCollection(e.target.value)} sx={{ gridColumn: { xs: '1 / -1', sm: 'auto' } }}>
           <MenuItem value="all">Все коллекции</MenuItem>
           {CASE_CATALOG.filter(definition => !isHiddenCase(definition) || caseCount(loot, definition.id) > 0).map(definition => <MenuItem key={definition.id} value={definition.id}>{definition.name}</MenuItem>)}
         </TextField>
-        <TextField select size="small" SelectProps={filterSelectProps} value={tier} onChange={e => setTier(e.target.value)}><MenuItem value="all">Все редкости</MenuItem>{Object.values(RARITY_META).map(r => <MenuItem key={r.id} value={r.id}>{r.label}</MenuItem>)}</TextField>
-        <TextField select size="small" SelectProps={filterSelectProps} value={sort} onChange={e => setSort(e.target.value)}><MenuItem value="name">По имени</MenuItem><MenuItem value="rarity">По редкости ↓</MenuItem><MenuItem value="quantity">По количеству ↓</MenuItem></TextField>
+        <TextField select size="small" SelectProps={filterSelectProps} label="Редкость" value={tier} onChange={e => setTier(e.target.value)}><MenuItem value="all">Все редкости</MenuItem>{Object.values(RARITY_META).map(r => <MenuItem key={r.id} value={r.id}><Box component="span" sx={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', bgcolor: r.color, mr: 1 }} />{r.label}</MenuItem>)}</TextField>
+        <TextField select size="small" SelectProps={filterSelectProps} label="Сортировка" value={sort} onChange={e => setSort(e.target.value)}><MenuItem value="name">По имени</MenuItem><MenuItem value="rarity">По редкости ↓</MenuItem><MenuItem value="quantity">По количеству ↓</MenuItem></TextField>
       </Box>
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(auto-fill,minmax(180px,1fr))' }, gap: { xs: 0.75, sm: 2 } }}>{shown.map(row => { const i = itemInfo(row.id); const listing = tab === 'market' && !i.definition ? listingById.get(row.key) : undefined; return <StoreCard key={row.key} row={row} tab={tab} theme={theme} busy={busy} balanceVp={shop.balanceVp} price={i.definition ? priceOf(row.id) : null} listing={listing}         alreadyOwned={listing ? (i.pet ? ownedPetSet.has(i.pet.id) : !!shop.owned[listing.itemId]) : false}         canSell={!!((i.item && !i.item.stock && shop.owned[row.id]) || (i.pet && ownedPetSet.has(row.id)))}         favorite={favoriteSet.has(row.id)} onShow={showItem} onBuyCase={buyCase} onListing={listingAction} onToggleFavorite={toggleFavorite} />; })}</Box>       {hasMore && <Box ref={sentinelRef} sx={{ textAlign: 'center', py: 2 }}><Button onClick={() => setLimit(n => n + PAGE_SIZE)}>Показать ещё · {visible.length - limit}</Button></Box>}
-      {!visible.length && <Typography sx={{ textAlign: 'center', py: 6 }}>Предметов не найдено</Typography>}
+      </Box>
+      <Typography aria-live="polite" sx={{ fontSize: 12, color: theme.textSec, mb: 1, px: 0.25 }}>{tab === 'market' ? 'Лотов и кейсов' : 'Предметов'}: {visible.length}</Typography>
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(auto-fill, minmax(168px, 1fr))' }, gap: { xs: 0.75, sm: 1.25 } }}>{shown.map(row => { const i = itemInfo(row.id); const listing = tab === 'market' && !i.definition ? listingById.get(row.key) : undefined; return <StoreCard key={row.key} row={row} tab={tab} theme={theme} busy={busy} balanceVp={shop.balanceVp} price={i.definition ? priceOf(row.id) : null} listing={listing} alreadyOwned={listing ? (i.pet ? ownedPetSet.has(i.pet.id) : !!shop.owned[listing.itemId]) : false} equipped={tab === 'inventory' && (equippedIds.has(row.id) || (!!i.pet && pets.equippedPet?.id === row.id))} favorite={favoriteSet.has(row.id)} onShow={showItem} onBuyCase={buyCase} onListing={listingAction} onToggleFavorite={toggleFavorite} />; })}</Box>
+      {hasMore && <Box ref={sentinelRef} sx={{ textAlign: 'center', py: 2 }}><Button onClick={() => setLimit(n => n + PAGE_SIZE)}>Показать ещё · {visible.length - limit}</Button></Box>}
+      {!visible.length && <Box sx={{ textAlign: 'center', py: 8, color: theme.textSec }}>
+        <Search sx={{ fontSize: 44, opacity: 0.6 }} />
+        <Typography sx={{ mt: 1, fontWeight: 700, color: theme.text }}>Предметов не найдено</Typography>
+        <Typography sx={{ fontSize: 13, mt: 0.5 }}>{tab === 'market' ? 'На площадке пока нет таких лотов.' : 'Попробуйте сбросить фильтры.'}</Typography>
+        {(query || category !== 'all' || tier !== 'all' || collection !== 'all') && <Button sx={{ mt: 1.5 }} onClick={() => { setQuery(''); setCategory('all'); setTier('all'); setCollection('all'); }}>Сбросить фильтры</Button>}
+      </Box>}
       </Box>
       </Box>
     </DialogContent>
     <Dialog open={!!selected} fullWidth maxWidth="md" onClose={() => !busy && setSelected(null)} PaperProps={{ sx: panelSx }}>
-      <DialogTitle>{selectedCase ? `Кейс «${selectedCase.name}»` : selectedPet ? selectedPet.name : item?.name}</DialogTitle><DialogContent>
+      <DialogTitle component="div" sx={{ display: 'flex', alignItems: 'center', gap: 1, borderBottom: `1px solid ${theme.border}`, py: 1.5 }}>
+        <Typography component="h2" sx={{ flex: 1, minWidth: 0, fontSize: 18, fontWeight: 800 }}>{selectedCase ? `Кейс «${selectedCase.name}»` : selectedPet ? selectedPet.name : item?.name}</Typography>
+        <IconButton aria-label="Закрыть" disabled={busy} onClick={() => setSelected(null)} sx={{ color: theme.textSec, '&:hover': { color: theme.text, bgcolor: theme.bgHover } }}><Close /></IconButton>
+      </DialogTitle><DialogContent sx={{ pt: '16px !important', pb: 3 }}>
         {selectedCase ? <>
             {phase === 'idle' && <>
-            <CaseArt definition={selectedCase} price={selectedPrice} /><Typography sx={{ color: theme.textSec }}>{isHiddenCase(selectedCase) ? 'Кейс временно снят с продажи: питомцы на доработке.' : null} {caseDescription(selectedCase) || (selectedCase.packs.length ? 'Внутри один уникальный пак: обводка, плашка и пузырь. Паки этой коллекции не встречаются в других кейсах.' : 'Внутри один случайный питомец из этой коллекции.')}</Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', sm: '220px minmax(0, 1fr)' }, gap: 2, alignItems: 'center', p: 2, borderRadius: UI_SURFACE_RADIUS, border: `1px solid ${(selectedCase.color || theme.accent)}44`, background: `radial-gradient(circle at 18% 50%, ${(selectedCase.color || theme.accent)}26, transparent 60%), ${theme.bgInput}` }}>
+              <CaseArt definition={selectedCase} price={selectedPrice} size={140} />
+              <Box sx={{ minWidth: 0 }}>
+                <Typography sx={{ fontSize: 11, fontWeight: 900, letterSpacing: 1.2, textTransform: 'uppercase', color: selectedCase.color || theme.accent }}>Кейс · {caseContents(selectedCase)}</Typography>
+                <Typography sx={{ color: theme.textSec, mt: 0.75, fontSize: 14, lineHeight: 1.55 }}>{isHiddenCase(selectedCase) ? 'Кейс временно снят с продажи: питомцы на доработке.' : null} {caseDescription(selectedCase) || (selectedCase.packs.length ? 'Внутри один уникальный пак: обводка, плашка и пузырь. Паки этой коллекции не встречаются в других кейсах.' : 'Внутри один случайный питомец из этой коллекции.')}</Typography>
+              </Box>
+            </Box>
             {/* Два явных шага вместо двух безликих кнопок: сначала покупаем
                 кейс (шаг 1), затем открываем то, что уже в инвентаре (шаг 2).
                 Кнопки-CTA заливкой выделяются из общего стиля диалога (&&& —
@@ -557,13 +673,13 @@ export default function Store({ onClose }: { onClose: () => void }) {
               })()}
             </Box>
             {error && <Typography role="alert" color="error" sx={{ mt: 1 }}>{error}</Typography>}
-            <Typography sx={{ my: 2 }}>Содержимое и вероятности:</Typography>
-            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 1.5 }}>
-              {casePacks(selectedCase.id).map(p => <Box key={p.id}><PackArtwork pack={p} /><Typography variant="caption" sx={{ display: 'block', textAlign: 'center', mt: 0.5, color: theme.textSec }}>{RARITY_META[rarity(p)].label} · {packChance(p, selectedCase.id).toFixed(2)}%</Typography></Box>)}
+            <Typography component="h3" sx={{ mt: 3, mb: 1.25, fontSize: 11, fontWeight: 900, letterSpacing: 1.2, textTransform: 'uppercase', color: theme.textSec }}>Содержимое и вероятности:</Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: 1 }}>
+              {casePacks(selectedCase.id).map(p => <Box key={p.id} sx={{ position: 'relative', pb: 0.75 }}><PackArtwork pack={p} compact /><Typography variant="caption" sx={{ display: 'block', textAlign: 'center', mt: 0.5, color: RARITY_META[rarity(p)].color, fontWeight: 700 }}>{RARITY_META[rarity(p)].label} · <Box component="span" sx={{ color: theme.textSec }}>{formatChance(packChance(p, selectedCase.id))}</Box></Typography></Box>)}
               {selectedCase.rewards.filter(reward => reward.key.startsWith('pet-') && findPet(reward.key)).map(reward => {
                 const totalWeight = selectedCase.rewards.reduce((sum, r) => sum + r.weight, 0);
                 const pet = findPet(reward.key)!;
-                return <Box key={reward.key}><Box sx={{ height: 110, display: 'grid', placeItems: 'center' }}><PetArtwork petId={pet.id} size={84} /></Box><Typography variant="caption" sx={{ display: 'block', textAlign: 'center', mt: 0.5, color: theme.textSec }}>{RARITY_META[pet.rarity].label} · {(reward.weight / totalWeight * 100).toFixed(2)}%</Typography></Box>;
+                return <Box key={reward.key} sx={{ textAlign: 'center', p: 1, borderRadius: UI_SURFACE_RADIUS, border: `1px solid ${theme.border}`, borderBottom: `3px solid ${RARITY_META[pet.rarity].color}`, background: `linear-gradient(180deg, ${theme.bgInput} 40%, ${RARITY_META[pet.rarity].color}1f)` }}><Box sx={{ height: 96, display: 'grid', placeItems: 'center' }}><PetArtwork petId={pet.id} size={80} animate={false} /></Box><Typography sx={{ fontSize: 12, fontWeight: 700 }}>{pet.name}</Typography><Typography variant="caption" sx={{ display: 'block', color: theme.textSec }}>{RARITY_META[pet.rarity].label} · {formatChance(reward.weight / totalWeight * 100)}</Typography></Box>;
               })}
               {selectedCase.rewards.filter(reward => findReactionSkin(reward.key)).map(reward => {
                 const totalWeight = selectedCase.rewards.reduce((sum, r) => sum + r.weight, 0);
@@ -571,13 +687,16 @@ export default function Store({ onClose }: { onClose: () => void }) {
                 return <Box key={reward.key} sx={{ textAlign: 'center', p: 1, border: `1px solid ${theme.border}`, borderBottom: `3px solid ${RARITY_META[skin.rarity].color}`, borderRadius: UI_SURFACE_RADIUS }}>
                   <Box sx={{ height: 56, display: 'grid', placeItems: 'center' }}><ReactionGlyph value={skin.id} size={36} /></Box>
                   <Typography sx={{ fontSize: 12 }}>{skin.name}{reactionOwned[skin.id] ? ` · ×${reactionOwned[skin.id]}` : ''}</Typography>
-                  <Typography variant="caption" sx={{ display: 'block', color: theme.textSec }}>{RARITY_META[skin.rarity].label} · {(reward.weight / totalWeight * 100).toFixed(2)}%</Typography>
+                  <Typography variant="caption" sx={{ display: 'block', color: theme.textSec }}>{RARITY_META[skin.rarity].label} · {formatChance(reward.weight / totalWeight * 100)}</Typography>
                 </Box>;
               })}
             </Box>
           </>}
-          {phase !== 'idle' && (reel.length > 0 || petReel.length > 0 || reactionReel.length > 0) && <Box sx={{ position: 'relative', overflow: 'hidden', height: 155, bgcolor: theme.bgHeader, my: 2, '&:after': { content: '""', position: 'absolute', top: 0, bottom: 0, left: '50%', width: 3, bgcolor: theme.accent } }}>
-            <Box sx={{ display: 'flex', gap: '8px', position: 'absolute', left: '50%', transform: `translateX(-${phase === 'ready' ? 80 : 40 * 168 + 80}px)`, transition: phase === 'ready' ? 'none' : 'transform 5s cubic-bezier(.08,.65,.12,1)' }}>
+          {phase !== 'idle' && (reel.length > 0 || petReel.length > 0 || reactionReel.length > 0) && <Box sx={{ position: 'relative', overflow: 'hidden', height: 168, my: 2, borderRadius: UI_SURFACE_RADIUS, border: `1px solid ${theme.border}`, bgcolor: theme.bgHeader,
+            // Затемнение краёв ленты и маркер-указатель по центру.
+            '&::before': { content: '""', position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none', background: `linear-gradient(90deg, ${theme.bgHeader} 0%, transparent 22%, transparent 78%, ${theme.bgHeader} 100%)` },
+            '&::after': { content: '""', position: 'absolute', top: 0, bottom: 0, left: 'calc(50% - 1px)', width: 2, zIndex: 2, bgcolor: theme.accent, boxShadow: `0 0 12px ${theme.accent}` } }}>
+            <Box sx={{ display: 'flex', gap: '8px', position: 'absolute', top: 8, left: '50%', transform: `translateX(-${phase === 'ready' ? 80 : 40 * 168 + 80}px)`, transition: phase === 'ready' ? 'none' : 'transform 5s cubic-bezier(.08,.65,.12,1)' }}>
               {reel.map((p, n) => <Box key={n} sx={{ width: 160, flexShrink: 0, height: 150, boxSizing: 'border-box', p: 0.5, borderBottom: `4px solid ${RARITY_META[rarity(p)].color}` }}><PackArtwork pack={p} compact /></Box>)}
               {petReel.map((id, n) => {
                 const pet = findPet(id)!;
@@ -620,23 +739,50 @@ export default function Store({ onClose }: { onClose: () => void }) {
             {bulkQueue.length > 0 && bulkIndex < bulkQueue.length && <Typography sx={{ mt: 1, color: theme.textSec }}>Открыто {bulkIndex} из {bulkQueue.length}</Typography>}
             <Button disabled={!pets.ownedPets.includes(petDrop)} onClick={() => { void pets.equip(petDrop).catch(reportError); setSelected(null); }}>{pets.equippedPet?.id === petDrop ? 'Питомец уже надет' : 'Надеть питомца'}</Button>
           </Box>}
-        </> : selectedPet ? <><Box sx={{ display: 'grid', placeItems: 'center', py: 2 }}><PetArtwork petId={selectedPet.id} size={140} /></Box>
-          <Typography sx={{ color: RARITY_META[selectedPet.rarity].color }}>{RARITY_META[selectedPet.rarity].label}</Typography>
-          <Typography sx={{ color: theme.textSec, mt: 1 }}>{selectedPet.name} — спутник, который живёт на экране рядом с чатом. Его можно перетаскивать, изменить размер и имя в профиле.</Typography>
-          {pets.ownedPets.includes(selectedPet.id)
-            ? <><Button disabled={busy} onClick={() => { void pets.equip(pets.equippedPet?.id === selectedPet.id ? null : selectedPet.id).catch(reportError); }}>{pets.equippedPet?.id === selectedPet.id ? 'Снять питомца' : 'Надеть питомца'}</Button>
-            <Box sx={{ mt: 2 }}>
-              <TextField type="number" label="Цена, ВП" value={salePrice} disabled={busy} onChange={e => setSalePrice(e.target.value)} inputProps={{ min: 6, max: 100000000, step: 1 }} error={!validSalePrice} helperText="Целое число от 6 до 100000000 ВП" />
-              <Typography>Комиссия 15%. Вы получите: {validSalePrice ? Math.floor(Number(salePrice) * 85 / 100) : 0} ВП</Typography>
-              <Button disabled={busy || !validSalePrice} onClick={sell}>Выставить за {validSalePrice ? salePrice : '—'} ВП</Button>
-            </Box></>
-            : <Typography sx={{ color: theme.textSec, mt: 1 }}>Питомец ещё не получен — его можно выпасть из кейса.</Typography>}
-        </> : item && <><Preview item={item} /><Typography>{item.description}</Typography>{!item.stock && <FormControlLabel control={<Checkbox checked={shop.colorModes[item.id] === 'theme'} onChange={e => shop.setColorMode(item.id, e.target.checked ? 'theme' : 'stock')} />} label="Под цвет темы (без галочки — стоковый цвет)" />}<Box><Button disabled={busy} onClick={() => selectShopItem(item.id)}>{item.stock ? 'Использовать стандартный вид' : 'Надеть / снять'}</Button>{!item.stock && shop.owned[item.id] && <Box sx={{ mt: 2 }}>
-          <TextField type="number" label="Цена, ВП" value={salePrice} disabled={busy} onChange={e => setSalePrice(e.target.value)} inputProps={{ min: 6, max: 100000000, step: 1 }} error={!validSalePrice} helperText="Целое число от 6 до 100000000 ВП" />
-          <Typography>Комиссия 15%. Вы получите: {validSalePrice ? Math.floor(Number(salePrice) * 85 / 100) : 0} ВП</Typography>
-          <Button disabled={busy || !validSalePrice} onClick={sell}>Выставить за {validSalePrice ? salePrice : '—'} ВП</Button>
-        </Box>}</Box>{error && <Typography role="alert" color="error">{error}</Typography>}</>}
-        <Button disabled={busy} onClick={() => setSelected(null)}>Закрыть</Button>
+        </> : (selectedPet || item) && (() => {
+          const id = (selectedPet?.id || item!.id);
+          const tier = RARITY_META[selectedPet ? selectedPet.rarity : item!.rarity || 'common'];
+          const ownedHere = selectedPet ? pets.ownedPets.includes(selectedPet.id) : !!item && !item.stock && !!shop.owned[item.id];
+          const on = selectedPet ? pets.equippedPet?.id === selectedPet.id : equippedIds.has(id);
+          const description = selectedPet ? `${selectedPet.name} — спутник, который живёт на экране рядом с чатом. Его можно перетаскивать, менять размер и имя в профиле.` : item!.description;
+          const collectionId = collectionOf(id);
+          const collectionName = collectionId ? findCase(collectionId)?.name : undefined;
+          const count = selectedPet ? (pets.petCounts?.[selectedPet.id] || 1) : rows.find(r => r.id === id)?.count || 1;
+          return <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', sm: 'minmax(0, 5fr) minmax(0, 6fr)' }, gap: { xs: 2, sm: 3 }, pt: 1 }}>
+            {/* Витрина предмета: крупный арт на фоне цвета редкости. */}
+            <Box sx={{ position: 'relative', borderRadius: UI_SURFACE_RADIUS, border: `1px solid ${tier.color}55`, background: `radial-gradient(circle at 50% 40%, ${tier.color}30, transparent 70%), ${theme.bgInput}`, display: 'grid', placeItems: 'center', minHeight: 220, overflow: 'hidden', '&::after': { content: '""', position: 'absolute', left: 0, right: 0, bottom: 0, height: 4, bgcolor: tier.color } }}>
+              <Box sx={{ width: '100%', transform: selectedPet ? 'none' : 'scale(1.35)' }}><ItemArt id={id} height={selectedPet ? 180 : 150} animate /></Box>
+            </Box>
+            <Box sx={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+                <Box sx={{ px: 1, py: 0.25, borderRadius: 999, fontSize: 12, fontWeight: 800, color: tier.color, border: `1px solid ${tier.color}66`, bgcolor: tier.color + '14' }}>{tier.label}</Box>
+                <Box sx={{ px: 1, py: 0.25, borderRadius: 999, fontSize: 12, fontWeight: 700, color: theme.textSec, border: `1px solid ${theme.border}` }}>{CATEGORY_LABELS[itemInfo(id).category || ''] || 'Предмет'}</Box>
+                {ownedHere && count > 1 && <Box sx={{ px: 1, py: 0.25, borderRadius: 999, fontSize: 12, fontWeight: 700, color: theme.text, border: `1px solid ${theme.border}` }}>{count} шт.</Box>}
+                {on && <Box sx={{ px: 1, py: 0.25, borderRadius: 999, fontSize: 12, fontWeight: 800, bgcolor: theme.accent, color: readableTextOn(theme.accent) }}>Надето</Box>}
+              </Box>
+              <Typography sx={{ color: theme.textSec, fontSize: 14, lineHeight: 1.55 }}>{description}</Typography>
+              {collectionName && <Typography sx={{ fontSize: 12.5, color: theme.textSec }}>Коллекция: <Box component="span" sx={{ color: theme.text, fontWeight: 700 }}>{collectionName}</Box></Typography>}
+              {item && !item.stock && <FormControlLabel sx={{ m: 0, '& .MuiFormControlLabel-label': { fontSize: 13.5 } }} control={<Checkbox size="small" checked={shop.colorModes[item.id] === 'theme'} onChange={e => shop.setColorMode(item.id, e.target.checked ? 'theme' : 'stock')} />} label="Под цвет темы (без галочки — стоковый цвет)" />}
+              {!ownedHere && !item?.stock
+                ? <Typography sx={{ color: theme.textSec, fontSize: 13.5 }}>{selectedPet ? 'Питомец ещё не получен — он выпадает из кейса или продаётся на площадке.' : 'Предмета нет в инвентаре — его можно получить из кейса или купить на площадке.'}</Typography>
+                : <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                  <Button variant="contained" disabled={busy} onClick={() => { if (selectedPet) void pets.equip(on ? null : selectedPet.id).catch(reportError); else selectShopItem(item!.id); }}
+                    sx={{ '&&': { m: 0, flex: 1, minWidth: 140 } }}>
+                    {item?.stock ? 'Использовать стандартный вид' : on ? 'Снять' : 'Надеть'}
+                  </Button>
+                  {item && !item.stock && <Button disabled={busy} aria-pressed={favoriteSet.has(item.id)} startIcon={<Box component="span" sx={{ color: favoriteSet.has(item.id) ? '#f5c518' : 'inherit', display: 'inline-flex' }}><StarGlyph filled={favoriteSet.has(item.id)} size={18} /></Box>} onClick={() => shop.toggleFavorite(item.id)} sx={{ '&&': { m: 0 } }}>{favoriteSet.has(item.id) ? 'В избранном' : 'В избранное'}</Button>}
+                </Box>}
+              {ownedHere && <Box sx={{ mt: 0.5, p: 1.5, borderRadius: UI_SURFACE_RADIUS, border: `1px solid ${theme.border}`, bgcolor: theme.bgInput }}>
+                <Typography sx={{ fontSize: 11, fontWeight: 900, letterSpacing: 1, textTransform: 'uppercase', color: theme.accent, mb: 1 }}>Продать на площадке</Typography>
+                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0, 1fr)', sm: 'minmax(0, 1fr) auto' }, gap: 1, alignItems: 'start' }}>
+                  <TextField size="small" type="number" label="Цена покупателя, ВП" value={salePrice} disabled={busy} onChange={e => setSalePrice(e.target.value)} inputProps={{ min: 6, max: 100000000, step: 1 }} error={!validSalePrice} helperText={validSalePrice ? `Вы получите ${Math.floor(Number(salePrice) * 85 / 100).toLocaleString('ru-RU')} ВП · комиссия 15%` : 'Целое число от 6 до 100000000 ВП'} />
+                  <Button variant="contained" disabled={busy || !validSalePrice} onClick={sell} sx={{ '&&': { m: 0, minHeight: 40 } }}>Выставить</Button>
+                </Box>
+              </Box>}
+            </Box>
+          </Box>;
+        })()}
+        {error && <Typography role="alert" sx={{ mt: 1.5, color: '#ff8a80', fontSize: 13.5 }}>{error}</Typography>}
       </DialogContent>
     </Dialog>
   </Dialog>;
