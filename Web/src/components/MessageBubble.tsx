@@ -1647,6 +1647,7 @@ function MessageBubble({
         onPointerLeave={(e) => { if (e.pointerType === 'mouse') hoverNone(); }}
         sx={{
           width: singleVisual ? 'fit-content' : 'auto',
+          overflowX: 'hidden',
           // Фото и видео не ужимаются настройкой ширины: пузырь по ширине кадра.
           maxWidth: hasVisualMedia ? '100%' : `${maxWidthPct}%`,
           ...(singleVisual ? { display: 'flex', flexDirection: 'column', alignItems: 'stretch' } : {}),
@@ -1841,7 +1842,7 @@ function MessageBubble({
                 <IconButton aria-label="Предыдущее вложение" onClick={e => { e.stopPropagation(); const el = attachmentsRef.current; el?.scrollBy({ left: -el.clientWidth, behavior: 'smooth' }); }} sx={{ color: 'inherit' }}>←</IconButton>
                 <IconButton aria-label="Следующее вложение" onClick={e => { e.stopPropagation(); const el = attachmentsRef.current; el?.scrollBy({ left: el.clientWidth, behavior: 'smooth' }); }} sx={{ color: 'inherit' }}>→</IconButton>
               </Box>}
-              <Box ref={attachmentsRef} tabIndex={message.attachments?.length ? 0 : undefined} role="region" aria-label="Вложения поста" sx={{ display: 'flex', width: message.attachments?.length && !isRoundNote && !isSticker && !singleVisual ? 360 : singleVisual ? (frameWidth || 'fit-content') : undefined, maxWidth: '100%', overflowX: singleVisual ? 'visible' : 'auto', scrollSnapType: singleVisual ? undefined : 'x mandatory', gap: 1 }}>
+              <Box ref={attachmentsRef} tabIndex={message.attachments?.length ? 0 : undefined} role="region" aria-label="Вложения поста" sx={{ display: 'flex', width: message.attachments?.length && !isRoundNote && !isSticker && !singleVisual ? 360 : singleVisual ? (frameWidth || 'auto') : undefined, maxWidth: '100%', overflowX: 'hidden', scrollSnapType: singleVisual ? undefined : 'x mandatory', gap: 1 }}>
               {(message.attachments || []).map((attachment, index, attachments) => {
                 const attachmentUrl = resolveFileUrl(attachment.fileUrl);
                 const isAudio = attachment.mimeType?.startsWith('audio/') || (attachments.length === 1 && message.type === 'voice');
@@ -2042,3 +2043,4 @@ export default memo(
     && prev.isGroupStart === next.isGroupStart
     && prev.isGroupEnd === next.isGroupEnd
 );
+
