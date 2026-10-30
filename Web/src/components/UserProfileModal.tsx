@@ -19,6 +19,7 @@ import { skinColors } from '../utils/skinColors';
 import { usePetStore } from '../store/petStore';
 import PetArtwork from './PetArtwork';
 import { useAvatarFill } from '../hooks/useAvatarColor';
+import SecurityBars from './SecurityBars';
 
 function initials(n: string) { return (n || '?').split(' ').filter(Boolean).map(w => w[0]).join('').toUpperCase().slice(0, 2); }
 
@@ -182,7 +183,7 @@ export default function UserProfileModal({ user, open, onClose }: Props) {
           </Box>
         );
       })()}
-      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mt: { xs: -5, sm: -7 }, px: { xs: 2, sm: 3 } }}>
+      <Box sx={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', mt: { xs: -5, sm: -7 }, px: { xs: 2, sm: 3 } }}>
         <Avatar src={user.avatarUrl || undefined} sx={{
           width: { xs: 80, sm: 112 }, height: { xs: 80, sm: 112 }, fontSize: { xs: 30, sm: 40 }, ...avatarFillSx,
           border: `4px solid ${theme.bgChat}`, boxShadow: `0 0 24px ${accent}70`,
@@ -205,6 +206,7 @@ export default function UserProfileModal({ user, open, onClose }: Props) {
             ? user.pinnedTrackId
             : remotePinned?.userId === user.id ? remotePinned.trackId : user.pinnedTrackId}
         />
+        <SecurityBars user={user} theme={theme} />
       </Box>
       <Box sx={{ px: { xs: 2, sm: 3 }, py: { xs: 1.5, sm: 2 } }}>
         {custom?.showcase && (

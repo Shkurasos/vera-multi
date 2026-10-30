@@ -21,6 +21,8 @@ export interface User {
   neutralRatingsCount?: number;
   communityTrustScore?: number;
   reputationScore?: number;
+  /** Кол-во предупреждений от администрации (0 = чистая репутация). */
+  adminWarnings?: number;
   /** DEV-режим по IP (сервер выставляет). Открывает весь магазин и inspector. */
   isDev?: boolean;
   /** Админ-режим (сервер выставляет). Всё в магазине бесплатно. */
