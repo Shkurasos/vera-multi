@@ -26,8 +26,10 @@ export default function SecurityBars({ user, theme }: SecurityBarsProps) {
         flexDirection: 'row',
         gap: 1,
         position: 'absolute',
-        top: 10,
-        right: 10,
+        // Баннер шапки 96/140px, блок контента наезжает на него на 40/56px.
+        // Смещение ставит полоски сразу под шапкой, а не на цветном фоне.
+        top: { xs: 48, sm: 64 },
+        left: 12,
         zIndex: 10,
       }}
     >
