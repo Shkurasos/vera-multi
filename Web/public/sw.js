@@ -3,14 +3,15 @@
  * - Runtime: NetworkFirst для /api/chats, /api/messages/:chatId, /api/music/*,
  *   /api/users/*, /api/auth/me (кэш — только без сети);
  *   Stale-While-Revalidate для /uploads/*.
- * - CacheFirst для /assets/** и статические медиа.
+ * - CacheFirst для неизменной статики и медиа (бандлы /assets/ — NetworkFirst).
  * - Fallback: если сеть недоступна и есть кэш — отдаём его,
  *   данные подгружаются из IndexedDB-архива (offlineStore / localArchive).
  */
-// v11: API перешли на NetworkFirst; смена имени сносит старый runtime-кэш
-// с устаревшим /api/auth/me.
-const CACHE = 'vera-v11';
-const RUNTIME_CACHE = 'vera-runtime-v11';
+// v12: оболочка приложения (index.html, /assets/*) перешла на NetworkFirst.
+// Иначе обычное обновление страницы отдавало закэшированный index.html и старые
+// JS-бандлы, и исправления не доходили до пользователя до переустановки SW.
+const CACHE = 'vera-v12';
+const RUNTIME_CACHE = 'vera-runtime-v12';
 const APP_SHELL = ['./', './index.html', './vera.svg', './vera-icon.png', './favicon.ico', './icons/icon-192.png', './icons/icon-512.png', './manifest.webmanifest'];
 
 // Runtime-кэшируемые API-префиксы (Stale-While-Revalidate).
@@ -75,8 +76,26 @@ self.addEventListener('fetch', (event) => {
       url.pathname.startsWith('/@') ||
       url.pathname.startsWith('/socket.io')) return;
 
-  // --- CacheFirst для статических ассетов и медиа ---
-  if (url.pathname.startsWith('/assets/') || /\.(png|jpg|jpeg|svg|webp|css|js|woff2?|ttf)$/i.test(url.pathname)) {
+  // Оболочка приложения: NetworkFirst. index.html и бандлы в /assets/ меняются
+  // при каждом деплое, поэтому кэш — только запас на случай отсутствия сети.
+  // Иначе обычное обновление страницы поднимало закэшированную старую версию.
+  if (req.mode === 'navigate' || url.pathname === '/' || url.pathname.endsWith('/index.html') || url.pathname.startsWith('/assets/')) {
+    event.respondWith(
+      fetch(req).then((res) => {
+        if (res.ok) {
+          const clone = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, clone)).catch(() => {});
+        }
+        return res;
+      }).catch(() =>
+        caches.match(req).then((cached) => cached || caches.match('./index.html')),
+      ),
+    );
+    return;
+  }
+
+  // --- CacheFirst для неизменной статики и медиа (бандлы /assets/ — выше) ---
+  if (/\.(png|jpg|jpeg|svg|webp|css|js|woff2?|ttf)$/i.test(url.pathname)) {
     event.respondWith(
       caches.match(req).then((cached) => {
         if (cached) return cached;
@@ -128,20 +147,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Навигация: NetworkFirst с fallback на index.html. Свежий index.html
-  // сохраняем — офлайн откроется последняя версия клиента, а не версия с установки SW.
-  if (req.mode === 'navigate') {
-    event.respondWith(
-      fetch(req).then((res) => {
-        const type = res.headers.get('content-type') || '';
-        if (res.ok && type.includes('text/html')) {
-          const clone = res.clone();
-          caches.open(CACHE).then((c) => c.put('./index.html', clone)).catch(() => {});
-        }
-        return res;
-      }).catch(() => caches.match('./index.html')),
-    );
-  }
+  // Прочая навигация уже обработана выше (NetworkFirst).
 });
 
 // Background Sync: когда сеть возвращается, шлём клиенту сигнал flush.

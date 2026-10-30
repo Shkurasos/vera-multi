@@ -966,7 +966,7 @@ const CLIENT_DIST = path.join(__dirname, '..', 'Web', 'dist');
 // index.html и version.json не кэшируем: после выкладки новой сборки клиент
 // должен увидеть новый buildId и при перезагрузке получить новые ссылки на
 // ассеты. Сами ассеты с хешем в имени кэшируются как обычно.
-const NO_CACHE_CLIENT_FILES = new Set(['index.html', 'version.json']);
+const NO_CACHE_CLIENT_FILES = new Set(['index.html', 'version.json', 'sw.js']);
 if (fs.existsSync(CLIENT_DIST)) {
   app.use(express.static(CLIENT_DIST, {
     setHeaders(res, filePath) {
