@@ -92,7 +92,8 @@ test('musicStore loads from cache when offline', () => {
   const src = fs.readFileSync(path.join(__dirname, 'src/store/musicStore.ts'), 'utf8');
   assert.ok(src.includes('useOfflineStore'), 'musicStore импортирует useOfflineStore');
   assert.ok(src.includes('getCachedMusicLibrary'), 'musicStore читает кэш музыки офлайн');
-  assert.ok(src.includes('fetchAndCacheFile'), 'musicStore кэширует файлы треков');
+  // Аудио — в отдельном сторе music_files (без лимита file_cache на 200 записей).
+  assert.ok(src.includes('cacheMusicTrack') && src.includes('syncMusicFiles'), 'musicStore кэширует файлы треков');
 });
 
 test('sw.js runtime-caches API and media', () => {
@@ -104,4 +105,13 @@ test('sw.js runtime-caches API and media', () => {
   assert.ok(src.includes('/uploads/'), 'SW кэширует /uploads/');
   assert.ok(src.includes('RUNTIME_CACHE'), 'SW имеет отдельный runtime-кэш');
   assert.ok(src.includes('Stale-While-Revalidate'), 'SW использует SWR стратегию');
+  // API — NetworkFirst: устаревший /api/auth/me из кэша подменял текущего
+  // пользователя, и свои сообщения рисовались как чужие.
+  assert.ok(src.includes('NetworkFirst'), 'API идут сначала в сеть');
+  assert.ok(/fetch\(req\)\.then[\s\S]{0,200}\.catch\(\(\) => cache\.match\(req\)/.test(src), 'кэш API — только при сбое сети');
+});
+
+test('authApi.me идёт мимо кэша сервис-воркера', () => {
+  const src = fs.readFileSync(path.join(__dirname, 'src/services/api.ts'), 'utf8');
+  assert.match(src, /me: \(\) => api\.get\('\/auth\/me', \{[^}]*'vera-probe'/);
 });

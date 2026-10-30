@@ -35,6 +35,8 @@ export interface User {
   activeSelfCard?: string;
   /** Активный пузырь сообщений — виден собеседникам. */
   activeBubble?: string;
+  /** Аккаунт-бот (в поиске — «/ник»). */
+  isBot?: boolean;
 }
 
 export type ReputationVoteValue = 'positive' | 'neutral' | 'negative';
@@ -121,6 +123,13 @@ export interface MessageReaction {
   userIds: string[];
 }
 
+/** Inline-кнопка под сообщением бота (как в Telegram Bot API). */
+export interface InlineButton {
+  text: string;
+  callback_data?: string;
+  web_app?: { url: string };
+}
+
 export interface Message {
   id: string;
   chatId: string;
@@ -136,6 +145,10 @@ export interface Message {
   type: MessageType;
   content?: string;
   attachments?: MessageAttachment[];
+  /** Стикер: ссылку на набор ставит сервер. */
+  sticker?: { id: string; packId: string; packName: string; emoji?: string };
+  /** Кнопки под сообщением бота. */
+  replyMarkup?: { inline_keyboard: InlineButton[][] } | null;
   reactions?: MessageReaction[];
   poll?: { question: string; multiple?: boolean; options: Array<{ id: string; text: string; votes: number; voterIds?: string[] }> };
   isEdited: boolean;

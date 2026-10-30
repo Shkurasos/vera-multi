@@ -17,6 +17,8 @@ function createStore() {
     if (name.endsWith('/peer')) return { isPeerAvailable: () => false };
     if (name.endsWith('/storeSyncSimple')) return { registerAccountStore: () => {} };
     if (name.endsWith('/offlineStore')) return { useOfflineStore: { getState: () => ({}) } };
+    if (name.endsWith('/offlineMode')) return { isAppOffline: () => false };
+    if (name.endsWith('/musicOfflineCache')) return { cacheMusicTrack: async () => {}, syncMusicFiles: () => {} };
     throw new Error(`Unexpected import: ${name}`);
   } };
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, 'src/store/musicStore.ts'), 'utf8'), {

@@ -31,15 +31,23 @@ function loadUiPrefs() {
       }
       if (name === 'zustand/middleware') return { persist: (factory) => factory };
       // Чистый модуль без зависимостей: транспилируем и отдаём как есть.
-      if (name === '../utils/colorAlpha') {
-        const sub = { exports: {} };
-        vm.runInContext(
-          ts.transpileModule(fs.readFileSync(path.join(__dirname, 'src/utils/colorAlpha.ts'), 'utf8'), {
-            compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS },
-          }).outputText,
-          vm.createContext({ exports: sub.exports, module: sub }),
-        );
-        return sub.exports;
+      if (name === '../utils/colorAlpha' || name === '../utils/avatarColors') {
+        const loadPure = (file, req) => {
+          const sub = { exports: {} };
+          vm.runInContext(
+            ts.transpileModule(fs.readFileSync(path.join(__dirname, file), 'utf8'), {
+              compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS },
+            }).outputText,
+            vm.createContext({ exports: sub.exports, module: sub, require: req }),
+          );
+          return sub.exports;
+        };
+        if (name === '../utils/colorAlpha') return loadPure('src/utils/colorAlpha.ts');
+        // avatarColors берёт readableTextOn из соседнего contrast.ts.
+        return loadPure('src/utils/avatarColors.ts', (dep) => {
+          if (dep === './contrast') return loadPure('src/utils/contrast.ts');
+          throw new Error('unexpected require: ' + dep);
+        });
       }
       throw new Error('unexpected require: ' + name);
     },

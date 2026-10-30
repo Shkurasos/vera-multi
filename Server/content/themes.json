@@ -1,6 +1,63 @@
 {
-  "overrides": {},
+  "overrides": {
+    "33": {
+      "id": 33,
+      "name": "Сапфир",
+      "bg": "#000000",
+      "text": "#E7E9EA",
+      "accent": "#1D9BF0",
+      "bgSidebar": "#000000",
+      "bgChat": "#000000",
+      "bgHeader": "rgba(0,0,0,0.86)",
+      "bgInput": "#202327",
+      "bgBubbleOwn": "#1D9BF0",
+      "bgBubbleOther": "#16181C",
+      "bgHover": "#181818",
+      "bgActive": "#202327",
+      "textSec": "#71767B",
+      "border": "rgba(231,233,234,0.12)",
+      "online": "#00BA7C",
+      "backgroundGlowColor": "#8FE3CF",
+      "finish": "matte",
+      "bubbleOwnShadow": "0 3px 12px rgba(29,155,240,0.24)",
+      "bubbleOtherShadow": "0 2px 8px rgba(0,0,0,0.42)",
+      "sidebarGradient": "linear-gradient(180deg, #000000 0%, #050505 100%)",
+      "headerGradient": "linear-gradient(90deg, rgba(0,0,0,0.94) 0%, rgba(18,18,18,0.88) 100%)",
+      "bubbleOwnText": "#FFFFFF",
+      "bubbleOtherText": "#E7E9EA",
+      "backgroundGlowIntensity": 0.18,
+      "finishAmount": 0.42,
+      "disableBackgroundBlobs": true,
+      "disableBackgroundGlow": true,
+      "settings": {
+        "wallpaper": {
+          "stockId": "none",
+          "brightness": 1
+        },
+        "ui": {
+          "iconPack": "outlined",
+          "uiStyle": "flat",
+          "chatShape": "vera",
+          "chatBorder": true,
+          "chatFill": true
+        },
+        "appearance": {
+          "brightness": 1,
+          "textScale": 1,
+          "globalFontFamily": "'Inter', sans-serif"
+        },
+        "layout": {
+          "density": "compact",
+          "radius": 4,
+          "bubbleRadius": 10,
+          "messageMaxWidth": 72,
+          "showTabs": true,
+          "showAvatarsInList": true
+        }
+      }
+    }
+  },
   "removed": [],
   "added": [],
-  "updatedAt": null
+  "updatedAt": "2026-10-30T13:32:56.459Z"
 }

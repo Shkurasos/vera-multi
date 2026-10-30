@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { usersApi, themesApi } from '../services/api';
-import { enableStoreSync } from '../services/storeSyncSimple';
+import { enableStoreSync, isStoreSyncReady } from '../services/storeSyncSimple';
 import { themePreset } from './themePresets';
 // Настройки, которые живут В ТЕМЕ (обои, звук, иконки, анимации, внешний вид,
 // макет). Ни один из этих сторов не импортирует themeStore — цикла нет.
@@ -11,6 +11,7 @@ import { useUiPrefsStore, type IconPack, type UiStyle, type ChatShape, type Squi
 import { useAnimStore, type AnimKey } from './animStore';
 import { useUserSettingsStore, type LayoutSettings, type WallClockPos, type WallClockDatePos, type WallClockSecondsPos } from './userSettingsStore';
 import { normalizeWallClockPos } from './userSettingsStore';
+import type { AvatarPaletteMode } from '../utils/avatarColors';
 
 export type ThemeFinish = 'solid' | 'glass' | 'matte' | 'metal';
 
@@ -49,7 +50,8 @@ export interface ThemeSettings {
   /** Звук уведомлений по умолчанию. */
   sound?: { globalSound: ChatSoundSetting | null; globalVolume: number };
   /** Иконки и стиль интерфейса. */
-  ui?: { iconPack: IconPack; customPack?: string | null; uiStyle: UiStyle; chatShape: ChatShape; chatBorder: boolean; chatFill: boolean; squircle?: Partial<SquircleRadii>; uiModes?: Partial<UiModes>; navOpacity?: number; navHeight?: number; iconSize?: number };
+  /** customPack — только в старых снимках; при применении игнорируется. */
+  ui?: { iconPack: IconPack; customPack?: string | null; uiStyle: UiStyle; chatShape: ChatShape; chatBorder: boolean; chatFill: boolean; squircle?: Partial<SquircleRadii>; uiModes?: Partial<UiModes>; navOpacity?: number; navHeight?: number; iconSize?: number; avatarPalette?: AvatarPaletteMode; avatarColors?: string[]; avatarGradient?: boolean };
   /** Включённые группы анимаций. */
   animations?: Partial<Record<AnimKey, boolean>>;
   /**
@@ -1620,7 +1622,112 @@ export const useThemeStore = create<ThemeState>()(
 
 // Тема, кастомные скины и фон чата принадлежат аккаунту и должны
 // восстанавливаться на новом устройстве после привязки по QR.
-enableStoreSync('theme', useThemeStore);
+// Хуки: тяжёлые data URL фото не влезают в лимит синка (128 КБ) — их не шлём
+// и не затираем локальные копии; после чужого снапшота пересобираем объект
+// темы по themeId и применяем её настройки (иконки, стиль, макет…).
+enableStoreSync('theme', useThemeStore, 800, {
+  snapshot: compactThemeSnapshot,
+  merge: keepLocalThemePhotos,
+  afterRemote: rebuildActiveTheme,
+});
+
+/** data URL длиннее этого в синк не идёт: фото живут в своём хранилище. */
+const SYNC_PHOTO_LIMIT = 16 * 1024;
+const heavyPhoto = (v: unknown): boolean =>
+  typeof v === 'string' && v.startsWith('data:') && v.length > SYNC_PHOTO_LIMIT;
+
+function compactSettings(settings?: ThemeSettings): ThemeSettings | undefined {
+  if (!settings?.wallpaper || !heavyPhoto(settings.wallpaper.photo)) return settings;
+  return { ...settings, wallpaper: { ...settings.wallpaper, photo: undefined } };
+}
+
+function compactThemeSnapshot(data: any): any {
+  const out = { ...data };
+  if (heavyPhoto(out.chatPhoto)) delete out.chatPhoto;
+  if (heavyPhoto(out.chatBgImage)) { delete out.chatBgImage; delete out.chatBgImageOpacity; }
+  if (Array.isArray(out.customThemes)) {
+    out.customThemes = out.customThemes.map((t: Theme) => {
+      if (!t) return t;
+      const next: Theme = { ...t, settings: compactSettings(t.settings) };
+      if (heavyPhoto(next.chatBgImage)) { delete next.chatBgImage; delete next.chatBgImageOpacity; }
+      return next;
+    });
+  }
+  if (out.settingsByTheme && typeof out.settingsByTheme === 'object') {
+    out.settingsByTheme = Object.fromEntries(Object.entries(out.settingsByTheme as Record<string, ThemeSettings>)
+      .map(([k, v]) => [k, compactSettings(v)]));
+  }
+  return out;
+}
+
+/** Фото, срезанные compactThemeSnapshot, на этом устройстве остаются. */
+function keepLocalThemePhotos(current: any, next: any): any {
+  const out = { ...next };
+  if (Array.isArray(out.customThemes) && Array.isArray(current?.customThemes)) {
+    const local = new Map<number, Theme>(current.customThemes.filter(Boolean).map((t: Theme) => [t.id, t]));
+    out.customThemes = out.customThemes.map((t: Theme) => {
+      const mine = t && local.get(t.id);
+      if (!mine || t.chatBgImage || !mine.chatBgImage) return t;
+      return { ...t, chatBgImage: mine.chatBgImage, chatBgImageOpacity: mine.chatBgImageOpacity };
+    });
+  }
+  return out;
+}
+
+/**
+ * После снапшота с сервера/другого устройства: `theme` — производное от
+ * themeId (в синк не входит), поэтому собираем его заново и применяем
+ * настройки выбранной темы к живым сторам.
+ */
+function rebuildActiveTheme(): void {
+  const s = useThemeStore.getState();
+  const base = s.customThemes.find(t => t && t.id === s.themeId)
+    || s.builtinThemes.find(t => t.id === s.themeId)
+    || THEMES.find(t => t.id === s.themeId)
+    || s.theme;
+  const theme: Theme = s.chatBgImage
+    ? { ...base, chatBgImage: s.chatBgImage, chatBgImageOpacity: s.chatBgImageOpacity }
+    : base;
+  useThemeStore.setState({ theme, themeVersion: s.themeVersion + 1 });
+  applyingThemeSettings = true;
+  try { applyRestoredThemeSettings(); } finally { applyingThemeSettings = false; }
+}
+
+/**
+ * Иконки, стиль, анимации и макет правятся в живых сторах, а в тему раньше
+ * попадали только при её сохранении или переключении — до этого другие
+ * устройства их не видели. Теперь снимок активной темы обновляется сам
+ * (с задержкой) и уезжает с синком темы. Совпадающий снимок не пишется:
+ * применение чужих настроек не вызывает ответную отправку.
+ */
+let applyingThemeSettings = false;
+let settingsWatchTimer: ReturnType<typeof setTimeout> | null = null;
+
+function captureActiveThemeSettings(): void {
+  settingsWatchTimer = null;
+  if (applyingThemeSettings) return;
+  // До сверки с сервером снимок записал бы настройки сброшенного/чужого
+  // состояния поверх темы аккаунта.
+  if (!isStoreSyncReady('theme')) return;
+  const s = useThemeStore.getState();
+  if (s.themeId === null || s.themeId === undefined) return;
+  const key = String(s.themeId);
+  const snap = snapshotThemeSettings();
+  if (JSON.stringify(s.settingsByTheme[key] ?? null) === JSON.stringify(snap)) return;
+  useThemeStore.setState({ settingsByTheme: { ...s.settingsByTheme, [key]: snap } });
+}
+
+function watchLiveThemeSettings(): void {
+  const schedule = () => {
+    if (applyingThemeSettings) return;
+    if (settingsWatchTimer) clearTimeout(settingsWatchTimer);
+    settingsWatchTimer = setTimeout(captureActiveThemeSettings, 600);
+  };
+  // В vm-тестах соседние сторы бывают пустыми заглушками модулей.
+  for (const store of [useUiPrefsStore, useAnimStore, useChatSoundStore, useUserSettingsStore, useChatBgPrefsStore]) {
+    store?.subscribe?.(schedule);
+  }
+}
 
 let builtinSocketBound = false;
 
@@ -1680,6 +1787,7 @@ export function applyRestoredThemeSettings(): void {
 if (typeof window !== 'undefined') {
   bindBuiltinThemesSocket();
   refreshBuiltinThemes();
+  watchLiveThemeSettings();
 }
 
 /**
@@ -1757,11 +1865,14 @@ export function snapshotThemeSettings(): ThemeSettings {
     },
     sound: { globalSound: snd.globalSound, globalVolume: snd.globalVolume },
     ui: {
-      iconPack: ui.iconPack, customPack: ui.customPack, uiStyle: ui.uiStyle, chatShape: ui.chatShape,
+      // Включённый свой пак (ui.customPack) в тему НЕ кладётся: он свой у
+      // каждого устройства. Общие на аккаунте — только сами паки (iconPackSync).
+      iconPack: ui.iconPack, uiStyle: ui.uiStyle, chatShape: ui.chatShape,
       chatBorder: ui.chatBorder, chatFill: ui.chatFill, squircle: { ...ui.squircle },
       uiModes: { ...ui.uiModes }, navOpacity: ui.navOpacity, navHeight: ui.navHeight,
       // Размер иконок живёт в userSettingsStore, но редактируется во вкладке «Иконки».
       iconSize: us.iconSize,
+      avatarPalette: ui.avatarPalette, avatarColors: [...ui.avatarColors], avatarGradient: ui.avatarGradient,
     },
     animations: { ...anim.enabled },
     appearance: {
@@ -1852,9 +1963,9 @@ export function applyThemeSettings(s?: ThemeSettings) {
     if (s.ui) {
       const ui = useUiPrefsStore.getState();
       ui.setIconPack(s.ui.iconPack);
-      // Свой пак — только если поле есть: у старых снимков и пресетов его
-      // нет, и переключение такой темы не должно снимать выбранный пак.
-      if (s.ui.customPack !== undefined) ui.setCustomPack(s.ui.customPack);
+      // s.ui.customPack намеренно игнорируется: включённый свой пак — настройка
+      // устройства. Старые снимки на сервере ещё содержат это поле, и раньше
+      // любое применение темы (синк, переподключение) выключало пак.
       ui.setUiStyle(s.ui.uiStyle);
       ui.setChatShape(s.ui.chatShape);
       ui.setChatBorder(s.ui.chatBorder);
@@ -1878,6 +1989,10 @@ export function applyThemeSettings(s?: ThemeSettings) {
       if (Number.isFinite(s.ui.iconSize)) {
         useUserSettingsStore.getState().set('iconSize', Math.min(40, Math.max(16, s.ui.iconSize as number)));
       }
+      // Цвета аватарок — только если поля есть: старые темы их не знают.
+      if (s.ui.avatarPalette !== undefined) ui.setAvatarPalette(s.ui.avatarPalette);
+      if (Array.isArray(s.ui.avatarColors)) ui.setAvatarColors(s.ui.avatarColors);
+      if (typeof s.ui.avatarGradient === 'boolean') ui.setAvatarGradient(s.ui.avatarGradient);
     }
     if (s.animations) useAnimStore.getState().setEnabledMap(s.animations);
     if (s.appearance) {

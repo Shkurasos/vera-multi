@@ -197,7 +197,9 @@ export default function MainLayout({ onPlayerHost }: { onPlayerHost: (node: HTML
   let bottomPad = '0px';
   let topPad = '0px';
   const sidePlayer = !isMobile && (playerPos === 'left' || playerPos === 'right');
-  const effectiveVerticalPos = isMobile && (playerPos === 'left' || playerPos === 'right' || playerPos === 'info')
+  // На телефоне боковых панелей нет: «Слева»/«Справа» падают вниз, а
+  // «В инфопанели» живёт внутри инфопанели и места под чатом не занимает.
+  const effectiveVerticalPos = isMobile && (playerPos === 'left' || playerPos === 'right')
     ? 'bottom'
     : playerPos;
   const maxSidePlayerWidth = Math.max(PLAYER_SIDE_MIN, Math.floor(windowWidth / 2));

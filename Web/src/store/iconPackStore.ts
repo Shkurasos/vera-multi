@@ -5,7 +5,8 @@ import type { BasePackId, CustomIcon, CustomIconPack } from '../utils/iconPackFo
 /**
  * Свои паки иконок. Хранятся в IndexedDB, а не в localStorage: в паке бывают
  * десятки картинок, и квота localStorage (~5 МБ) кончилась бы на втором паке.
- * Какой пак включён — живёт в uiPrefsStore.customPack (и сохраняется в теме).
+ * Сами паки общие на аккаунте (services/iconPackSync). Какой пак включён —
+ * uiPrefsStore.customPack, своё у каждого устройства.
  */
 
 const DB_NAME = 'vera-icon-packs';
@@ -55,6 +56,12 @@ interface IconPackState {
   packs: Record<string, CustomIconPack>;
   /** true, когда паки прочитаны из IndexedDB. */
   hydrated: boolean;
+  /**
+   * Идёт сверка с сервером (services/iconPackSync). Пока true, отсутствие
+   * выбранного пака на устройстве ещё не значит, что его удалили: он может
+   * быть в пути с другого устройства аккаунта.
+   */
+  syncing: boolean;
   /** Создать пак; возвращает id. */
   createPack: (name: string, base: BasePackId, icons?: Record<string, CustomIcon>) => string;
   /** Сохранить пак целиком (из редактора). */
@@ -68,6 +75,7 @@ export const useIconPackStore = create<IconPackState>()(
     (set, get) => ({
       packs: {},
       hydrated: false,
+      syncing: false,
       createPack: (name, base, icons = {}) => {
         const id = newId();
         set({ packs: { ...get().packs, [id]: { id, name, base, icons, updatedAt: Date.now() } } });

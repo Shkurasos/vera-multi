@@ -77,6 +77,8 @@ function openSqliteSource({ storeFile, jsonFile, keyDir, env, log, readOnly = fa
       }
       return store.isEmpty() ? null : store.load();
     },
+    loadExplicitTables: (db) => store.loadExplicitTables(db),
+    saveExplicitTables: (db) => store.saveExplicitTables(db),
     save: (db) => store.save(db),
     backupTo: (target) => store.backupTo(target),
     close: () => store.close(),

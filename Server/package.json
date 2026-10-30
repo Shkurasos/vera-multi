@@ -1,6 +1,6 @@
 {
   "name": "vera-multi-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "VERA Multi — единый сервер (REST + WebSocket) для веб-версии и десктоп-приложения",
   "private": true,
   "main": "server.js",

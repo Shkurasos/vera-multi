@@ -94,8 +94,8 @@ export default function ProfileCommentsWall({ targetUserId, targetUserName }: Pr
   }
 
   return (
-    <Box sx={{ mt: 3 }}>
-      <Typography sx={{ fontSize: 15, fontWeight: 700, color: theme.text, mb: 1.5 }}>
+    <Box sx={{ mt: { xs: 2, sm: 3 } }}>
+      <Typography sx={{ fontSize: { xs: 14, sm: 15 }, fontWeight: 700, color: theme.text, mb: { xs: 1, sm: 1.5 } }}>
         Стена комментариев{targetUserName ? ` · ${targetUserName}` : ''}
       </Typography>
 
@@ -103,13 +103,13 @@ export default function ProfileCommentsWall({ targetUserId, targetUserName }: Pr
         <Box sx={{
           display: 'flex', gap: 0.75, alignItems: 'flex-end',
           bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`,
-          borderRadius: UI_PROFILE_INNER_RADIUS, p: 1.25, mb: 2,
+          borderRadius: UI_PROFILE_INNER_RADIUS, p: { xs: 1, sm: 1.25 }, mb: { xs: 1.5, sm: 2 },
         }}>
           <Avatar 
             src={me.avatarUrl || undefined} 
             sx={{ 
-              width: 40, 
-              height: 40, 
+              width: { xs: 32, sm: 40 }, 
+              height: { xs: 32, sm: 40 }, 
               flexShrink: 0,
               bgcolor: theme.accent + '80',
             }}

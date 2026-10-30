@@ -14,8 +14,8 @@ android {
         applicationId = "app.vera.multi"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.3"
         // Адрес сервера; переопределяется: gradlew assembleRelease -PveraServerUrl=https://...
         // localhost:3000 на телефоне работает через USB: adb reverse tcp:3000 tcp:3000
         val serverUrl = (project.findProperty("veraServerUrl") as String?) ?: "http://localhost:3000"

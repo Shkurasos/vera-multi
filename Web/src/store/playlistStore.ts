@@ -2,6 +2,27 @@ import { create } from 'zustand';
 import { Playlist, Track } from '../types';
 import { musicApi } from '../services/api';
 import { registerAccountStore } from '../services/storeSyncSimple';
+import { useOfflineStore } from './offlineStore';
+import { isAppOffline } from '../services/offlineMode';
+import { getMusicCoverUrl, getMusicFileUrl, syncMusicFiles } from '../services/musicOfflineCache';
+
+/** Треки плейлистов — для фоновой загрузки аудио в офлайн-медиатеку. */
+function playlistTracks(list: Playlist[]): Track[] {
+  return list.flatMap((p) => (p.tracks || []).map((pt) => pt.track).filter(Boolean));
+}
+
+/** Офлайн аудио плейлиста играет из IndexedDB: подменяем ссылки на blob: URL. */
+async function withOfflineFiles(list: Playlist[]): Promise<Playlist[]> {
+  return Promise.all(list.map(async (p) => ({
+    ...p,
+    tracks: await Promise.all((p.tracks || []).map(async (pt) => {
+      if (!pt?.track?.id) return pt;
+      const fileUrl = await getMusicFileUrl(pt.track.id).catch(() => null);
+      const coverUrl = await getMusicCoverUrl(pt.track.id).catch(() => null);
+      return { ...pt, track: { ...pt.track, fileUrl: fileUrl || pt.track.fileUrl, coverUrl: coverUrl || pt.track.coverUrl } };
+    })),
+  })));
+}
 
 interface PlaylistState {
   playlists: Playlist[];
@@ -32,9 +53,16 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
   load: async () => {
     set({ loading: true });
     try {
+      if (isAppOffline()) {
+        const cached = await useOfflineStore.getState().getCachedPlaylists().catch(() => []);
+        set({ playlists: await withOfflineFiles(cached as Playlist[]) });
+        return;
+      }
       const res = await musicApi.getPlaylists();
       const list = Array.isArray(res.data) ? res.data : (res.data?.playlists || []);
       set({ playlists: list });
+      void useOfflineStore.getState().cachePlaylists(list).catch(() => {});
+      syncMusicFiles('playlists', playlistTracks(list));
     } catch (e) {
       console.error('Не удалось загрузить плейлисты', e);
     } finally {

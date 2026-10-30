@@ -3,8 +3,19 @@ import { Bot } from '../types/bots';
 
 export const botsApi = {
   getMyBots: () => api.get<Bot[]>('/bots/my'),
-  createBot: (name: string, username: string) => api.post<Bot>('/bots/create', { name, username }),
-  getBot: (username: string) => api.get<Bot>(`/bots/${username}`),
+  /** Токен приходит один раз — в ответе на создание или перевыпуск. */
+  createBot: (name: string, username: string) => api.post<{ bot: Bot; token: string }>('/bots/create', { name, username }),
+  reissueToken: (id: string) => api.post<{ bot: Bot; token: string }>(`/bots/${encodeURIComponent(id)}/token`),
+  deleteBot: (id: string) => api.delete(`/bots/${encodeURIComponent(id)}`),
+  getBot: (username: string) => api.get<Bot>(`/bots/${encodeURIComponent(username)}`),
+  /**
+   * Подписанный запуск мини-приложения бота: по короткому имени (ссылка
+   * vera://app/<бот>/<имя>) или кнопкой у поля ввода (без app).
+   */
+  appInit: (username: string, app?: string) =>
+    api.post<{ url: string; title: string; initData: string; bot: { username: string; name: string } }>(
+      '/bots/app-init', { username, ...(app ? { app } : {}) },
+    ),
 };
 
 export const aiApi = {

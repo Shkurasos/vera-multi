@@ -32,7 +32,7 @@ import { bubbleSkin, selfcardSkin } from '../utils/bubbleSkin';
 import { mirrorBubble } from '../utils/mirrorBubble';
 import { ringPoint, continueRingDrag } from '../utils/roundNote';
 import { type RoundShape, isRoundNoteName, roundShapeFromName, roundShapePath, roundShapeMaskSx, nearestFraction } from '../utils/roundShape';
-import { clampBubble, metaOnRight, normalizeMetaPos } from '../utils/bubbleSettings';
+import { clampBubble, metaAnchor, normalizeMetaPos } from '../utils/bubbleSettings';
 import type { BubbleMetaPos } from '../utils/bubbleSettings';
 import { clampAlpha, withAlpha, isTranslucentColor } from '../utils/colorAlpha';
 import { bubbleBackground } from '../utils/bubbleGradient';
@@ -56,6 +56,26 @@ import { useClockAvoid } from '../hooks/useClockAvoid';
 import { useReactionSkinStore, reactionLabel } from '../store/reactionSkinStore';
 import ReactionGlyph from './ReactionGlyph';
 import { useAvatarFill } from '../hooks/useAvatarColor';
+
+// Самая длинная сторона фото или видео в пузыре. Высота ограничена так же,
+// поэтому ширина кадра известна до загрузки файла и подпись не прыгает.
+const MEDIA_MAX_SIDE = 420;
+// Размеры, снятые с уже загруженных файлов. Сервер их не хранит, а пузырь
+// при каждом открытии чата создаётся заново — без памяти подпись снова
+// сжималась бы в столбик до конца загрузки.
+const mediaFrameCache = new Map<string, { width: number; height: number }>();
+
+/**
+ * Ширина кадра в пузыре по размерам файла. Без размеров вернёт 0 —
+ * тогда ширину снимет сам файл, когда загрузится.
+ */
+function mediaFrameWidth(width?: number, height?: number): number {
+  const w = Number(width);
+  const h = Number(height);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return 0;
+  return Math.round(w * Math.min(1, MEDIA_MAX_SIDE / Math.max(w, h)));
+}
+
 
 interface Props {
   message: Message;
@@ -89,8 +109,10 @@ interface Props {
   bubblePadding?: number;
   /** Выравнивание по стенке: текст прижат к стороне пузыря (свои — вправо, чужие — влево). */
   bubbleWallAlign?: boolean;
-  /** Где в пузыре время и галочки. */
-  bubbleMetaPos?: BubbleMetaPos;
+  /** Где время и галочки в своём пузыре. */
+  bubbleMetaPosOwn?: BubbleMetaPos;
+  /** Где время и галочки в чужом пузыре. */
+  bubbleMetaPosOther?: BubbleMetaPos;
   /** Соседние сообщения того же автора в пределах одной даты. */
   isGroupStart?: boolean;
   isGroupEnd?: boolean;
@@ -315,12 +337,17 @@ interface ImageViewerProps {
   gallery?: string[];
   /** Индекс этой картинки в галерее (с него открывается просмотр). */
   index?: number;
+  /** Размеры файла: ширина пузыря ставится сразу, не дожидаясь загрузки. */
+  frameWidth?: number;
+  frameHeight?: number;
+  /** Файл загрузился без размеров во вложении — сообщаем реальные. */
+  onMediaLoad?: (el: HTMLImageElement) => void;
   /** ПКМ по картинке: (событие, src картинки, на которую кликнули). */
   onContextMenu?: (e: React.MouseEvent, src: string) => void;
 }
 
 /** Просмотр картинки: клик открывает полноэкранный лайтбокс (зум, поворот, листание галереи). */
-export function ImageViewer({ src, border, tile = false, fill = false, gallery, index = 0, onContextMenu }: ImageViewerProps) {
+export function ImageViewer({ src, border, tile = false, fill = false, gallery, index = 0, frameWidth = 0, frameHeight = 0, onMediaLoad, onContextMenu }: ImageViewerProps) {
   const images = gallery && gallery.length ? gallery : [src];
   const safeIndex = Math.min(Math.max(index, 0), images.length - 1);
   const [idx, setIdx] = useState(safeIndex);
@@ -372,7 +399,7 @@ export function ImageViewer({ src, border, tile = false, fill = false, gallery, 
           border: `1px solid ${border}`,
         } : {
           mt: 0.75, cursor: 'zoom-in',
-          display: 'block', maxWidth: '100%',
+          display: 'block', width: 'fit-content', maxWidth: '100%',
           overflow: 'hidden', borderRadius: 2,
           border: `1px solid ${border}`,
         }}>
@@ -380,9 +407,15 @@ export function ImageViewer({ src, border, tile = false, fill = false, gallery, 
           position: 'absolute', inset: 0, width: '100%', height: '100%',
           objectFit: 'cover', display: 'block',
         } : {
-          width: '100%', height: 'auto', maxHeight: 420,
+          // Размер известен заранее: пузырь и подпись сразу в ширине кадра,
+          // а не сжимаются в столбик, пока файл грузится.
+          width: frameWidth || 'auto', maxWidth: '100%',
+          height: 'auto', maxHeight: MEDIA_MAX_SIDE,
+          ...(frameWidth && frameHeight ? { aspectRatio: `${frameWidth} / ${frameHeight}` } : {}),
           objectFit: 'contain', display: 'block',
-        }} />
+        }}
+          onLoad={(e) => { if (!tile) onMediaLoad?.(e.currentTarget); }}
+        />
       </Box>
       {open && createPortal((
         <Box
@@ -738,19 +771,20 @@ function RoundVideoNote({ src, accent, shape = 'circle' }: { src: string; accent
 }
 
 // ── Видеоплеер ───────────────────────────────────────────────────────────────
-function VideoPlayer({ src }: { src: string }) {
+function VideoPlayer({ src, frameWidth = 0, frameHeight = 0, onMediaLoad }: { src: string; frameWidth?: number; frameHeight?: number; onMediaLoad?: (el: HTMLVideoElement) => void }) {
   const [modalOpen, setModalOpen] = useState(false);
   return (
     <>
       <Box onClick={() => setModalOpen(true)} sx={{
         position: 'relative', cursor: 'pointer', borderRadius: 2, overflow: 'hidden',
-        maxWidth: '100%', display: 'block', height: 'auto',
+        width: 'fit-content', maxWidth: '100%', display: 'block',
         '&:hover .play-overlay': { opacity: 1 },
       }}>
         <video src={src} style={{
-          display: 'block', width: '100%', height: '100%',
-          maxHeight: 420, objectFit: 'contain', background: '#000',
-        }} preload="metadata" />
+          display: 'block', width: frameWidth || 'auto', maxWidth: '100%',
+          height: 'auto', maxHeight: MEDIA_MAX_SIDE, objectFit: 'contain', background: '#000',
+          ...(frameWidth && frameHeight ? { aspectRatio: `${frameWidth} / ${frameHeight}` } : {}),
+        }} preload="metadata" onLoadedMetadata={(e) => onMediaLoad?.(e.currentTarget)} />
         <Box className="play-overlay" sx={{
           position: 'absolute', inset: 0, bgcolor: 'rgba(0,0,0,0.4)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -862,7 +896,8 @@ function MessageBubble({
   bubbleTextSize,
   bubblePadding = 6,
   bubbleWallAlign = false,
-  bubbleMetaPos = 'belowLeft',
+  bubbleMetaPosOwn = 'bottomLeft',
+  bubbleMetaPosOther = 'bottomLeft',
   isGroupStart = true,
   isGroupEnd = true,
 }: Props) {
@@ -919,10 +954,12 @@ function MessageBubble({
   // auto — как обычно (свои справа, чужие слева); left/right — все с одной стороны.
   const isOwnSide = messageAlign === 'left' ? false : messageAlign === 'right' ? true : isOwn;
   const maxWidthPct = Math.min(95, Math.max(35, messageMaxWidth || 72));
-  // Время и галочки: в строке с текстом (справа/слева) или отдельной строкой снизу.
-  const metaPos = normalizeMetaPos(bubbleMetaPos);
-  const metaInline = metaPos === 'inlineRight' || metaPos === 'inlineLeft';
-  const metaRight = metaOnRight(metaPos, isOwnSide);
+  // Свои и чужие сообщения настраиваются отдельно. «Свои» — по автору, а не по
+  // стороне: при выравнивании «все слева» мои сообщения остаются своими.
+  const metaPos = normalizeMetaPos(isOwn ? bubbleMetaPosOwn : bubbleMetaPosOther);
+  const meta = metaAnchor(metaPos);
+  // «По середине» — время в одной строке с коротким текстом, иначе отдельной строкой.
+  const metaInline = meta.v === 'middle';
   // «По стенке»: текст прижат к стороне, где стоит пузырь, а не к центру ленты.
   const wallTextAlign = bubbleWallAlign ? (isOwnSide ? 'right' : 'left') : undefined;
 
@@ -1101,12 +1138,54 @@ function MessageBubble({
   const isImageAttachment = (a: { mimeType?: string }) =>
     a.mimeType?.startsWith('image/') || (messageAttachments.length === 1 && message.type === 'photo');
   const imageAttachments = messageAttachments.filter(isImageAttachment);
+  const isVideoAttachment = (a: { mimeType?: string; fileName?: string }) =>
+    a.mimeType?.startsWith('video/') || (messageAttachments.length === 1 && message.type === 'video') || isRoundNoteName(a.fileName);
+  // Максимальная ширина пузыря — только для текста. У фото и видео ширина
+  // берётся по самому изображению, настройка её не ужимает.
+  const hasVisualMedia = imageAttachments.length > 0 || messageAttachments.some(isVideoAttachment);
+  // Одно фото или одно видео: пузырь сжимается до кадра, а не до процента ширины.
+  const singleVisual = !isRoundNote && !isSticker && messageAttachments.length === 1
+    && (imageAttachments.length === 1 || isVideoAttachment(messageAttachments[0]));
+  // Ширина одного кадра. Из вложения — сразу; иначе снимем с загруженного файла,
+  // чтобы подпись не сжималась в столбик и не разъезжалась обратно.
+  const fileUrlKey = messageAttachments[0]?.fileUrl || '';
+  const knownFrame = singleVisual
+    ? mediaFrameWidth(messageAttachments[0]?.width, messageAttachments[0]?.height) : 0;
+  const cachedFrame = !knownFrame && singleVisual && fileUrlKey ? mediaFrameCache.get(fileUrlKey) : undefined;
+  const [measuredFrame, setMeasuredFrame] = useState(() => cachedFrame?.width || 0);
+  const [measuredHeight, setMeasuredHeight] = useState(() => cachedFrame?.height || 0);
+  useEffect(() => {
+    const cached = !knownFrame && singleVisual && fileUrlKey ? mediaFrameCache.get(fileUrlKey) : undefined;
+    setMeasuredFrame(cached?.width || 0);
+    setMeasuredHeight(cached?.height || 0);
+  }, [message.id, fileUrlKey, knownFrame, singleVisual]);
+  const frameWidth = knownFrame || measuredFrame;
+  const frameHeight = (() => {
+    if (!frameWidth) return 0;
+    const w = Number(messageAttachments[0]?.width);
+    const h = Number(messageAttachments[0]?.height);
+    if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) return Math.round(frameWidth * h / w);
+    return measuredHeight;
+  })();
+  const lockMediaSize = (el: HTMLImageElement | HTMLVideoElement) => {
+    if (knownFrame) return;
+    const w = el instanceof HTMLVideoElement ? el.videoWidth : el.naturalWidth;
+    const h = el instanceof HTMLVideoElement ? el.videoHeight : el.naturalHeight;
+    const next = mediaFrameWidth(w, h);
+    if (!next || !h) return;
+    const nextHeight = Math.round(next * h / w);
+    setMeasuredFrame(next);
+    setMeasuredHeight(nextHeight);
+    if (fileUrlKey) mediaFrameCache.set(fileUrlKey, { width: next, height: nextHeight });
+  };
   // Альбом рисуем сеткой-коллажем, а не каруселью: так, как в ВК.
   const isPhotoAlbum = messageAttachments.length > 1
     && imageAttachments.length === messageAttachments.length;
   const albumUrls = imageAttachments.map((a) => resolveFileUrl(a.fileUrl));
   // Сколько плиток показывать в сетке (ВК ограничивает альбом, дальше — «ещё»).
   const albumTiles = albumUrls.slice(0, 9);
+  // «По середине» встаёт в одну строку только с коротким текстом без вложений.
+  const metaBesideText = metaInline && !!message.content && !attachment && !message.replyToId && !message.isEdited;
 
   // ПКМ/долгое нажатие по картинке: отдельное меню (копировать, сохранить…).
   const openImageMenu = (e: React.MouseEvent, src: string) => {
@@ -1394,7 +1473,7 @@ function MessageBubble({
   // Подпись к фото: по настройке темы — над изображением или под ним.
   const captionBelow = photoTextPos === 'bottom' && imageAttachments.length > 0 && !!message.content;
   const messageTextNode = message.content ? (
-    <Typography ref={textRef} sx={{ flex: 1, minWidth: 0, mt: captionBelow ? 0.75 : 0, textAlign: wallTextAlign, fontSize: bubbleTextSize || fontSize, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', fontFamily }}>
+    <Typography ref={textRef} sx={{ flex: hasVisualMedia ? 'none' : 1, minWidth: hasVisualMedia ? (singleVisual ? (frameWidth || '100%') : 0) : 0, width: hasVisualMedia ? (frameWidth || (singleVisual ? 0 : 'max-content')) : undefined, maxWidth: hasVisualMedia ? '100%' : undefined, mt: captionBelow ? 0.75 : 0, textAlign: wallTextAlign, fontSize: bubbleTextSize || fontSize, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', fontFamily }}>
       {contentParts.map((part, i) => part.type === 'emoji'
         ? <span key={i} style={{ fontSize: emojiSize, lineHeight: 1.2 }}>{part.value}</span>
         : part.type === 'link'
@@ -1410,6 +1489,57 @@ function MessageBubble({
       )}
     </Typography>
   ) : null;
+
+  // Время и галочки: своя строка сверху или снизу, а «по середине» встаёт
+  // рядом с коротким текстом. Центр прижимает строку по середине пузыря.
+  // Стрелка сетки — это сторона пузыря, а не порядок. Время всегда слева от
+  // галочек; «слева» прижимает эту пару к левому краю, «справа» — к правому.
+  const metaNode = (
+    <Box sx={{
+      display: 'flex', alignItems: 'center', flexShrink: 0, gap: 0.5,
+      width: metaBesideText ? 'auto' : singleVisual ? (frameWidth || 0) : '100%',
+      minWidth: !metaBesideText && singleVisual ? (frameWidth || '100%') : undefined,
+      maxWidth: !metaBesideText && singleVisual ? '100%' : undefined,
+      alignSelf: metaBesideText ? 'center' : 'stretch',
+      mt: meta.v === 'bottom' ? 0.25 : 0,
+      mb: meta.v === 'top' ? 0.25 : 0,
+      justifyContent: meta.h === 'right' ? 'flex-end' : meta.h === 'center' ? 'center' : 'flex-start',
+    }}>
+      <Typography sx={{ fontSize: 11, color: messageTimeText, opacity: messageTimeOpacity, fontFamily }}>
+        {formatTime(message.createdAt)}
+      </Typography>
+      {isOwn && (() => {
+        const status = (message as any).status as string | undefined;
+        if (status === 'pending' || status === 'sending' || status === 'failed') {
+          const tip = status === 'failed'
+            ? 'Не удалось отправить — попробуем снова'
+            : 'Ожидает отправки (нет сети или сервер недоступен)';
+          return (
+            <Tooltip title={tip}>
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <AccessTime sx={{ fontSize: 14, color: status === 'failed' ? '#ff8a80' : theme.textSec }} />
+              </Box>
+            </Tooltip>
+          );
+        }
+        const readBy = message.readBy || [];
+        const readByOthers = readBy.filter(id => id !== message.senderId);
+        const isRead = readByOthers.length > 0;
+        const tooltipText = isRead
+          ? `Прочитано ${readByOthers.length === 1 ? '1 чел.' : `${readByOthers.length} чел.`}`
+          : 'Отправлено';
+        return (
+          <Tooltip title={tooltipText}>
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              {isRead
+                ? <DoneAll sx={{ fontSize: 14, color: messageTimeText }} />
+                : <Done sx={{ fontSize: 14, color: messageTimeText }} />}
+            </Box>
+          </Tooltip>
+        );
+      })()}
+    </Box>
+  );
 
   return (
     <Box
@@ -1516,8 +1646,10 @@ function MessageBubble({
         }}
         onPointerLeave={(e) => { if (e.pointerType === 'mouse') hoverNone(); }}
         sx={{
-          width: 'auto',
-          maxWidth: `${maxWidthPct}%`,
+          width: singleVisual ? 'fit-content' : 'auto',
+          // Фото и видео не ужимаются настройкой ширины: пузырь по ширине кадра.
+          maxWidth: hasVisualMedia ? '100%' : `${maxWidthPct}%`,
+          ...(singleVisual ? { display: 'flex', flexDirection: 'column', alignItems: 'stretch' } : {}),
           minWidth: 0,
           position: 'relative',
           // Отодвижение от часов — сдвиг вбок трансформацией, а не зазором.
@@ -1618,6 +1750,7 @@ function MessageBubble({
           {message.replyToId && (
             <Box sx={{
               mb: 1, p: 1, borderRadius: 2,
+              ...(singleVisual ? { width: frameWidth || 0, minWidth: frameWidth ? undefined : '100%', maxWidth: '100%', boxSizing: 'border-box' } : {}),
               bgcolor: 'rgba(255,255,255,0.08)',
               borderLeft: `3px solid ${theme.accent}`,
             }}>
@@ -1630,10 +1763,18 @@ function MessageBubble({
             </Box>
           )}
 
-          <Box data-vera-meta-pos={metaPos} sx={metaInline && message.content && !attachment && !message.replyToId && !message.isEdited
-            ? { display: 'flex', flexDirection: metaPos === 'inlineLeft' ? 'row-reverse' : 'row', alignItems: 'center', gap: 1 }
-            : {}}>
+          <Box data-vera-meta-pos={metaPos} sx={metaBesideText
+            ? {
+              display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 1, width: '100%',
+              justifyContent: meta.h === 'right' ? 'flex-end' : meta.h === 'center' ? 'center' : 'flex-start',
+            }
+            : singleVisual
+              ? { display: 'flex', flexDirection: 'column', alignItems: 'stretch', width: frameWidth || 'fit-content', maxWidth: '100%' }
+              : {}}>
+              {!metaBesideText && meta.v === 'top' && metaNode}
+              {metaBesideText && meta.h !== 'right' && metaNode}
               {!captionBelow && messageTextNode}
+              {!metaBesideText && metaInline && metaNode}
 
               {message.type === 'poll' && message.poll && (() => {
                 const totalVotes = new Set(message.poll.options.flatMap(option => option.voterIds || [])).size;
@@ -1700,7 +1841,7 @@ function MessageBubble({
                 <IconButton aria-label="Предыдущее вложение" onClick={e => { e.stopPropagation(); const el = attachmentsRef.current; el?.scrollBy({ left: -el.clientWidth, behavior: 'smooth' }); }} sx={{ color: 'inherit' }}>←</IconButton>
                 <IconButton aria-label="Следующее вложение" onClick={e => { e.stopPropagation(); const el = attachmentsRef.current; el?.scrollBy({ left: el.clientWidth, behavior: 'smooth' }); }} sx={{ color: 'inherit' }}>→</IconButton>
               </Box>}
-              <Box ref={attachmentsRef} tabIndex={message.attachments?.length ? 0 : undefined} role="region" aria-label="Вложения поста" sx={{ display: 'flex', width: message.attachments?.length && !isRoundNote && !isSticker ? 360 : undefined, maxWidth: '100%', overflowX: 'auto', scrollSnapType: 'x mandatory', gap: 1 }}>
+              <Box ref={attachmentsRef} tabIndex={message.attachments?.length ? 0 : undefined} role="region" aria-label="Вложения поста" sx={{ display: 'flex', width: message.attachments?.length && !isRoundNote && !isSticker && !singleVisual ? 360 : singleVisual ? (frameWidth || 'fit-content') : undefined, maxWidth: '100%', overflowX: singleVisual ? 'visible' : 'auto', scrollSnapType: singleVisual ? undefined : 'x mandatory', gap: 1 }}>
               {(message.attachments || []).map((attachment, index, attachments) => {
                 const attachmentUrl = resolveFileUrl(attachment.fileUrl);
                 const isAudio = attachment.mimeType?.startsWith('audio/') || (attachments.length === 1 && message.type === 'voice');
@@ -1708,7 +1849,7 @@ function MessageBubble({
                 const isVideo = attachment.mimeType?.startsWith('video/') || (attachments.length === 1 && message.type === 'video') || isRoundNoteName(attachment.fileName);
                 const isImage = attachment.mimeType?.startsWith('image/') || (attachments.length === 1 && message.type === 'photo');
                 const isDocument = !isAudio && !isVideo && !isImage;
-                return <Box key={attachment.id || index} sx={{ flex: '0 0 100%', minWidth: 0, scrollSnapAlign: 'start' }}>
+                return <Box key={attachment.id || index} sx={{ flex: singleVisual ? '0 0 auto' : '0 0 100%', minWidth: 0, scrollSnapAlign: 'start' }}>
                   {attachments.length > 1 && <Typography sx={{ fontSize: 12, opacity: 0.75, mb: 0.5 }}>{index + 1} / {attachments.length} · Листайте →</Typography>}
               {isAudio && attachment && (
                 <AudioPlayer src={attachmentUrl} fileName={attachment.fileName} accent={theme.accent} attachmentId={attachment.id} />
@@ -1717,7 +1858,7 @@ function MessageBubble({
               {isVideo && attachment && (
                 isRoundNoteName(attachment.fileName) ?
                   <RoundVideoNote src={attachmentUrl} accent={theme.accent} shape={roundShapeFromName(attachment.fileName) || 'circle'} /> :
-                  <VideoPlayer src={attachmentUrl} />
+                  <VideoPlayer src={attachmentUrl} frameWidth={frameWidth} frameHeight={frameHeight} onMediaLoad={lockMediaSize} />
               )}
 
               {isImage && attachment && (
@@ -1732,7 +1873,7 @@ function MessageBubble({
                     sx={{ display: 'block', width: { xs: 140, md: 168 }, height: { xs: 140, md: 168 }, objectFit: 'contain', userSelect: 'none' }}
                   />
                 ) : (
-                  <ImageViewer src={attachmentUrl} border={theme.border} onContextMenu={openImageMenu} />
+                  <ImageViewer src={attachmentUrl} border={theme.border} frameWidth={frameWidth} frameHeight={frameHeight} onMediaLoad={lockMediaSize} onContextMenu={openImageMenu} />
                 )
               )}
 
@@ -1769,47 +1910,8 @@ function MessageBubble({
                 </Typography>
               )}
 
-              <Box sx={{
-                display: 'flex', alignItems: 'center', flexShrink: 0, gap: 1,
-                // Галочки ставим со стороны края пузыря: у «слева» они идут перед временем.
-                flexDirection: metaRight ? 'row' : 'row-reverse',
-                mt: metaInline && message.content && !attachment && !message.replyToId && !message.isEdited ? 0 : metaInline ? 0.75 : 0.25,
-                justifyContent: metaRight ? 'flex-end' : 'flex-start',
-              }}>
-                <Typography sx={{ fontSize: 11, color: messageTimeText, opacity: messageTimeOpacity, fontFamily }}>
-                  {formatTime(message.createdAt)}
-                </Typography>
-                {isOwn && (() => {
-                  const status = (message as any).status as string | undefined;
-                  if (status === 'pending' || status === 'sending' || status === 'failed') {
-                    const tip = status === 'failed'
-                      ? 'Не удалось отправить — попробуем снова'
-                      : 'Ожидает отправки (нет сети или сервер недоступен)';
-                    return (
-                      <Tooltip title={tip}>
-                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                          <AccessTime sx={{ fontSize: 14, color: status === 'failed' ? '#ff8a80' : theme.textSec }} />
-                        </Box>
-                      </Tooltip>
-                    );
-                  }
-                  const readBy = message.readBy || [];
-                  const readByOthers = readBy.filter(id => id !== message.senderId);
-                  const isRead = readByOthers.length > 0;
-                  const tooltipText = isRead
-                    ? `Прочитано ${readByOthers.length === 1 ? '1 чел.' : `${readByOthers.length} чел.`}`
-                    : 'Отправлено';
-                  return (
-                    <Tooltip title={tooltipText}>
-                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                        {isRead
-                          ? <DoneAll sx={{ fontSize: 14, color: messageTimeText }} />
-                          : <Done sx={{ fontSize: 14, color: messageTimeText }} />}
-                      </Box>
-                    </Tooltip>
-                  );
-                })()}
-              </Box>
+              {metaBesideText && meta.h === 'right' && metaNode}
+              {!metaBesideText && meta.v === 'bottom' && metaNode}
             </Box>
           </Box>
           {channelPost && <ChannelComments post={message} />}
@@ -1935,7 +2037,8 @@ export default memo(
     prev.messageTimeColor === next.messageTimeColor &&
     prev.messageAlign === next.messageAlign
     && prev.bubbleWallAlign === next.bubbleWallAlign
-    && prev.bubbleMetaPos === next.bubbleMetaPos
+    && prev.bubbleMetaPosOwn === next.bubbleMetaPosOwn
+    && prev.bubbleMetaPosOther === next.bubbleMetaPosOther
     && prev.isGroupStart === next.isGroupStart
     && prev.isGroupEnd === next.isGroupEnd
 );

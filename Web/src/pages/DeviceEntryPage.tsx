@@ -2,10 +2,19 @@ import { useEffect, useState } from 'react';
 import { Alert, Box, Button, Paper, Tab, Tabs, TextField, Typography } from '@mui/material';
 import { appealsApi, authApi } from '../services/api';
 import { useAuthStore } from '../store/authStore';
+import { saveOfflineCredential } from '../services/offlineAuth';
+import OfflineUnlock from '../components/OfflineUnlock';
 
 type Mode = 'login' | 'register' | 'link';
 
 export default function DeviceEntryPage() {
+  // Сервер недоступен: ник не спрашиваем, только пароль последнего пользователя.
+  const offlineLock = useAuthStore((s) => s.offlineLock);
+  if (offlineLock) return <OfflineUnlock info={offlineLock} />;
+  return <OnlineEntry />;
+}
+
+function OnlineEntry() {
   const [mode, setMode] = useState<Mode>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -49,6 +58,8 @@ export default function DeviceEntryPage() {
   async function finishAuth(data: any) {
     localStorage.setItem('vera_token', data.accessToken);
     if (data.user) localStorage.setItem('vera_user', JSON.stringify(data.user));
+    // Пароль подошёл на сервере — запоминаем его хэш для входа без сети.
+    try { await saveOfflineCredential(data.user, password); } catch { /* офлайн-вход не критичен */ }
     window.location.replace('/');
   }
 

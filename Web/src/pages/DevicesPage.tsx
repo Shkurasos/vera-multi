@@ -8,6 +8,7 @@ import { authApi, devicesApi, getDeviceId } from '../services/api';
 import { useThemeStore } from '../store/themeStore';
 import PageBackButton from '../components/PageBackButton';
 import { useUiPrefsStore } from '../store/uiPrefsStore';
+import { saveOfflineCredential } from '../services/offlineAuth';
 
 interface DeviceItem {
   id: string;
@@ -315,6 +316,11 @@ function PasswordPanel() {
     setBusy(true);
     try {
       await authApi.setPassword(next, hasPassword ? current : undefined);
+      // Новый пароль должен открывать приложение и без сети.
+      try {
+        const raw = localStorage.getItem('vera_user');
+        await saveOfflineCredential(raw ? JSON.parse(raw) : null, next);
+      } catch { /* офлайн-вход не критичен */ }
       setHasPassword(true);
       setCurrent(''); setNext(''); setNext2('');
       setMsg({ ok: true, text: 'Пароль сохранён. Теперь можно войти по нику и паролю на любом устройстве.' });

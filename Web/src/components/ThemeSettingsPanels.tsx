@@ -7,7 +7,7 @@ import { RestartAlt, Chat, Palette, Settings } from '@mui/icons-material';
 import { IconPackOverrideContext } from '../iconPackContext';
 import { useThemeStore, themeBaseWallpaperId } from '../store/themeStore';
 import {
-  useUserSettingsStore, type SidePos, type VertPos, type PlayerPos, type Density, type DesktopNavStyle,
+  useUserSettingsStore, type SidePos, type VertPos, type PlayerPos, type Density, type DesktopNavStyle, type LayoutSettings,
   type WallClockPos, type WallClockDatePos, type WallClockSecondsPos, type WallClockHudMode, type ChatDateAlign,
   normalizeHudUrl, WALL_CLOCK_HUD_HTML_MAX, WALL_CLOCK_HUD_HEIGHT_LIMITS,
 } from '../store/userSettingsStore';
@@ -22,12 +22,15 @@ import GapWallpaperPanel from './GapWallpaperPanel';
 import { GlobalSoundSettingsContent } from './GlobalSoundSettingsDialog';
 import LayoutDesignerDialog from './LayoutDesignerDialog';
 import BubbleSettingsControls from './BubbleSettingsControls';
-import { normalizeMetaPos } from '../utils/bubbleSettings';
+import { resolveMetaPair } from '../utils/bubbleSettings';
 import FontPicker from './FontPicker';
 import { APP_FONT_OPTIONS } from '../utils/appFont';
 import CustomIconPacksPanel from './CustomIconPacksPanel';
 import { SettingRow, SettingSlider, SettingSection, choiceGroupSx } from './SettingRow';
 import { ROUND_SHAPES, normalizeRoundShape } from '../utils/roundShape';
+import {
+  AVATAR_PALETTE_MODES, MAX_CUSTOM_AVATAR_COLORS, avatarPalette, avatarFill, type AvatarPaletteMode,
+} from '../utils/avatarColors';
 
 /** Пример для поля своего HUD: часы, которые берут время и цвет из сообщений приложения. */
 const HUD_HTML_EXAMPLE = `<div id="t" style="font:700 64px sans-serif;text-align:center"></div>
@@ -313,8 +316,90 @@ export function UiStylePanel() {
         checked={chatBorder} onChange={setChatBorder} />
       <RowToggle label="Заливка карточек" hint="Выключите — строка станет простой полосой во всю ширину"
         checked={chatFill} onChange={setChatFill} />
+
+      <AvatarColorsSection />
       <PanelNote>Стиль сохраняется вместе с темой и применяется при её переключении.</PanelNote>
     </Box>
+  );
+}
+
+// ── Цвета аватарок без фото ───────────────────────────────────────────────────
+/** Превью: несколько кружков с инициалами в текущей палитре. */
+const AVATAR_PREVIEW = ['Hub', 'Новые идеи', 'Скины', 'Доработки баги', 'Канал', 'Vera AI'];
+
+function AvatarColorsSection() {
+  const theme = useThemeStore((s) => s.theme);
+  const toggleSx = useToggleSx();
+  const { avatarPalette: mode, avatarColors, avatarGradient, setAvatarPalette, setAvatarColors, setAvatarGradient } = useUiPrefsStore();
+  const palette = useMemo(() => avatarPalette(mode, theme.accent, avatarColors), [mode, theme.accent, avatarColors]);
+  const [draftColor, setDraftColor] = useState('#e17076');
+  // «Свои» стартуют с текущей палитры, чтобы было что править, а не пустота.
+  const pickMode = (m: AvatarPaletteMode) => {
+    if (m === 'custom' && avatarColors.length === 0) setAvatarColors(palette);
+    setAvatarPalette(m);
+  };
+  const updateColor = (i: number, value: string) => {
+    const next = [...avatarColors];
+    next[i] = value;
+    setAvatarColors(next);
+  };
+  const removeColor = (i: number) => setAvatarColors(avatarColors.filter((_, j) => j !== i));
+  const addColor = () => setAvatarColors([...avatarColors, draftColor]);
+  const swatchSx = { width: 34, height: 34, p: 0, border: `1px solid ${theme.border}`, borderRadius: '50%', cursor: 'pointer', bgcolor: 'transparent', overflow: 'hidden' } as const;
+
+  return (
+    <>
+      <SettingSection title="Цвета аватарок" hint="Для чатов и людей без фото. Цвет закреплён за собеседником и одинаков везде." />
+      <SettingRow label="Палитра аватарок" hint={AVATAR_PALETTE_MODES.find((m) => m.id === mode)?.desc} stacked>
+        <ToggleButtonGroup exclusive fullWidth size="small" value={mode}
+          onChange={(_, v) => v && pickMode(v)} sx={toggleSx}>
+          {AVATAR_PALETTE_MODES.map((m) => <ToggleButton key={m.id} value={m.id}>{m.label}</ToggleButton>)}
+        </ToggleButtonGroup>
+      </SettingRow>
+      {mode === 'custom' && (
+        <SettingRow label="Свои цвета" hint={`До ${MAX_CUSTOM_AVATAR_COLORS} цветов. Нажмите на кружок, чтобы изменить, × — чтобы убрать.`} stacked>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+            {avatarColors.map((c, i) => (
+              // key по индексу: при смене цвета поле не пересоздаётся, и выбор цвета не закрывается.
+              <Box key={i} sx={{ position: 'relative' }}>
+                <Box component="input" type="color" value={c} aria-label={`Цвет ${i + 1}`}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateColor(i, e.target.value)}
+                  sx={swatchSx} />
+                <Box component="button" type="button" aria-label={`Убрать цвет ${i + 1}`} onClick={() => removeColor(i)}
+                  sx={{
+                    position: 'absolute', top: -6, right: -6, width: 18, height: 18, p: 0, lineHeight: '16px',
+                    borderRadius: '50%', border: `1px solid ${theme.border}`, bgcolor: theme.bgSidebar,
+                    color: theme.text, fontSize: 12, cursor: 'pointer',
+                  }}>×</Box>
+              </Box>
+            ))}
+            {avatarColors.length < MAX_CUSTOM_AVATAR_COLORS && (
+              <>
+                <Box component="input" type="color" value={draftColor} aria-label="Новый цвет"
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDraftColor(e.target.value)} sx={swatchSx} />
+                <Button size="small" onClick={addColor} sx={{ textTransform: 'none' }}>Добавить</Button>
+              </>
+            )}
+          </Box>
+        </SettingRow>
+      )}
+      <RowToggle label="Градиент на аватарках" hint="Мягкий перелив вместо ровной заливки"
+        checked={avatarGradient} onChange={setAvatarGradient} />
+      <Box aria-hidden sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', py: 1.25 }}>
+        {AVATAR_PREVIEW.map((name, i) => {
+          const fill = avatarFill(palette[i % palette.length], avatarGradient);
+          return (
+            <Box key={name} sx={{
+              width: 40, height: 40, borderRadius: 'var(--vera-sq-avatar, 50%)', display: 'flex',
+              alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 600,
+              backgroundColor: fill.bgcolor, backgroundImage: fill.backgroundImage, color: fill.color,
+            }}>
+              {name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2)}
+            </Box>
+          );
+        })}
+      </Box>
+    </>
   );
 }
 
@@ -554,10 +639,12 @@ export function MessagesPanel() {
         textSize: s.layout.bubbleTextSize ?? 15,
         padding: s.layout.bubblePadding ?? 6,
         wallAlign: s.layout.bubbleWallAlign ?? false,
-        metaPos: normalizeMetaPos(s.layout.bubbleMetaPos),
+        metaPosOwn: resolveMetaPair({ metaPos: s.layout.bubbleMetaPos, metaPosOwn: s.layout.bubbleMetaPosOwn, metaPosOther: s.layout.bubbleMetaPosOther }).own,
+        metaPosOther: resolveMetaPair({ metaPos: s.layout.bubbleMetaPos, metaPosOwn: s.layout.bubbleMetaPosOwn, metaPosOther: s.layout.bubbleMetaPosOther }).other,
       }} onChange={patch => {
         if (patch.wallAlign !== undefined) s.setLayout('bubbleWallAlign', patch.wallAlign);
-        if (patch.metaPos !== undefined) s.setLayout('bubbleMetaPos', patch.metaPos);
+        if (patch.metaPosOwn !== undefined) s.setLayout('bubbleMetaPosOwn', patch.metaPosOwn);
+        if (patch.metaPosOther !== undefined) s.setLayout('bubbleMetaPosOther', patch.metaPosOther);
         if (patch.enabled !== undefined) s.setLayout('bubbleEnabled', patch.enabled);
         if (patch.maxWidth !== undefined) s.setLayout('messageMaxWidth', patch.maxWidth);
         if (patch.textSize !== undefined) s.setLayout('bubbleTextSize', patch.textSize);
@@ -572,6 +659,11 @@ export function MessagesPanel() {
         hint="Видеосообщения, которые вы отправляете. Форму можно сменить и во время записи."
         value={s.roundShape ?? 'circle'} onChange={(v) => s.set('roundShape', normalizeRoundShape(v))}
         items={ROUND_SHAPES.map((r) => [r.id, r.label] as [string, string])} />
+      <ChoiceRow label="Текст у фото"
+        hint="Где подпись к фото: над изображением или под ним"
+        value={s.layout.photoTextPos}
+        onChange={(v) => s.setLayout('photoTextPos', v as 'top' | 'bottom')}
+        items={[['top', 'Текст над фото'], ['bottom', 'Текст под фото']]} />
       <PanelNote>Всё вместе сохраняется в теме.</PanelNote>
     </Box>
   );
@@ -616,6 +708,10 @@ export function LayoutPanel() {
       <ChoiceRow label="Шапка чата"
         value={s.layout.chatHeaderPos} onChange={(v) => s.setLayout('chatHeaderPos', v as VertPos)}
         items={[['top', 'Сверху'], ['bottom', 'Снизу']]} />
+      <ChoiceRow label="Шапка чата на телефоне"
+        hint="«Сплошная» — тёмная полоса во всю ширину. «Остров» — круглые кнопки и плашка с именем из матового стекла поверх обоев."
+        value={s.layout.mobileHeaderStyle ?? 'solid'} onChange={(v) => s.setLayout('mobileHeaderStyle', v as LayoutSettings['mobileHeaderStyle'])}
+        items={[['solid', 'Сплошная'], ['island', 'Остров']]} />
       <ChoiceRow label="Поле ввода чата"
         value={s.layout.chatInputPos} onChange={(v) => s.setLayout('chatInputPos', v as VertPos)}
         items={[['bottom', 'Снизу'], ['top', 'Сверху']]} />

@@ -10,10 +10,24 @@ import { initStoreSyncOnLogin, disableAllStoreSync } from '../services/storeSync
 import { prepareSettingsForAccount, disableSettingsSync } from './userSettingsStore';
 import { usePetStore } from './petStore';
 import { useReactionSkinStore } from './reactionSkinStore';
+import {
+  offlineLockInfo, verifyOfflinePassword, syncOfflineCredentialUser, clearOfflineCredential,
+  type OfflineLockInfo,
+} from '../services/offlineAuth';
+import { isAppOffline, setAppOffline } from '../services/offlineMode';
+import { startIconPackSync, stopIconPackSync } from '../services/iconPackSync';
+
+/** Ответа нет совсем (сеть, таймаут) или сервер лежит (Render 502/503). */
+function isUnreachable(e: any): boolean {
+  const status = e?.response?.status;
+  return !status || status >= 500;
+}
 
 async function hydrateAccount(user: User): Promise<void> {
   const changed = localStorage.getItem('vera_sync_active_account') !== user.id;
   localStorage.setItem('vera_user', JSON.stringify(user));
+  // Офлайн-пароль принадлежит только последнему вошедшему аккаунту.
+  syncOfflineCredentialUser(user);
   disableSettingsSync();
   await initStoreSyncOnLogin(user.id, () => {
     const themeId = Number((user as any).themeId || 0);
@@ -33,6 +47,9 @@ async function hydrateAccount(user: User): Promise<void> {
     }
   });
   prepareSettingsForAccount(user.id, changed);
+  // Свои паки иконок — отдельным каналом (они не влезают в синк сторов).
+  // Не ждём: докачка паков с картинками не должна задерживать вход.
+  void startIconPackSync(user.id, changed);
   // Надетые скины хранятся в профиле на сервере: без этого другое устройство
   // показывало свой локальный образ. Динамический импорт — shopStore сам
   // импортирует authStore.
@@ -57,6 +74,11 @@ interface AuthState {
    * показать причину и кнопку апелляции, а не молчаливый экран входа.
    */
   isBanned: boolean;
+  /** Сервер недоступен: вместо формы входа — экран «введите пароль». */
+  offlineLock: OfflineLockInfo | null;
+  /** Вошли без сети по сохранённому паролю — данные только локальные. */
+  isOfflineSession: boolean;
+  unlockOffline: (password: string) => Promise<boolean>;
   setUser: (user: User) => void;
   login: (token: string, user: User) => void;
   logout: () => Promise<void>;
@@ -83,6 +105,59 @@ export function peerInfoToUser(info: Awaited<ReturnType<typeof peer.info>>): Use
   } as User;
 }
 
+let reconnectTimer: ReturnType<typeof setInterval> | null = null;
+let reconnecting = false;
+
+function stopOfflineReconnect(): void {
+  if (reconnectTimer) clearInterval(reconnectTimer);
+  reconnectTimer = null;
+  if (typeof window !== 'undefined') window.removeEventListener('online', tryReconnect);
+}
+
+/**
+ * Сервер снова отвечает — выходим из офлайна без перезагрузки (музыка не
+ * обрывается). Проверяем голым fetch: axios-перехватчик в офлайне отдаёт кэш.
+ */
+async function tryReconnect(): Promise<void> {
+  if (reconnecting) return;
+  reconnecting = true;
+  try {
+    const token = localStorage.getItem('vera_token');
+    // vera-probe: сервис-воркер пропускает запрос мимо своего кэша.
+    const res = await fetch(`/api/auth/me?vera-probe=${Date.now()}`, {
+      credentials: 'include',
+      cache: 'no-store',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (res.status >= 500) return;
+    stopOfflineReconnect();
+    setAppOffline(false);
+    if (!res.ok || !token) {
+      // Токен истёк или его нет — обычный вход разберётся сам.
+      window.location.reload();
+      return;
+    }
+    const user = (await res.json()) as User;
+    try { await authApi.device(); } catch {}
+    connectSocket(token);
+    await hydrateAccount(user);
+    useAuthStore.setState({ user, token, isAuthenticated: true, isOfflineSession: false, offlineLock: null });
+    const [{ useChatStore }, { useMusicStore }] = await Promise.all([import('./chatStore'), import('./musicStore')]);
+    void useChatStore.getState().loadChats();
+    void useMusicStore.getState().loadTracks().catch(() => {});
+  } catch {
+    // Сети всё ещё нет — следующая попытка по таймеру или событию online.
+  } finally {
+    reconnecting = false;
+  }
+}
+
+function startOfflineReconnect(): void {
+  stopOfflineReconnect();
+  reconnectTimer = setInterval(() => { void tryReconnect(); }, 20_000);
+  window.addEventListener('online', tryReconnect);
+}
+
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   token: localStorage.getItem('vera_token'),
@@ -92,6 +167,20 @@ export const useAuthStore = create<AuthState>((set) => ({
   isAuthenticated: false,
   isPeerMode: isPeerAvailable(),
   isBanned: false,
+  offlineLock: null,
+  isOfflineSession: false,
+
+  unlockOffline: async (password) => {
+    const user = await verifyOfflinePassword(password);
+    if (!user) return false;
+    try { initArchive(user.id); } catch {}
+    set({
+      user, token: localStorage.getItem('vera_token'),
+      isAuthenticated: true, isOfflineSession: true, offlineLock: null,
+    });
+    startOfflineReconnect();
+    return true;
+  },
 
   setUser: (user) => {
     localStorage.setItem('vera_user', JSON.stringify(user));
@@ -124,8 +213,12 @@ export const useAuthStore = create<AuthState>((set) => ({
     closeArchive();
     disableSettingsSync();
     disableAllStoreSync();
+    stopIconPackSync();
+    stopOfflineReconnect();
+    // Вышел сам — без сети этот аккаунт больше не открывается.
+    clearOfflineCredential();
     localStorage.removeItem('vera_token');
-    set({ user: null, token: null, isAuthenticated: false });
+    set({ user: null, token: null, isAuthenticated: false, isOfflineSession: false, offlineLock: null });
   },
 
   checkAuth: async () => {
@@ -146,29 +239,21 @@ export const useAuthStore = create<AuthState>((set) => ({
       return;
     }
 
-    set({ isLoading: true });
+    set({ isLoading: true, offlineLock: null });
+    // Повторная проверка (кнопка «Проверить подключение») — старый таймер не нужен.
+    stopOfflineReconnect();
 
-    // Офлайн-режим: если сервер недоступен, пробуем использовать кэшированного пользователя.
-    const isOffline = () => {
-      if (typeof window !== 'undefined' && (window as any).veraDesktop) {
-        return !navigator.onLine;
-      }
-      return !navigator.onLine;
+    // Сервер недоступен: ник не спрашиваем — только пароль последнего
+    // пользователя этого устройства (см. offlineAuth). Никого не было — форма входа.
+    const enterOfflineLock = () => {
+      setAppOffline(true);
+      set({ offlineLock: offlineLockInfo(), isAuthenticated: false, isLoading: false });
+      startOfflineReconnect();
     };
 
-    if (isOffline()) {
-      const cachedUser = localStorage.getItem('vera_user');
-      const cachedToken = localStorage.getItem('vera_token');
-      if (cachedUser) {
-        try {
-          const user = JSON.parse(cachedUser);
-          set({ user, token: cachedToken || null, isAuthenticated: true, isLoading: false });
-          try { if (user?.id) initArchive(user.id); } catch {}
-          console.log('[auth] offline: used cached user', user.username);
-          return;
-        } catch {}
-      }
-      set({ isLoading: false, isAuthenticated: false });
+    setAppOffline(false);
+    if (isAppOffline()) {
+      enterOfflineLock();
       return;
     }
 
@@ -191,6 +276,11 @@ export const useAuthStore = create<AuthState>((set) => ({
           set({ isBanned: true });
           return;
         }
+        // Сервер не ответил — токен не виноват, не стираем его.
+        if (isUnreachable(e)) {
+          enterOfflineLock();
+          return;
+        }
         localStorage.removeItem('vera_token');
       }
     }
@@ -211,6 +301,10 @@ export const useAuthStore = create<AuthState>((set) => ({
       // Показываем экран с апелляцией вместо бесконечной попытки войти.
       if (e?.response?.data?.code === 'ACCOUNT_BANNED') {
         set({ isBanned: true, isAuthenticated: false });
+        return;
+      }
+      if (isUnreachable(e)) {
+        enterOfflineLock();
         return;
       }
       console.error('[auth] device login failed', e);

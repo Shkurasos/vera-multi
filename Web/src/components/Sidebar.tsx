@@ -8,10 +8,10 @@ import {
   Button, InputAdornment, Alert, Snackbar, Stack, Divider, Checkbox, FormControlLabel,
 } from '@mui/material';
 import {
-  Search, Group, PersonAdd, Archive,
+  Search, Group, Archive,
   PinDropOutlined as Pin, NotificationsOffOutlined as Mute, DeleteForever, Palette,
   LibraryMusic, AccountCircle, SmartToy, Security, ChevronLeft,
-  ContentCopy, ContentPaste, QrCode, Link,
+  ContentCopy, ContentPaste, QrCode,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useChatStore, chatActivityAt } from '../store/chatStore';
@@ -28,6 +28,8 @@ import { useSidebarViewStore } from '../store/sidebarViewStore';
 import { useChatBgPrefsStore } from '../store/chatBgPrefsStore';
 import { usePhotoBgUrl } from '../hooks/usePhotoBgUrl';
 import useWindowWidth from '../hooks/useWindowWidth';
+import { useAvatarFill, useAvatarPalette } from '../hooks/useAvatarColor';
+import { avatarColorFor, avatarFill } from '../utils/avatarColors';
 import { creationKind } from '../utils/deskBoard';
 
 /** Подсказка в диалоге создания: какой чат получится из введённого названия. */
@@ -54,16 +56,25 @@ import { membranePressSx, motion } from '../styles/motion';
 
 interface Props { open: boolean; onToggle: () => void; mobile?: boolean; }
 
-function timeAgo(d: string): string {
-  const diff = Date.now() - new Date(d).getTime();
-  const m = Math.floor(diff / 60000);
-  const h = Math.floor(diff / 3600000);
-  const day = Math.floor(diff / 86400000);
-  if (m < 1) return 'сейчас';
-  if (m < 60) return `${m} мин`;
-  if (h < 24) return `${h} ч`;
-  if (day < 7) return `${day} д`;
-  return new Date(d).toLocaleDateString('ru', { day: '2-digit', month: '2-digit' });
+const WEEKDAYS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+const MONTHS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+
+// Сегодня — относительное время; другие дни — день недели и число («пн, 27 окт»).
+// Прошлые годы — с годом, чтобы даты не путались.
+function timeAgo(d: string, now: Date = new Date()): string {
+  const date = new Date(d);
+  if (Number.isNaN(date.getTime())) return '';
+  const sameDay = date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
+  if (sameDay) {
+    const m = Math.floor((now.getTime() - date.getTime()) / 60000);
+    if (m < 1) return 'сейчас';
+    if (m < 60) return `${m} мин`;
+    return `${Math.floor(m / 60)} ч`;
+  }
+  const label = `${WEEKDAYS[date.getDay()]}, ${date.getDate()} ${MONTHS[date.getMonth()]}`;
+  return date.getFullYear() === now.getFullYear() ? label : `${label} ${date.getFullYear()}`;
 }
 
 function getInitials(name: string): string {
@@ -140,7 +151,15 @@ const SidebarChatRow = React.memo(function SidebarChatRow(props: SidebarChatRowP
     ? `Черновик: ${draft}`
     : chat.lastMessage?.content
       ? chat.lastMessage.content
-      : (chat.lastMessage?.attachments?.length ? '📎 Вложение' : 'Нет сообщений');
+      : chat.lastMessage?.type === 'sticker'
+        ? `${chat.lastMessage.sticker?.emoji || ''} Стикер`.trim()
+        : (chat.lastMessage?.attachments?.length ? '📎 Вложение' : 'Нет сообщений');
+  // Личка красится по собеседнику, группа/канал — по самому чату: так цвет
+  // совпадает с аватаркой этого же человека в сообщениях и профиле.
+  const avatarKey = chat.type === 'private' || (chat as any).type === 'direct'
+    ? (chat.members?.find(m => m.userId !== userId)?.userId || chat.id)
+    : chat.id;
+  const fill = useAvatarFill(avatarKey);
 
   return (
     <Tooltip title={avatarOnly ? name : ''} placement="right">
@@ -174,7 +193,7 @@ const SidebarChatRow = React.memo(function SidebarChatRow(props: SidebarChatRowP
                 <StarIcon sx={{ fontSize: 28, color: '#fff' }} />
               </Avatar>
             ) : (
-              <Avatar src={avatarUrl} sx={{ width: horizontal ? 52 : 46, height: horizontal ? 52 : 46, bgcolor: theme.accent, ...ringSx[active ? 1 : 0] }}>
+              <Avatar src={avatarUrl} sx={{ width: horizontal ? 52 : 46, height: horizontal ? 52 : 46, ...fill, fontWeight: 600, ...ringSx[active ? 1 : 0] }}>
                 {getInitials(name)}
               </Avatar>
             )
@@ -189,7 +208,7 @@ const SidebarChatRow = React.memo(function SidebarChatRow(props: SidebarChatRowP
               primary={
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: .5 }}>
                   <Typography noWrap sx={{ color: theme.text, fontWeight: pinned ? 700 : 600, flex: 1 }}>{pinned ? '📌 ' : ''}{name}</Typography>
-                  <Typography sx={{ color: theme.chatTimeColor || theme.textSec, fontSize: 11 }}>{timeAgo(updatedAt)}</Typography>
+                  <Typography sx={{ color: theme.chatTimeColor || theme.textSec, fontSize: 11, flexShrink: 0, whiteSpace: 'nowrap' }}>{timeAgo(updatedAt)}</Typography>
                 </Box>
               }
               secondary={<Typography noWrap sx={{ color: theme.textSec, fontSize: 13 }}>{lastText}</Typography>}
@@ -258,6 +277,8 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   const toggleArchiveView = useSidebarViewStore((s) => s.toggleArchiveView);
   const navOpacity = useUiPrefsStore((s) => s.navOpacity);
   const navHeight = useUiPrefsStore((s) => s.navHeight);
+  // Палитра для аватарок в результатах поиска (строки чатов берут её сами).
+  const avatarPal = useAvatarPalette();
   const [search, setSearch] = useState('');
   const [channelsFound, setChannelsFound] = useState<Pick<Chat, 'id' | 'name' | 'avatarUrl'>[]>([]);
   useEffect(() => {
@@ -275,15 +296,38 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       await loadChats(); setActiveChat(res.data); navigate('/chat/' + channelId); setSearch('');
     } catch (e: any) { alert(e.response?.data?.message || 'Не удалось открыть канал'); }
   }
-  const [addContactOpen, setAddContactOpen] = useState(false);
+  // Поиск как в Telegram: «@ник» в общей строке поиска ищет людей, «/ник» —
+  // ботов (например, /hub). Найденного открываем черновиком лички — в список
+  // чатов он попадёт только после первого сообщения.
+  const trimmedSearch = search.trim();
+  const searchKind: 'people' | 'bots' | null = trimmedSearch.startsWith('@') ? 'people'
+    : trimmedSearch.startsWith('/') ? 'bots' : null;
+  const userQuery = searchKind ? trimmedSearch.replace(/^[@/]+/, '') : '';
+  const [usersFound, setUsersFound] = useState<User[]>([]);
+  const [usersSearching, setUsersSearching] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setUsersFound([]);
+    if (!searchKind || userQuery.length < 2) { setUsersSearching(false); return; }
+    setUsersSearching(true);
+    const timer = setTimeout(() => {
+      usersApi.search(userQuery, searchKind)
+        .then(res => { if (!cancelled) setUsersFound((res.data as User[]) || []); })
+        .catch(() => { if (!cancelled) setUsersFound([]); })
+        .finally(() => { if (!cancelled) setUsersSearching(false); });
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [userQuery, searchKind]);
+  function openFoundUser(target: User) {
+    const chat = useChatStore.getState().openDirectDraft(target);
+    setSearch('');
+    setActiveChat(chat);
+    navigate(`/chat/${chat.id}`);
+  }
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [groupMembers, setGroupMembers] = useState<Record<string, boolean>>({});
   const [contactsForGroup, setContactsForGroup] = useState<Array<{ pubkey: string; name?: string }>>([]);
-  const [searchUser, setSearchUser] = useState('');
-  const [foundUsers, setFoundUsers] = useState<User[]>([]);
-  const [lastUserSearch, setLastUserSearch] = useState('');
-  const [searching, setSearching] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; chat: Chat } | null>(null);
   const [myPk, setMyPk] = useState<string>('');
   const [inviteInput, setInviteInput] = useState('');
@@ -334,7 +378,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
     try {
       await peer.addContact({ pubkey: parsed.pubkey, nodeId: parsed.pubkey, name: parsed.name });
       setInviteInput('');
-      setAddContactOpen(false);
+      setMyLinkDialogOpen(false);
       await loadChats();
       const chatId = myPk ? [myPk, parsed.pubkey].sort().join('|') : parsed.pubkey;
       // Ищем созданный direct-чат в актуальном сторе и делаем его активным,
@@ -431,7 +475,12 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       if (!c || !c.id) return false;
       const otherMember = c.members?.find(m => m.userId !== user?.id);
       const name = c.name || [otherMember?.user?.firstName, otherMember?.user?.lastName].filter(Boolean).join(' ') || otherMember?.user?.username || '';
-      const matchSearch = name.toLowerCase().includes(search.toLowerCase());
+      // «@ник» и «/ник» ищут и по нику собеседника, а не только по отображаемому имени.
+      const q = search.trim().toLowerCase();
+      const nick = /^[@/]/.test(q) ? q.replace(/^[@/]+/, '') : '';
+      const matchSearch = nick
+        ? (!c.name && !!otherMember?.user?.username?.toLowerCase().includes(nick)) || name.toLowerCase().includes(nick)
+        : name.toLowerCase().includes(q);
       if (archiveView) return matchSearch && isArchived(c.id);
       if (isArchived(c.id)) return false;
       if (tab === 'all') return matchSearch;
@@ -450,50 +499,27 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
     });
   }, [chats, search, tab, archiveView, user?.id, isPinned, isArchived]);
 
-  async function handleSearchUser() {
-    const query = searchUser.trim();
-    if (!query) return;
-    // vera://add/vera://link — это приглашение, а не текст для поиска людей:
-    // не дёргаем мёртвый серверный API (GET /api/users/search?q=vera://...).
+  // Enter в строке поиска: vera://-приглашение открывает диалог ссылки,
+  // «@ник» или «/бот» — первого найденного, адрес сайта — встроенный браузер (эксперимент).
+  function handleSearchEnter(e: React.KeyboardEvent) {
+    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+    const query = search.trim();
     if (/^vera:\/\//i.test(query)) {
-      setFoundUsers([]);
-      setLastUserSearch('');
-      setSearchUser('');
+      e.preventDefault();
       setInviteInput(query);
       setInviteError(null);
-      setAddContactOpen(true);
+      setSearch('');
+      setMyLinkDialogOpen(true);
       return;
     }
-    if (query.length < 2) {
-      setFoundUsers([]);
-      setLastUserSearch('');
+    if (userQuery) {
+      e.preventDefault();
+      if (usersFound[0]) openFoundUser(usersFound[0]);
       return;
     }
-    setLastUserSearch(query);
-    setSearching(true);
-    try {
-      const res = await usersApi.search(query);
-      setFoundUsers((res.data as User[]) || []);
-    } catch { setFoundUsers([]); }
-    finally { setSearching(false); }
-  }
-
-  function handleSearchUserChange(value: string) {
-    setSearchUser(value);
-    setFoundUsers([]);
-    setLastUserSearch('');
-  }
-
-  async function handleStartChat(targetUser: User) {
-    try {
-      const res = await chatsApi.createDirect(targetUser.id);
-      await loadChats();
-      setAddContactOpen(false);
-      setSearchUser('');
-      setFoundUsers([]);
-      const newChat = res.data;
-      if (newChat?.id) { setActiveChat(newChat); navigate(`/chat/${newChat.id}`); }
-    } catch (e) { console.error(e); }
+    if (!experimentalExternalSites) return;
+    const url = externalSiteUrl(search);
+    if (url) { e.preventDefault(); setExternalUrl(url); }
   }
 
   async function handleDeleteChat(chat: Chat) {
@@ -633,12 +659,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
         </Box>
       )}
       <Box sx={{ p: { xs: 1, md: 1.25 }, display: 'flex', alignItems: 'center', gap: 1, position: 'relative', zIndex: 1, paddingTop: mobile ? 'calc(0.5rem + env(safe-area-inset-top))' : undefined }}>
-        {!avatarOnly && open && <TextField size="small" fullWidth value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => {
-          if (e.key !== 'Enter' || e.nativeEvent.isComposing || !experimentalExternalSites) return;
-          const url = externalSiteUrl(search);
-          if (url) { e.preventDefault(); setExternalUrl(url); }
-        }} placeholder="Поиск" InputProps={{ startAdornment: <InputAdornment position="start"><Search fontSize="small" /></InputAdornment> }} sx={{ '& .MuiInputBase-root': { bgcolor: theme.bgInput, color: theme.text, borderRadius: 999, height: 38, boxShadow: '0 8px 24px rgba(0,0,0,0.20)' } }} />}
-        {!avatarOnly && open && <Tooltip title="Добавить чат / контакт"><IconButton onClick={() => setAddContactOpen(true)} sx={{ color: theme.textSec }}><PersonAdd /></IconButton></Tooltip>}
+        {!avatarOnly && open && <TextField size="small" fullWidth value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={handleSearchEnter} placeholder="Поиск, @ник или /бот" InputProps={{ startAdornment: <InputAdornment position="start"><Search fontSize="small" /></InputAdornment> }} sx={{ '& .MuiInputBase-root': { bgcolor: theme.bgInput, color: theme.text, borderRadius: 999, height: 38, boxShadow: '0 8px 24px rgba(0,0,0,0.20)' } }} />}
         {!avatarOnly && open && <Tooltip title="Создать группу"><IconButton onClick={() => setCreateGroupOpen(true)} sx={{ color: theme.textSec }}><Group /></IconButton></Tooltip>}
       </Box>
 
@@ -757,6 +778,56 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
           },
         }}
       >
+        {!avatarOnly && open && !horizontal && searchKind && (
+          <Box sx={{ mb: 1 }} aria-live="polite">
+            <Typography sx={{ px: 1, py: .5, color: theme.textSec, fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: .4 }}>
+              {searchKind === 'bots' ? 'Боты' : 'Глобальный поиск'}
+            </Typography>
+            {userQuery.length < 2 && (
+              <Typography sx={{ px: 1, py: .5, color: theme.textSec, fontSize: 13 }}>
+                {searchKind === 'bots' ? 'Введите ник бота, например /hub' : 'Введите ник, например @username'}
+              </Typography>
+            )}
+            {userQuery.length >= 2 && usersSearching && (
+              <Typography sx={{ px: 1, py: .5, color: theme.textSec, fontSize: 13 }}>Ищем…</Typography>
+            )}
+            {userQuery.length >= 2 && !usersSearching && usersFound.length === 0 && (
+              <Typography sx={{ px: 1, py: .5, color: theme.textSec, fontSize: 13 }}>
+                {searchKind === 'bots' ? `Ботов по «/${userQuery}» нет. Создать своего — в /hub` : `Никого не нашли по «@${userQuery}»`}
+              </Typography>
+            )}
+            {usersFound.map(u => {
+              const display = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username;
+              return (
+                <ListItem
+                  key={u.id}
+                  component="button"
+                  onClick={() => openFoundUser(u)}
+                  sx={{
+                    width: '100%', textAlign: 'left', font: 'inherit', cursor: 'pointer',
+                    px: 1.15, py: .75, mb: .4, borderRadius: 2,
+                    bgcolor: 'transparent', border: '1px solid transparent', color: 'inherit',
+                    '&:hover, &:focus-visible': { bgcolor: theme.bgHover, outline: 'none' },
+                  }}
+                >
+                  <Avatar src={u.avatarUrl || undefined} alt="" sx={{ width: 40, height: 40, ...avatarFill(avatarColorFor(u.id, avatarPal.palette), avatarPal.gradient) }}>
+                    {u.isBot ? <SmartToy fontSize="small" /> : getInitials(display)}
+                  </Avatar>
+                  <ListItemText
+                    sx={{ ml: 1.25, minWidth: 0 }}
+                    primary={<Typography noWrap sx={{ color: theme.text, fontWeight: 600 }}>{display}</Typography>}
+                    secondary={<Typography noWrap sx={{ color: theme.accent, fontSize: 13 }}>{u.isBot ? `/${u.username} · бот` : `@${u.username}`}</Typography>}
+                  />
+                </ListItem>
+              );
+            })}
+            {sorted.length > 0 && (
+              <Typography sx={{ px: 1, pt: 1, pb: .5, color: theme.textSec, fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: .4 }}>
+                Ваши чаты
+              </Typography>
+            )}
+          </Box>
+        )}
         {sorted.map(chat => (
           <SidebarChatRow
             key={chat.id}
@@ -913,33 +984,6 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
           '&:hover::after': { opacity: 1 },
         }}
       />
-
-      <Dialog open={addContactOpen} onClose={() => setAddContactOpen(false)} fullWidth maxWidth="sm">
-        <DialogTitle>Добавить контакт / чат</DialogTitle>
-        <DialogContent>
-          {isPeerAvailable() && (
-            <>
-              <Button 
-                fullWidth 
-                startIcon={<Link />} 
-                onClick={() => { setAddContactOpen(false); setMyLinkDialogOpen(true); }} 
-                variant="outlined"
-                sx={{ justifyContent: 'flex-start', mb: 2, textTransform: 'none' }}
-              >
-                Моя ссылка для добавления в друзья
-              </Button>
-              <Divider sx={{ my: 2 }} />
-            </>
-          )}
-
-          <Button fullWidth startIcon={<Group />} onClick={() => { setAddContactOpen(false); setCreateGroupOpen(true); }} sx={{ justifyContent: 'flex-start', mb: 1, textTransform: 'none' }}>Создать группу</Button>
-          <TextField fullWidth margin="dense" label="Имя, username или телефон (поиск на сервере)" value={searchUser} onChange={(e) => handleSearchUserChange(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleSearchUser(); }} />
-          <Button onClick={handleSearchUser} disabled={searching || searchUser.trim().length < 2}>{searching ? 'Ищу...' : 'Найти контакт'}</Button>
-          {lastUserSearch && !searching && foundUsers.length === 0 && <Typography sx={{ mt: 1, color: theme.textSec, fontSize: 13 }}>Ничего не найдено по запросу «{lastUserSearch}»</Typography>}
-          {lastUserSearch && foundUsers.map(u => <ListItem key={u.id} onClick={() => handleStartChat(u)} sx={{ cursor: 'pointer' }}><Avatar src={u.avatarUrl || undefined}>{getInitials(u.firstName || u.username)}</Avatar><ListItemText sx={{ ml: 1 }} primary={[u.firstName, u.lastName].filter(Boolean).join(' ') || u.username} secondary={u.username} /></ListItem>)}
-        </DialogContent>
-        <DialogActions><Button onClick={() => setAddContactOpen(false)} sx={{ color: theme.textSec }}>Закрыть</Button></DialogActions>
-      </Dialog>
 
       <Snackbar open={!!inviteToast} autoHideDuration={2000} onClose={() => setInviteToast(null)}
         message={inviteToast || ''} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }} />

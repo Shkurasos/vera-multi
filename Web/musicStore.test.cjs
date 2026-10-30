@@ -44,6 +44,11 @@ function boot(musicApi) {
         cacheMusicLibrary: async () => {}, fetchAndCacheFile: async () => '', hasCachedFile: async () => true,
         getCachedMusicLibrary: async () => [], getCachedFileUrl: async () => null,
       }) } },
+      '../services/offlineMode': { isAppOffline: () => false },
+      '../services/musicOfflineCache': {
+        cacheMusicTrack: async () => {}, syncMusicFiles: () => {}, removeMusicTrack: async () => {},
+        getMusicFileUrl: async () => null, getMusicCoverUrl: async () => null,
+      },
     }[n] || {}),
   });
   ctx.exports = ctx.module.exports;

@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { withAlpha } from '../utils/colorAlpha';
+import {
+  type AvatarPaletteMode, DEFAULT_AVATAR_PALETTE, isAvatarPaletteMode, sanitizeAvatarColors,
+} from '../utils/avatarColors';
 
 /** Базовые варианты MUI: из них шим берёт саму форму иконки. */
 export type BaseIconPack = 'filled' | 'outlined' | 'rounded' | 'sharp' | 'twoTone';
@@ -128,7 +131,10 @@ export type ChatShape = 'vera' | 'telegram' | 'vk';
 
 interface UiPrefsState {
   iconPack: IconPack;
-  /** id своего пака (iconPackStore) поверх iconPack, либо null — без замен. */
+  /**
+   * id своего пака (iconPackStore) поверх iconPack, либо null — без замен.
+   * Своё у каждого устройства: не входит в настройки темы и не синкается.
+   */
   customPack: string | null;
   uiStyle: UiStyle;
   chatShape: ChatShape;
@@ -154,6 +160,15 @@ interface UiPrefsState {
   setChatBorder: (v: boolean) => void;
   setChatFill: (v: boolean) => void;
   setSquircleRadius: (key: keyof SquircleRadii, v: number) => void;
+  /** Цвета аватарок без фото: режим палитры (utils/avatarColors). */
+  avatarPalette: AvatarPaletteMode;
+  /** Свои цвета для режима 'custom'. */
+  avatarColors: string[];
+  /** Мягкий градиент на аватарках без фото. */
+  avatarGradient: boolean;
+  setAvatarPalette: (m: AvatarPaletteMode) => void;
+  setAvatarColors: (list: string[]) => void;
+  setAvatarGradient: (v: boolean) => void;
 }
 
 export const ICON_PACKS: { id: IconPack; label: string; desc: string }[] = [
@@ -354,6 +369,12 @@ export const useUiPrefsStore = create<UiPrefsState>()(
       setChatShape: (s) => { set({ chatShape: s }); applyAll(); },
       setChatBorder: (v) => { set({ chatBorder: v }); applyAll(); },
       setChatFill: (v) => { set({ chatFill: v }); applyAll(); },
+      avatarPalette: DEFAULT_AVATAR_PALETTE,
+      avatarColors: [],
+      avatarGradient: false,
+      setAvatarPalette: (m) => set({ avatarPalette: isAvatarPaletteMode(m) ? m : DEFAULT_AVATAR_PALETTE }),
+      setAvatarColors: (list) => set({ avatarColors: sanitizeAvatarColors(list) }),
+      setAvatarGradient: (v) => set({ avatarGradient: !!v }),
     }),
     {
       name: 'vera-ui-prefs',

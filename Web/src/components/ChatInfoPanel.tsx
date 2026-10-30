@@ -23,12 +23,14 @@ import { SHOP_CATALOG, useShopStore } from '../store/shopStore';
 import { useChatSkinStore } from '../store/chatSkinStore';
 import type { ChatSkinSlot } from '../store/chatSkinStore';
 import { frostedPaperSx } from '../styles/frosted';
+import { withAlpha } from '../utils/colorAlpha';
 import { panelSlideIn, panelSlideOut, motion } from '../styles/motion';
 import {
   CHAT_AVATAR_PRESETS, ChatAvatarPreset, presetBackground, renderChatAvatarPreset,
 } from '../services/chatAvatarPresets';
 import { BOARD_COMMANDS, stripKindCommand } from '../utils/deskBoard';
 import { ImageViewer } from './MessageBubble';
+import { useAvatarFill } from '../hooks/useAvatarColor';
 
 /** Слоты «моих скинов» для инфопанели: store-ключ, applyKey каталога, подпись. */
 const CHAT_SKIN_SLOTS = [
@@ -268,6 +270,12 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
     finally { setAddingUserId(null); }
   }
 
+  // Аватарка без фото: личка — цвет собеседника, группа — цвет чата.
+  // Хук — до раннего return, иначе порядок хуков сломается.
+  const infoAvatarFill = useAvatarFill(
+    chat?.type === 'private' ? (chat.members?.find(m => m.userId !== user?.id)?.userId || chat.id) : chat?.id,
+  );
+
   if (!chat) return null;
 
   const isGroup = chat.type === 'group' || chat.type === 'channel';
@@ -461,7 +469,15 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
       width: '100%',
       userSelect: resizing ? 'none' : undefined,
       height: '100dvh',
-      bgcolor: theme.bgHeader,
+      // Телефон: панель во весь экран поверх чата. Фон полупрозрачный, а
+      // чат под ним размыт — видно, откуда открыли панель, но текст читается.
+      bgcolor: withAlpha(theme.bgHeader, 0.72),
+      backdropFilter: 'blur(28px) saturate(1.4)',
+      WebkitBackdropFilter: 'blur(28px) saturate(1.4)',
+      // Без поддержки backdrop-filter прозрачный фон мешал бы читать текст.
+      '@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)))': {
+        bgcolor: theme.bgHeader,
+      },
       borderLeft: 'none',
       display: 'flex', flexDirection: 'column',
       overflow: 'hidden',
@@ -487,6 +503,10 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
         zIndex: 'auto',
         borderLeft: `1px solid ${theme.border}`,
         paddingTop: 0,
+        // На десктопе панель стоит рядом с чатом — фон сплошной, без размытия.
+        bgcolor: theme.bgHeader,
+        backdropFilter: 'none',
+        WebkitBackdropFilter: 'none',
         // На десктопе панель не уезжает за край, а просто появляется/исчезает.
         animation: closing
           ? `panelSlideOut 220ms ${motion.easeOut} forwards`
@@ -582,7 +602,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
                 src={avatarSrc || undefined}
                 sx={{
                   width: 88, height: 88, fontSize: 26,
-                  bgcolor: theme.accent + '80',
+                  ...infoAvatarFill,
                   cursor: canEdit ? 'pointer' : 'default',
                   border: `3px solid ${theme.accent}`,
                   boxShadow: `0 0 20px ${theme.accent}40`,

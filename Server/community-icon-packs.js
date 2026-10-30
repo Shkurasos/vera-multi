@@ -111,7 +111,7 @@ function publicItem(item) {
   };
 }
 
-function install({ app, getDb, saveDb, auth, isAdmin, dataDir }) {
+function install({ app, getDb, saveDb, auth, isAdmin, dataDir, notify = () => {} }) {
   const folder = path.join(dataDir, 'community-icon-packs');
   try { fs.mkdirSync(folder, { recursive: true }); } catch {}
   const fileOf = (id) => path.join(folder, `${id}.json`);
@@ -171,6 +171,96 @@ function install({ app, getDb, saveDb, auth, isAdmin, dataDir }) {
     saveDb();
     res.json({ ok: true });
   });
+
+  installAccountPacks({ app, getDb, saveDb, auth, dataDir, notify });
 }
 
-module.exports = { install, cleanPack, cleanIcon, ensureCatalog, MAX_PACK_CHARS };
+// ─── Свои паки аккаунта: одинаковые на всех устройствах ─────────────────────
+// Паки с картинками весят мегабайты, поэтому в общий синк сторов (128 КБ) они
+// не помещаются. Каждый пак лежит отдельным файлом в DATA_DIR (не в /uploads —
+// там статика без авторизации), а в БД — только список: id, имя, время.
+// Устройство сверяет список и докачивает лишь изменившиеся паки.
+
+const MAX_ACCOUNT_PACKS = 40;
+const PACK_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+const USER_DIR_RE = /^[A-Za-z0-9_-]{1,80}$/;
+
+function ensureAccountIndex(db, userId) {
+  if (!db.userIconPacks || typeof db.userIconPacks !== 'object') db.userIconPacks = {};
+  if (!Array.isArray(db.userIconPacks[userId])) db.userIconPacks[userId] = [];
+  return db.userIconPacks[userId];
+}
+
+function installAccountPacks({ app, getDb, saveDb, auth, dataDir, notify }) {
+  const root = path.join(dataDir, 'user-icon-packs');
+  const dirOf = (userId) => {
+    // id пользователя — часть пути: без проверки он мог бы уйти за пределы папки.
+    if (!USER_DIR_RE.test(String(userId))) return null;
+    return path.join(root, String(userId));
+  };
+  const fileOf = (userId, id) => {
+    const dir = dirOf(userId);
+    return dir && PACK_ID_RE.test(id) ? path.join(dir, `${id}.json`) : null;
+  };
+  const listOf = (userId) => ensureAccountIndex(getDb(), userId)
+    .map(({ id, name, updatedAt }) => ({ id, name, updatedAt }));
+
+  app.get('/api/icon-packs/mine', auth, (req, res) => {
+    res.json({ packs: listOf(req.userId) });
+  });
+
+  app.get('/api/icon-packs/mine/:id', auth, (req, res) => {
+    const index = ensureAccountIndex(getDb(), req.userId);
+    const meta = index.find((x) => x.id === req.params.id);
+    const file = fileOf(req.userId, req.params.id);
+    if (!meta || !file) return res.status(404).json({ message: 'Пак не найден' });
+    let pack;
+    try { pack = JSON.parse(fs.readFileSync(file, 'utf8')); }
+    catch { return res.status(404).json({ message: 'Файл пака потерян' }); }
+    res.json({ pack: { id: meta.id, name: pack.name, base: pack.base, icons: pack.icons, updatedAt: meta.updatedAt } });
+  });
+
+  app.put('/api/icon-packs/mine/:id', auth, (req, res) => {
+    const id = req.params.id;
+    const file = fileOf(req.userId, id);
+    if (!file) return res.status(400).json({ message: 'Некорректный id пака' });
+    const raw = req.body?.pack;
+    // Пустой пак — допустимое состояние только что созданного «своего пака».
+    const pack = raw && typeof raw === 'object' && raw.icons && typeof raw.icons === 'object'
+      && !Array.isArray(raw.icons) && !Object.keys(raw.icons).length
+      ? { format: 'vera-icon-pack', version: 1, name: cleanText(raw.name, MAX_NAME) || 'Пак иконок', base: BASE_PACKS.has(raw.base) ? raw.base : 'filled', icons: {} }
+      : cleanPack(raw);
+    if (!pack) return res.status(400).json({ message: 'Пак повреждён' });
+    const db = getDb();
+    const index = ensureAccountIndex(db, req.userId);
+    const existing = index.find((x) => x.id === id);
+    if (!existing && index.length >= MAX_ACCOUNT_PACKS) {
+      return res.status(413).json({ message: `Не больше ${MAX_ACCOUNT_PACKS} своих паков` });
+    }
+    const updatedAt = Number.isFinite(Number(req.body?.updatedAt)) ? Number(req.body.updatedAt) : Date.now();
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(pack));
+    } catch { return res.status(500).json({ message: 'Не удалось сохранить пак' }); }
+    if (existing) { existing.name = pack.name; existing.updatedAt = updatedAt; }
+    else index.push({ id, name: pack.name, updatedAt });
+    saveDb();
+    notify(req.userId, { packs: listOf(req.userId), clientId: req.body?.clientId || null });
+    res.json({ ok: true, updatedAt });
+  });
+
+  app.delete('/api/icon-packs/mine/:id', auth, (req, res) => {
+    const file = fileOf(req.userId, req.params.id);
+    if (!file) return res.status(400).json({ message: 'Некорректный id пака' });
+    const db = getDb();
+    const index = ensureAccountIndex(db, req.userId);
+    const at = index.findIndex((x) => x.id === req.params.id);
+    if (at >= 0) index.splice(at, 1);
+    try { fs.unlinkSync(file); } catch {}
+    saveDb();
+    notify(req.userId, { packs: listOf(req.userId), clientId: req.query.clientId || null });
+    res.json({ ok: true });
+  });
+}
+
+module.exports = { install, cleanPack, cleanIcon, ensureCatalog, MAX_PACK_CHARS, MAX_ACCOUNT_PACKS };

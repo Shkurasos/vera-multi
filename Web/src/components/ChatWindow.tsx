@@ -48,7 +48,7 @@ import { externalSiteUrl } from '../utils/externalSite';
 import ExternalSiteDialog from './ExternalSiteDialog';
 import HoldRecorder from './HoldRecorder';
 import BubbleSettingsControls from './BubbleSettingsControls';
-import { normalizeMetaPos } from '../utils/bubbleSettings';
+import { normalizeMetaPos, resolveMetaPair } from '../utils/bubbleSettings';
 import type { BubbleMetaPos } from '../utils/bubbleSettings';
 import FontPicker from './FontPicker';
 import { membranePressSx, motion, chatExit } from '../styles/motion';
@@ -183,7 +183,7 @@ function resolveFileUrl(url?: string): string {
 // Стабильный объект по умолчанию: селектор не должен создавать новый
 // объект на каждый вызов, иначе компонент перерисовывается при любом
 // изменении стора (классическая ошибка zustand v4).
-type BubblePrefsShape = { enabled?: boolean; maxWidth?: number; textSize?: number; padding?: number; wallAlign?: boolean; metaPos?: BubbleMetaPos };
+type BubblePrefsShape = { enabled?: boolean; maxWidth?: number; textSize?: number; padding?: number; wallAlign?: boolean; metaPos?: BubbleMetaPos; metaPosOwn?: BubbleMetaPos; metaPosOther?: BubbleMetaPos };
 const EMPTY_BUBBLE_PREFS: BubblePrefsShape = {};
 // Стабильный пустой список «печатает…» — чтобы селектор не создавал новый массив.
 const EMPTY_TYPING_LIST: string[] = [];
@@ -296,18 +296,28 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const layoutMessageMaxWidth = useUserSettingsStore((s) => s.layout.messageMaxWidth);
   const layoutBubbleWallAlign = useUserSettingsStore((s) => s.layout.bubbleWallAlign);
   const layoutBubbleMetaPos = useUserSettingsStore((s) => s.layout.bubbleMetaPos);
+  const layoutBubbleMetaPosOwn = useUserSettingsStore((s) => s.layout.bubbleMetaPosOwn);
+  const layoutBubbleMetaPosOther = useUserSettingsStore((s) => s.layout.bubbleMetaPosOther);
   const bubblePrefs: BubblePrefsShape = useChatPrefsStore((s) => s.bubbleSettings[id || ''] || EMPTY_BUBBLE_PREFS);
   const setBubbleSettings = useChatPrefsStore((s) => s.setBubbleSettings);
   // useMemo: объект ниже передаётся в BubbleSettingsControls и в пропсы пузырей;
   // без мемоизации он был новым на каждом рендере.
-  const effectiveBubble = useMemo(() => ({
-    enabled: bubblePrefs.enabled ?? layoutBubbleEnabled ?? true,
-    textSize: bubblePrefs.textSize ?? layoutBubbleTextSize ?? 15,
-    padding: bubblePrefs.padding ?? layoutBubblePadding ?? 6,
-    maxWidth: bubblePrefs.maxWidth ?? layoutMessageMaxWidth,
-    wallAlign: bubblePrefs.wallAlign ?? layoutBubbleWallAlign ?? false,
-    metaPos: normalizeMetaPos(bubblePrefs.metaPos ?? layoutBubbleMetaPos),
-  }), [bubblePrefs, layoutBubbleEnabled, layoutBubbleTextSize, layoutBubblePadding, layoutMessageMaxWidth, layoutBubbleWallAlign, layoutBubbleMetaPos]);
+  const effectiveBubble = useMemo(() => {
+    const meta = resolveMetaPair({
+      metaPos: bubblePrefs.metaPos ?? layoutBubbleMetaPos,
+      metaPosOwn: bubblePrefs.metaPosOwn ?? layoutBubbleMetaPosOwn,
+      metaPosOther: bubblePrefs.metaPosOther ?? layoutBubbleMetaPosOther,
+    });
+    return {
+      enabled: bubblePrefs.enabled ?? layoutBubbleEnabled ?? true,
+      textSize: bubblePrefs.textSize ?? layoutBubbleTextSize ?? 15,
+      padding: bubblePrefs.padding ?? layoutBubblePadding ?? 6,
+      maxWidth: bubblePrefs.maxWidth ?? layoutMessageMaxWidth,
+      wallAlign: bubblePrefs.wallAlign ?? layoutBubbleWallAlign ?? false,
+      metaPosOwn: meta.own,
+      metaPosOther: meta.other,
+    };
+  }, [bubblePrefs, layoutBubbleEnabled, layoutBubbleTextSize, layoutBubblePadding, layoutMessageMaxWidth, layoutBubbleWallAlign, layoutBubbleMetaPos, layoutBubbleMetaPosOwn, layoutBubbleMetaPosOther]);
   const [text, setText] = useState('');
   // Актуальный текст инпута в ref: handleEdit — стабильный колбэк (пузыри
   // мемоизированы и не переверстываются при смене пропсов), ему нужен свежий
@@ -3068,7 +3078,8 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
                   bubbleTextSize={effectiveBubble.textSize}
                   bubblePadding={effectiveBubble.padding}
                   bubbleWallAlign={effectiveBubble.wallAlign}
-                  bubbleMetaPos={effectiveBubble.metaPos}
+                  bubbleMetaPosOwn={effectiveBubble.metaPosOwn}
+                  bubbleMetaPosOther={effectiveBubble.metaPosOther}
                   isGroupStart={isGroupStart}
                   isGroupEnd={isGroupEnd}
                 />

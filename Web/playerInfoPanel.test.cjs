@@ -28,7 +28,7 @@ test('в настройках и конструкторе есть пункт «
 });
 
 test('встроенный режим — только info, «Справа» — отдельная панель как «Слева»', () => {
-  assert.match(player, /const showSidePanel = isDesktop && \(playerPos === 'left' \|\| playerPos === 'right' \|\| playerPos === 'info'\);/);
+  assert.match(player, /const showSidePanel = \(isDesktop && \(playerPos === 'left' \|\| playerPos === 'right' \|\| playerPos === 'info'\)\) \|\| playerPos === 'info';/);
   assert.match(player, /const embedded = showSidePanel && playerPos === 'info';/, 'в инфопанель встраивается только info');
   assert.ok(!/playerPos === 'right'\s*;/.test(player.slice(player.indexOf('const embedded'), player.indexOf('const embedded') + 80)),
     '«Справа» больше не встраивается');
@@ -40,8 +40,15 @@ test('встроенный режим — только info, «Справа» �
 test('MainLayout отодвигает контент и для «Справа», а не только для «Слева»', () => {
   assert.match(layout, /const sidePlayer = !isMobile && \(playerPos === 'left' \|\| playerPos === 'right'\);/);
   assert.match(layout, /\? \{ pl: sidePlayerPad \}\s*: \{ pr: sidePlayerPad \}/, 'справа — padding-right');
-  // На телефоне боковых панелей нет — все три режима падают вниз.
-  assert.match(layout, /isMobile && \(playerPos === 'left' \|\| playerPos === 'right' \|\| playerPos === 'info'\)/);
+  // На телефоне боковых панелей нет — «Слева»/«Справа» падают вниз,
+  // а «В инфопанели» остаётся в инфопанели (без нижней ленты и отступа).
+  assert.match(layout, /isMobile && \(playerPos === 'left' \|\| playerPos === 'right'\)\r?\n\s*\? 'bottom'/);
+  assert.ok(!/isMobile && \(playerPos === 'left' \|\| playerPos === 'right' \|\| playerPos === 'info'\)/.test(layout),
+    'info на телефоне не превращается в нижний плеер');
+});
+
+test('на телефоне «В инфопанели» тоже встраивается в инфопанель', () => {
+  assert.match(player, /\|\| playerPos === 'info';/, 'info включает встроенный режим и без isDesktop');
 });
 
 test('инфопанель держит один хост плеера внизу, как раньше', () => {

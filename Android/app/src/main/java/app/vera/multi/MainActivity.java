@@ -5,6 +5,8 @@ import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
+import android.content.ClipData;
+import android.content.ContentValues;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -14,6 +16,7 @@ import android.net.NetworkCapabilities;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.MediaStore;
 import android.view.View;
 import android.view.WindowInsets;
 import android.webkit.CookieManager;
@@ -43,10 +46,15 @@ import java.util.List;
 public class MainActivity extends Activity {
     private static final int REQ_FILE = 1001;
     private static final int REQ_PERMS = 1002;
+    private static final int REQ_CAMERA = 1003;
     private static final String OFFLINE_PAGE = "file:///android_asset/offline.html";
 
     private WebView webView;
     private ValueCallback<Uri[]> fileCallback;
+    /** Куда камера пишет снимок (content:// в MediaStore), пока идёт съёмка. */
+    private Uri cameraOutput;
+    /** Выбор файла, ожидающий ответа на запрос разрешения камеры. */
+    private WebChromeClient.FileChooserParams pendingChooser;
     private PermissionRequest pendingPermission;
     /** Server address: written into the APK by the site at download time, otherwise from the build. */
     private static String serverUrl = BuildConfig.SERVER_URL;
@@ -203,13 +211,15 @@ public class MainActivity extends Activity {
         public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
             if (fileCallback != null) fileCallback.onReceiveValue(null);
             fileCallback = callback;
-            try {
-                startActivityForResult(params.createIntent(), REQ_FILE);
+            cameraOutput = null;
+            if (params.isCaptureEnabled()
+                    && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                // Сначала разрешение на камеру, интент — из onRequestPermissionsResult.
+                pendingChooser = params;
+                requestPermissions(new String[]{Manifest.permission.CAMERA}, REQ_CAMERA);
                 return true;
-            } catch (ActivityNotFoundException e) {
-                fileCallback = null;
-                return false;
             }
+            return launchChooser(params);
         }
 
         @Override
@@ -232,6 +242,13 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode == REQ_CAMERA) {
+            WebChromeClient.FileChooserParams params = pendingChooser;
+            pendingChooser = null;
+            // Отказали — buildChooserIntent сам откроет галерею вместо камеры.
+            if (params != null && fileCallback != null) launchChooser(params);
+            return;
+        }
         if (requestCode != REQ_PERMS || pendingPermission == null) return;
         boolean all = results.length > 0;
         for (int r : results) all &= r == PackageManager.PERMISSION_GRANTED;
@@ -245,7 +262,121 @@ public class MainActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQ_FILE || fileCallback == null) return;
-        fileCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data));
+        fileCallback.onReceiveValue(collectResult(resultCode, data));
         fileCallback = null;
+        cameraOutput = null;
+    }
+
+    /** Запуск выбора файла; при неудаче — стандартный интент WebView. */
+    private boolean launchChooser(WebChromeClient.FileChooserParams params) {
+        try {
+            startActivityForResult(buildChooserIntent(params), REQ_FILE);
+            return true;
+        } catch (ActivityNotFoundException | SecurityException e) {
+            if (cameraOutput != null) {
+                try { getContentResolver().delete(cameraOutput, null, null); } catch (Exception ignored) { }
+                cameraOutput = null;
+            }
+            try {
+                startActivityForResult(params.createIntent(), REQ_FILE);
+                return true;
+            } catch (ActivityNotFoundException e2) {
+                // Выбрать нечем: закрываем запрос пустым результатом. Возвращаем
+                // true, потому что колбэк уже вызван (WebView это требует).
+                if (fileCallback != null) fileCallback.onReceiveValue(null);
+                fileCallback = null;
+                return true;
+            }
+        }
+    }
+
+    /**
+     * Интент выбора файла по атрибутам &lt;input&gt;:
+     *  - capture + image → камера (снимок пишется в галерею через MediaStore);
+     *  - capture + video → видеокамера;
+     *  - только image/video → системная галерея (с мультивыбором);
+     *  - остальное → файловый менеджер с нужными MIME-типами.
+     */
+    private Intent buildChooserIntent(WebChromeClient.FileChooserParams params) {
+        List<String> mimes = new ArrayList<>();
+        for (String raw : params.getAcceptTypes()) {
+            if (raw == null) continue;
+            for (String t : raw.split(",")) {
+                t = t.trim();
+                if (!t.isEmpty() && t.contains("/") && !"*/*".equals(t)) mimes.add(t);
+            }
+        }
+        boolean multiple = params.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE;
+        boolean onlyMedia = !mimes.isEmpty();
+        boolean hasImage = false, hasVideo = false;
+        for (String m : mimes) {
+            if (m.startsWith("image/")) hasImage = true;
+            else if (m.startsWith("video/")) hasVideo = true;
+            else onlyMedia = false;
+        }
+
+        // CAMERA объявлен в манифесте, поэтому без выданного разрешения интент
+        // камеры бросает SecurityException. Разрешение запрашивается заранее
+        // в onShowFileChooser, сюда без него попадаем только при отказе.
+        boolean cameraAllowed = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+        if (params.isCaptureEnabled() && cameraAllowed) {
+            if (hasVideo && !hasImage) return new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
+            if (hasImage && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.Images.Media.DISPLAY_NAME, "Vera_" + System.currentTimeMillis() + ".jpg");
+                values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+                cameraOutput = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+                if (cameraOutput != null) {
+                    Intent cam = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+                    cam.putExtra(MediaStore.EXTRA_OUTPUT, cameraOutput);
+                    cam.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                    return cam;
+                }
+            }
+        }
+
+        Intent pick;
+        if (onlyMedia && hasImage != hasVideo) {
+            // Только фото или только видео: ACTION_PICK по MediaStore открывает
+            // именно галерею («Фото»), а не файловый менеджер.
+            pick = new Intent(Intent.ACTION_PICK);
+            // setDataAndType: отдельный setType() обнулил бы URI галереи.
+            pick.setDataAndType(hasImage
+                    ? MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                    : MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                    hasImage ? "image/*" : "video/*");
+        } else {
+            // Фото+видео или любые файлы: GET_CONTENT с фильтром по MIME.
+            // Для image+video система показывает медиа-пикер («Фото»).
+            pick = new Intent(Intent.ACTION_GET_CONTENT);
+            pick.addCategory(Intent.CATEGORY_OPENABLE);
+            pick.setType(mimes.size() == 1 ? mimes.get(0) : "*/*");
+            if (mimes.size() > 1) pick.putExtra(Intent.EXTRA_MIME_TYPES, mimes.toArray(new String[0]));
+        }
+        if (multiple) pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        return pick;
+    }
+
+    /** Результат выбора: снимок камеры, один файл или несколько (ClipData). */
+    private Uri[] collectResult(int resultCode, Intent data) {
+        if (resultCode != RESULT_OK) {
+            if (cameraOutput != null) {
+                // Пустая запись в галерее от отменённого снимка не нужна.
+                try { getContentResolver().delete(cameraOutput, null, null); } catch (Exception ignored) { }
+            }
+            return null;
+        }
+        if (cameraOutput != null && (data == null || (data.getData() == null && data.getClipData() == null))) {
+            return new Uri[]{cameraOutput};
+        }
+        if (data == null) return null;
+        ClipData clip = data.getClipData();
+        if (clip != null && clip.getItemCount() > 0) {
+            Uri[] uris = new Uri[clip.getItemCount()];
+            for (int i = 0; i < uris.length; i++) uris[i] = clip.getItemAt(i).getUri();
+            return uris;
+        }
+        if (data.getData() != null) return new Uri[]{data.getData()};
+        return WebChromeClient.FileChooserParams.parseResult(resultCode, data);
     }
 }

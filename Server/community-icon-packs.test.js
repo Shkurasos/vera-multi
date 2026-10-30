@@ -94,3 +94,64 @@ test('каталог: выложить, найти, поставить, удал
     assert.equal(bad.status, 400);
   } finally { server.close(); fs.rmSync(dataDir, { recursive: true, force: true }); }
 });
+
+test('свои паки аккаунта: одни и те же на всех устройствах, чужие не видны', async () => {
+  const { app, db, dataDir } = harness();
+  const events = [];
+  const notifyApp = express();
+  notifyApp.use(express.json({ limit: '10mb' }));
+  install({
+    app: notifyApp, getDb: () => db, saveDb: () => {}, dataDir,
+    auth: (req, res, next) => { if (!req.headers['x-user']) return res.status(401).end(); req.userId = req.headers['x-user']; next(); },
+    isAdmin: () => false,
+    notify: (userId, payload) => events.push({ userId, payload }),
+  });
+  void app;
+  const { server, base } = await start(notifyApp);
+  const mine = `${base}/api/icon-packs/mine`;
+  try {
+    assert.equal((await fetch(mine)).status, 401);
+    const put = await fetch(`${mine}/p1`, {
+      method: 'PUT', headers: as('alice'),
+      body: JSON.stringify({ pack: { name: 'Коты', base: 'neon', icons: { Search: { kind: 'image', src: PNG_URL, tint: true } } }, updatedAt: 1234, clientId: 'pc' }),
+    });
+    assert.equal(put.status, 200);
+    assert.ok(!JSON.stringify(db).includes(PNG_URL.slice(30, 60)), 'картинки — в файле, не в БД');
+    assert.deepEqual(events.at(-1), { userId: 'alice', payload: { packs: [{ id: 'p1', name: 'Коты', updatedAt: 1234 }], clientId: 'pc' } });
+
+    // Другое устройство того же аккаунта видит список и сам пак.
+    const list = await (await fetch(mine, { headers: as('alice') })).json();
+    assert.deepEqual(list.packs, [{ id: 'p1', name: 'Коты', updatedAt: 1234 }]);
+    const got = await (await fetch(`${mine}/p1`, { headers: as('alice') })).json();
+    assert.equal(got.pack.base, 'neon');
+    assert.equal(got.pack.icons.Search.tint, true);
+    assert.equal(got.pack.updatedAt, 1234);
+
+    // Чужой аккаунт паков alice не видит.
+    assert.deepEqual((await (await fetch(mine, { headers: as('bob') })).json()).packs, []);
+    assert.equal((await fetch(`${mine}/p1`, { headers: as('bob') })).status, 404);
+
+    // Пустой пак (только что созданный) сохраняется; мусор — нет.
+    const empty = await fetch(`${mine}/p2`, { method: 'PUT', headers: as('alice'), body: JSON.stringify({ pack: { name: 'Новый', base: 'x', icons: {} } }) });
+    assert.equal(empty.status, 200);
+    assert.equal((await fetch(`${mine}/p3`, { method: 'PUT', headers: as('alice'), body: JSON.stringify({ pack: { icons: { X: { kind: 'html' } } } }) })).status, 400);
+    assert.equal((await fetch(`${mine}/..%2F..%2Fx`, { method: 'PUT', headers: as('alice'), body: JSON.stringify({ pack: { icons: {} } }) })).status, 400);
+
+    assert.equal((await fetch(`${mine}/p1?clientId=phone`, { method: 'DELETE', headers: as('alice') })).status, 200);
+    assert.deepEqual((await (await fetch(mine, { headers: as('alice') })).json()).packs.map((p) => p.id), ['p2']);
+    assert.equal(events.at(-1).payload.clientId, 'phone');
+  } finally { server.close(); fs.rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('свои паки аккаунта: не больше лимита, id пользователя не уводит из папки', async () => {
+  const { MAX_ACCOUNT_PACKS } = require('./community-icon-packs');
+  const { app, db, dataDir } = harness();
+  db.userIconPacks = { alice: Array.from({ length: MAX_ACCOUNT_PACKS }, (_, i) => ({ id: `x${i}`, name: 'x', updatedAt: 1 })) };
+  const { server, base } = await start(app);
+  try {
+    const body = JSON.stringify({ pack: { icons: { Search: { kind: 'text', text: '1' } } } });
+    assert.equal((await fetch(`${base}/api/icon-packs/mine/new`, { method: 'PUT', headers: as('alice'), body })).status, 413);
+    assert.equal((await fetch(`${base}/api/icon-packs/mine/x0`, { method: 'PUT', headers: as('alice'), body })).status, 200, 'существующий обновляется');
+    assert.equal((await fetch(`${base}/api/icon-packs/mine/a`, { method: 'PUT', headers: as('../evil'), body })).status, 400);
+  } finally { server.close(); fs.rmSync(dataDir, { recursive: true, force: true }); }
+});

@@ -5,13 +5,16 @@
  */
 
 const DB_NAME = 'VeraOffline';
-const DB_VERSION = 1;
+// v2: music_files + playlists. Новые сторы создаёт onupgradeneeded, старые данные остаются.
+const DB_VERSION = 2;
 
 const STORES: string[] = [
   'music_library',   // кэш треков музыкальной библиотеки (метаданные)
-  'file_cache',      // кэш бинарных файлов (аватарки, обложки, аудио blobs)
+  'file_cache',      // кэш бинарных файлов (аватарки, обложки) с лимитом записей
+  'music_files',     // аудио и обложки всей медиатеки — без лимита, чистится по библиотеке
+  'playlists',       // плейлисты пользователя для офлайна
   'avatars',         // кэш аватарок пользователей (только URL + meta)
-  'messages',        // последние 30 сообщений на чат
+  'messages',        // последние 10 сообщений на чат
   'skins',           // кэш скинов
   'themes',          // кэш тем оформления
   'icons',           // кэш иконок и наборов иконок
@@ -32,10 +35,17 @@ function openDB(): Promise<IDBDatabase> {
         }
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      // Новая версия схемы из другой вкладки — закрываемся, чтобы не блокировать её.
+      db.onversionchange = () => { db.close(); dbPromise = null; };
+      resolve(db);
+    };
     req.onerror = () => reject(req.error);
     req.onblocked = () => reject(new Error('IndexedDB blocked'));
   });
+  // Неудачное открытие (blocked при обновлении схемы) не должно ломать кэш до перезагрузки.
+  dbPromise.catch(() => { dbPromise = null; });
   return dbPromise;
 }
 
@@ -117,6 +127,22 @@ export async function offlineClear(storeName: string): Promise<void> {
   const store = tx.objectStore(storeName);
   await request(store.clear());
   await new Promise<void>((res, rej) => { tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); });
+}
+
+/** Есть ли запись — без чтения значения (аудио-blob не тянется в память). */
+export async function offlineHas(storeName: string, id: string): Promise<boolean> {
+  const db = await openDB();
+  const tx = db.transaction(storeName, 'readonly');
+  const count = await request<number>(tx.objectStore(storeName).count(id));
+  return count > 0;
+}
+
+/** Все ключи стора без значений. */
+export async function offlineKeys(storeName: string): Promise<string[]> {
+  const db = await openDB();
+  const tx = db.transaction(storeName, 'readonly');
+  const keys = await request<IDBValidKey[]>(tx.objectStore(storeName).getAllKeys());
+  return keys.map(String);
 }
 
 /** Проверить, есть ли стор. */

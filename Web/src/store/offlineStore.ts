@@ -81,7 +81,10 @@ interface OfflineState {
   cacheAvatar: (userId: string, avatarUrl: string, updatedAt: string) => Promise<void>;
   getCachedAvatar: (userId: string) => Promise<CachedAvatar | null>;
   getCachedAvatars: (userIds: string[]) => Promise<CachedAvatar[]>;
-  // Сообщения (последние 30 на чат)
+  // Плейлисты (вместе с треками) — для музыки без сети
+  cachePlaylists: (playlists: Array<{ id: string; [key: string]: any }>) => Promise<void>;
+  getCachedPlaylists: () => Promise<any[]>;
+  // Сообщения (последние 10 на чат)
   cacheMessages: (chatId: string, messages: CachedMessage[]) => Promise<void>;
   getCachedMessages: (chatId: string) => Promise<CachedMessage[]>;
   // Скины
@@ -122,6 +125,8 @@ export const useOfflineStore = create<OfflineState>((set, get) => ({
   },
 
   cacheMusicLibrary: async (tracks) => {
+    // Медиатека целиком заменяет прежнюю: удалённые треки не всплывают офлайн.
+    await offlineClear('music_library');
     await offlineSetMany('music_library', tracks.map(t => ({ id: t.id, ...t })));
   },
   getCachedMusicLibrary: async () => {
@@ -198,8 +203,16 @@ export const useOfflineStore = create<OfflineState>((set, get) => ({
     await clearFileCache();
   },
 
+  cachePlaylists: async (playlists) => {
+    await offlineClear('playlists');
+    await offlineSetMany('playlists', playlists.filter(p => p && p.id));
+  },
+  getCachedPlaylists: async () => {
+    return offlineGetAll('playlists');
+  },
+
   clearAll: async () => {
-    for (const store of ['music_library', 'avatars', 'messages', 'skins', 'themes', 'icons', 'user_profile']) {
+    for (const store of ['music_library', 'music_files', 'playlists', 'avatars', 'messages', 'skins', 'themes', 'icons', 'user_profile']) {
       try { await offlineClear(store); } catch {}
     }
     set({ initialized: false });

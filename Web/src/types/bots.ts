@@ -1,7 +1,7 @@
+/** Команда из меню бота (setMyCommands). */
 export interface BotCommand {
   command: string;
   description: string;
-  response: string;
 }
 
 export interface BotKeywordRule {
@@ -9,21 +9,19 @@ export interface BotKeywordRule {
   response: string;
 }
 
+/** Бот глазами владельца. Токен сервер не хранит и не отдаёт повторно. */
 export interface Bot {
   id: string;
+  userId: string;
   username: string;
   name: string;
-  description?: string;
-  avatarUrl?: string;
-  botUserId: string;
-  ownerId: string;
-  secretToken: string;
-  commands: BotCommand[];
-  keywordRules: BotKeywordRule[];
-  defaultResponse?: string;
-  isActive: boolean;
   createdAt: string;
-  updatedAt: string;
+  tokenIssuedAt?: string | null;
+  hasWebhook?: boolean;
+  /** Меню команд; приходит в публичном GET /bots/:username. */
+  commands?: BotCommand[];
+  /** Кнопка мини-приложения слева от поля ввода (/setmenubutton). */
+  menuButton?: { text: string } | null;
 }
 
 export interface ScanFinding {

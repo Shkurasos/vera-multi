@@ -1,6 +1,6 @@
 {
   "name": "vera-multi-desktop",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "VERA Multi — десктоп-приложение (Electron shell). Подключается к единому серверу (Web-клиент).",
   "author": "VERA",

@@ -63,6 +63,7 @@ import UpdatePrompt from './components/UpdatePrompt';
 import ChatSettingsOfferDialog from './components/ChatSettingsOfferDialog';
 import AppLockGate from './components/AppLockGate';
 import DevInspector from './components/DevInspector';
+import MiniAppHost from './components/MiniAppHost';
 import { GlobalStyles } from '@mui/material';
 import { playDefaultChime, disposeNotificationSound } from './utils/notificationSound';
 
@@ -664,6 +665,9 @@ export default function App() {
 
       {/* DEV-инспектор — активен только у пользователей с isDev (DEV_IPS на сервере). */}
       {isAuthenticated && <DevInspector />}
+
+      {/* Мини-приложения ботов (кнопки web_app) и стикеры из /hub */}
+      {isAuthenticated && <MiniAppHost />}
 
       {/* Discord-style звонки */}
       {isAuthenticated && (

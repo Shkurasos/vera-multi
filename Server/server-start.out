@@ -1,0 +1,11 @@
+[DB] хранилище: sqlite (C:\Users\Ярослав\Desktop\Проеты\Vera_Multi\Server\data\vera-store.db)
+[content] каталог тем взят из репозитория (0 правок, 0 добавленных)
+[content] каталог обоев взят из репозитория (0 шт.)
+[wallet] NOWPayments mode: mock (IPN signature check: off)
+
+🚀 Vera Server запущен на http://0.0.0.0:3000
+   API:       http://localhost:3000/api
+   WebSocket: ws://localhost:3000
+   Uploads:   http://localhost:3000/uploads
+   Введите 'help' для списка команд
+

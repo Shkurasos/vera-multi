@@ -1,0 +1,70 @@
+﻿\Web\src\components\ChatWindow.tsx:900: container.style.filter = blur > 0.2 ? `blur(${blur.toFixed(2)}px)` : '';
+\Web\src\components\PetArtwork.tsx:973: case 'pet-cat':
+\Web\src\components\Store.tsx:675: {casePacks(selectedCase.id).map(p => <Box key={p.id} sx={{ position: 'relative', pb: 0.75 }}><PackArtwork pack={p} compact /><Typography variant="caption" sx={{ display: 
+\Web\src\components\Store.tsx:679: return <Box key={reward.key} sx={{ textAlign: 'center', p: 1, borderRadius: UI_SURFACE_RADIUS, border: `1px solid ${theme.border}`, borderBottom: `3px solid ${RARITY_META
+\Web\src\components\Store.tsx:687: <Typography variant="caption" sx={{ display: 'block', color: theme.textSec }}>{RARITY_META[skin.rarity].label} · {(reward.weight / totalWeight * 100).toFixed(2)}%</Typogr
+\Web\src\components\ThemeEditor.tsx:81: return `<g transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${angle}) scale(${scale}) translate(-20 -20)" opacity="${(0.35 + Math.random() * 0.35).toFixed(2)}
+\Web\src\store\baseWallpapers.ts:96: `r="${(0.5 + r() * 1.7).toFixed(2)}" opacity="${(0.2 + r() * 0.7).toFixed(2)}"/>`;
+\Web\src\store\baseWallpapers.ts:240: `stroke-width="${(stroke / s).toFixed(2)}" stroke-linecap="round" stroke-linejoin="round">` +
+\Web\src\store\petCatalog.ts:14: { id: 'pet-cat', name: 'Ночной кот', rarity: 'legendary', color: '#8ea0ff', caseIds: ['case-pets', 'case-base'] },
+\Web\src\store\themeStore.ts:388: bgHover: 'rgba(255,184,107,0.11)', bgActive: 'rgba(255,184,107,0.20)',
+\Web\src\store\themeStore.ts:458: bubbleOtherShadow: '0 16px 34px rgba(65,55,40,0.11), 0 0 0 1px rgba(255,255,255,0.80) inset',
+\Web\src\store\themeStore.ts:596: border: 'rgba(78,58,46,0.11)',
+\Web\src\store\themeStore.ts:680: border: 'rgba(27,39,51,0.11)',
+\Web\src\store\themeStore.ts:984: bgHover: 'rgba(125,255,178,0.11)', bgActive: 'rgba(125,255,178,0.20)', textSec: '#93A0B5',
+\Web\src\store\themeStore.ts:992: headerGradient: 'linear-gradient(90deg, rgba(255,240,194,0.10) 0%, rgba(0,194,255,0.11) 50%, rgba(138,92,255,0.10) 100%)',
+\Web\src\utils\packArt.ts:45: ['r-cult', '8-bit · трофей из аркадного автомата', 'M30 16H70V28H82V52H70V64H58V76H70V86H30V76H42V64H30V52H18V28H30ZM30 28V47H38V54H62V47H70V28M42 30H58V42H42Z'],
+\Web\src\utils\petParticles.ts:4: 'pet-cat': { kind: 'star', colors: ['#8ea0ff', '#c7b9ff', '#ffffff'] },
+\Web\src\utils\skinStuds.ts:137: 'r-cult': (a, l) => shape('M2 2h2v1h2V2h2v1h1v3H8v1H7v1H6v1H4V8H3V7H2V6H1V3h1z', a, l, 0.5),
+\Web\muiPalette.test.cjs:151: assert.ok(edge > 1.15, `граница должна отличаться от фона, получено ${edge.toFixed(2)}:1`);
+\Web\pets.test.cjs:165: for (const petId of ['pet-cat', 'pet-fox', 'pet-bunny', 'pet-pixel', 'pet-phoenix',
+\Web\pets.test.cjs:203: const order = ['pet-fox', 'pet-bunny', 'pet-phoenix', 'pet-pixel', 'pet-cat'];
+\Web\pets.test.cjs:333: ownedPets: ['pet-cat', 'pet-fox'],
+\Web\pets.test.cjs:334: petCounts: { 'pet-cat': 3 },
+\Web\pets.test.cjs:335: equippedPet: { id: 'pet-cat', settings: { x: 78, y: 76, size: 72, name: 'Мурка', font: 'Georgia, serif' } },
+\Web\pets.test.cjs:340: ownedPets: ['pet-cat', 'pet-fox'],
+\Web\pets.test.cjs:341: petCounts: { 'pet-cat': 3, 'pet-fox': 1 },
+\Web\pets.test.cjs:348: assert.equal(store.getState().petCounts['pet-cat'], 3);
+\Web\pets.test.cjs:352: assert.equal(store.getState().petCounts['pet-cat'], 3, 'счётчики не теряются при смене питомца');
+\Server\cases.test.js:76: assert.equal(first.data.drop, 'pet-cat');
+\Server\cases.test.js:78: assert.deepEqual([...user.ownedPets], ['pet-cat'], 'второй кот не плодит дубликата в ownedPets');
+\Server\cases.test.js:79: assert.equal(user.petCounts['pet-cat'], 2, 'дубликат идёт в счётчик копий');
+\Server\market.test.js:16: PET_CATALOG: { 'pet-cat': { name: 'Ночной кот', rarity: 'legendary', cases: ['case-pets'] } },
+\Server\market.test.js:69: seller.ownedPets = ['pet-cat'];
+\Server\market.test.js:70: seller.petCounts = { 'pet-cat': 3 };
+\Server\market.test.js:71: seller.equippedPet = { id: 'pet-cat', settings: { x: 78, y: 76, size: 72, name: '', font: 'inherit' } };
+\Server\market.test.js:72: assert.equal(call('/api/market/list', 'seller', { itemId: 'pet-cat', price: 6 }).code, 200);
+\Server\market.test.js:73: assert.deepEqual([...seller.ownedPets], ['pet-cat'], 'оставшиеся копии остаются у продавца');
+\Server\market.test.js:74: assert.equal(seller.petCounts['pet-cat'], 2, 'в эскроу ушла одна копия');
+\Server\market.test.js:76: assert.equal(call('/api/market/list', 'seller', { itemId: 'pet-cat', price: 7 }).code, 409, 'повторный листинг заблокирован');
+\Server\market.test.js:78: assert.deepEqual([...buyer.ownedPets], ['pet-cat']);
+\Server\market.test.js:79: assert.equal(buyer.petCounts['pet-cat'], 1, 'покупатель получил копию со счётчиком');
+\Server\market.test.js:80: assert.equal(seller.petCounts['pet-cat'], 2);
+\Server\market.test.js:88: seller.ownedPets = ['pet-cat'];
+\Server\market.test.js:89: seller.petCounts = { 'pet-cat': 1 };
+\Server\market.test.js:90: seller.equippedPet = { id: 'pet-cat', settings: { x: 78, y: 76, size: 72, name: '', font: 'inherit' } };
+\Server\market.test.js:91: assert.equal(call('/api/market/list', 'seller', { itemId: 'pet-cat', price: 6 }).code, 200);
+\Server\market.test.js:94: assert.equal(seller.petCounts['pet-cat'], 0);
+\Server\market.test.js:96: assert.deepEqual([...seller.ownedPets], ['pet-cat']);
+\Server\market.test.js:97: assert.equal(seller.petCounts['pet-cat'], 1, 'отмена вернула копию');
+\Server\moderation.test.js:27: moderationIps: { target: ['203.0.113.10', '198.51.100.10'] },
+\Server\moderation.test.js:47: requestIp: () => '203.0.113.10',
+\Server\pets.test.js:11: ownedPets: ['pet-cat', 'pet-fox'],
+\Server\pets.test.js:12: petCounts: { 'pet-cat': 3 },
+\Server\pets.test.js:14: equippedPet: { id: 'pet-cat', settings: { x: 78, y: 76, size: 72, name: '', font: 'inherit' } },
+\Server\pets.test.js:40: const tuned = put({ petId: 'pet-cat', settings: { name: 'Мурка', size: 120, font: 'Georgia, serif' } });
+\Server\pets.test.js:44: assert.equal(user.petSettings['pet-cat'].name, 'Мурка');
+\Server\pets.test.js:45: assert.equal(user.petSettings['pet-cat'].size, 120);
+\Server\pets.test.js:54: assert.equal(user.petSettings['pet-cat'].name, 'Мурка', 'настройки кота не затёрты');
+\Server\pets.test.js:61: assert.equal(user.petSettings['pet-cat'].name, 'Мурка');
+\Server\pets.test.js:63: const back = put({ petId: 'pet-cat' });
+\Server\pets.test.js:71: put({ petId: 'pet-cat', settings: { name: 'Мурка', size: 96 } });
+\Server\pets.test.js:75: assert.equal(user.petSettings['pet-cat'].name, 'Мурка');
+\Server\pets.test.js:76: assert.equal(user.petSettings['pet-cat'].size, 96);
+\Server\pets.test.js:78: const on = put({ petId: 'pet-cat' });
+\Server\pets.test.js:82: // Копии из кейса: pet-cat ×3, pet-fox без счётчика → 1.
+\Server\pets.test.js:83: assert.equal(on.data.petCounts['pet-cat'], 3);
+\Server\pets.test.js:91: assert.equal(put({ petId: 'pet-cat', settings: { size: NaN } }).code, 400);
+\Server\server.js:2048: 'pet-cat': { name: 'Ночной кот', rarity: 'legendary', cases: ['case-pets', 'case-base'] },
+\Server\server.js:2874: 'ring-r-cult': 12000,       'selfcard-r-cult': 12000,
+\Server\yoomoney.js:25: res.json({ orderId: order.id, fields: { receiver, 'quickpay-form': 'button', paymentType: 'AC', sum: rub.toFixed(2), label: order.id } });

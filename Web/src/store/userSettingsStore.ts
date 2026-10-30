@@ -103,8 +103,12 @@ export interface LayoutSettings {
   bubblePadding: number;
   /** Выравнивание текста по стенке (свои — вправо, чужие — влево). */
   bubbleWallAlign: boolean;
-  /** Где в пузыре время и галочки. */
+  /** Где в пузыре время и галочки — общее значение до разделения на свои/чужие. */
   bubbleMetaPos: BubbleMetaPos;
+  /** Где время и галочки в своём пузыре. */
+  bubbleMetaPosOwn: BubbleMetaPos;
+  /** Где время и галочки в чужом пузыре. */
+  bubbleMetaPosOther: BubbleMetaPos;
   /** Где текст относительно фото в сообщении: над ним или под ним. */
   photoTextPos: 'top' | 'bottom';
   showAvatarsInList: boolean;  // аватары в списке чатов
@@ -132,7 +136,9 @@ export const defaultLayout: LayoutSettings = {
   bubbleTextSize: 15,
   bubblePadding: 6,
   bubbleWallAlign: false,
-  bubbleMetaPos: 'belowLeft',
+  bubbleMetaPos: 'bottomLeft',
+  bubbleMetaPosOwn: 'bottomLeft',
+  bubbleMetaPosOther: 'bottomLeft',
   photoTextPos: 'bottom',
   showAvatarsInList: true,
   showTabs: true,
@@ -305,11 +311,13 @@ export const useUserSettingsStore = create<UserSettingsState>()(
         key === 'bubbleTextSize' ? clampBubble('textSize', Number(value)) :
         key === 'bubblePadding' ? clampBubble('padding', Number(value)) :
         key === 'bubbleMetaPos' ? normalizeMetaPos(value) :
+        key === 'bubbleMetaPosOwn' ? normalizeMetaPos(value) :
+        key === 'bubbleMetaPosOther' ? normalizeMetaPos(value) :
         key === 'bubbleWallAlign' ? !!value : value } } as any),
       resetLayout: () => set({ layout: { ...defaultLayout } } as any),
       reset: () => set({ ...initial } as any),
     }),
-    { name: 'vera-user-settings', version: 4, migrate: (persisted: any, version: number) => {
+    { name: 'vera-user-settings', version: 5, migrate: (persisted: any, version: number) => {
         if (!persisted) return persisted;
         // v2: добавлены chatOuterMargin и bubbleRadius; merge с defaultLayout на всякий случай
         persisted.layout = { ...defaultLayout, ...(persisted.layout || {}) };
@@ -317,6 +325,13 @@ export const useUserSettingsStore = create<UserSettingsState>()(
         // Старый дефолт inlineRight сохранялся у всех, кто не трогал настройку.
         if (version < 4 && persisted.layout.bubbleMetaPos === 'inlineRight') {
           persisted.layout.bubbleMetaPos = 'belowLeft';
+        }
+        // v5: позиции разделены на свои и чужие. Старое общее значение
+        // становится значением обеих сторон (ниже его переведёт normalizeMetaPos).
+        if (version < 5) {
+          const shared = persisted.layout.bubbleMetaPos;
+          if (persisted.layout.bubbleMetaPosOwn === undefined) persisted.layout.bubbleMetaPosOwn = shared;
+          if (persisted.layout.bubbleMetaPosOther === undefined) persisted.layout.bubbleMetaPosOther = shared;
         }
         return persisted;
       } }
@@ -376,8 +391,8 @@ const SYNC_KEYS: (keyof UserSettingsState)[] = [
 ];
 
 const LOCAL_UPDATED_KEY = 'vera-settings-updated-at';
-/** Версия формата layout в серверном снапшоте (4 — время снизу слева по умолчанию). */
-const LAYOUT_VERSION = 4;
+/** Версия формата layout в серверном снапшоте (5 — время и галочки отдельно для своих и чужих). */
+const LAYOUT_VERSION = 5;
 const CLIENT_ID_KEY = 'vera-settings-client-id';
 let activeSettingsAccountId: string | null = null;
 let settingsGeneration = 0;
@@ -428,8 +443,14 @@ function applyServerSnapshot(settings: any, accountId: string, generation: numbe
   if (clean.layout) {
     clean.layout = { ...defaultLayout, ...clean.layout };
     // Старые снапшоты хранят прежний дефолт inlineRight — переводим на belowLeft.
-    if (!(Number(settings.__layoutVersion) >= LAYOUT_VERSION) && clean.layout.bubbleMetaPos === 'inlineRight') {
+    if (!(Number(settings.__layoutVersion) >= 4) && clean.layout.bubbleMetaPos === 'inlineRight') {
       clean.layout.bubbleMetaPos = 'belowLeft';
+    }
+    // Снапшоты до разделения на свои/чужие: общее значение становится обеими сторонами.
+    if (!(Number(settings.__layoutVersion) >= LAYOUT_VERSION)) {
+      const shared = clean.layout.bubbleMetaPos;
+      if (clean.layout.bubbleMetaPosOwn === undefined) clean.layout.bubbleMetaPosOwn = shared;
+      if (clean.layout.bubbleMetaPosOther === undefined) clean.layout.bubbleMetaPosOther = shared;
     }
   }
   hydrating = true;

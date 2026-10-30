@@ -5,14 +5,17 @@ import { themedSkin } from './themedSkin';
 import { PACK_ART } from './packArt';
 import { artDataUrl } from './collectionArt';
 import { THEMED_MATERIALS } from './themedSkin';
+import { stickerBubble } from './stickerBubble';
 
 /** A compact plaque uses its pack's bubble material, not a flat accent fill. */
 export function selfcardSkin(item: ShopItem, catalog: ShopItem[], accent: string, themeMode = false): Record<string, any> {
   const bubble = catalog.find(candidate => candidate.category === 'bubble' && candidate.value?.pack === item.value?.pack);
   if (!item.value?.pack || !bubble) return {};
-  const surface = bubbleSkin(bubble, accent, themeMode);
+  // Отступ и content-visibility нужны только пузырю с наклейками за краем.
+  const { marginTop: _marginTop, contentVisibility: _visibility, ...surface } = bubbleSkin(bubble, accent, themeMode);
   const art = PACK_ART[`pack-${item.value.pack}`];
-  const iconColor = themeMode ? accent : THEMED_MATERIALS[item.value.pack]?.accent || bubble.value.color || surface.color;
+  // Значок рисуется цветом текста плашки: на светлой заливке он всегда читается.
+  const iconColor = surface.color || (themeMode ? accent : THEMED_MATERIALS[item.value.pack]?.accent || bubble.value.color);
   const icon = art ? artDataUrl(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="${art.path}" fill="none" stroke="${iconColor}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>`) : undefined;
   return {
     ...surface,
@@ -31,8 +34,14 @@ export function selfcardSkin(item: ShopItem, catalog: ShopItem[], accent: string
 /** Shared by the inventory and actual messages. Texture stays behind the text. */
 export function bubbleSkin(item: ShopItem | undefined, accent: string, themeMode = false): Record<string, any> {
   if (!item || item.stock) return {};
-  const themed = themedSkin(item.value.pack, 'bubble');
-  if (themed) return themeMode ? { ...themed, borderColor: accent } : themed;
+  // Дракон — нарисованная иллюстрация, у него свой материал.
+  if (item.value.pack === 'games-dragon') {
+    const themed = themedSkin(item.value.pack, 'bubble');
+    if (themed) return themeMode ? { ...themed, borderColor: accent } : themed;
+  }
+  // Все остальные паки — «стикеры»: палитра целиком строится от акцента,
+  // в режиме «под тему» — от акцента активной темы.
+  if (item.value.pack) return stickerBubble(item, themeMode ? accent : undefined);
   const c = themeMode ? accent : (item.value.color || (typeof item.previewColor === 'string' && item.previewColor.match(/#[\da-f]{6}/i)?.[0]) || '#54dce4');
   const base = { color: '#f4f7fa', border: '1px solid #ffffff24', boxShadow: '0 4px 12px #00000026', borderRadius: '16px 16px 4px 16px', background: '#20242b', letterSpacing: 0,
     '@media (prefers-reduced-motion: reduce)': { animation: 'none' } };

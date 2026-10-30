@@ -134,7 +134,9 @@ export default function MusicPlayer({ onOpenLibrary, libraryOpen, sideHost }: Pr
   // «Слева» и «Справа» — отдельная фиксированная панель у края окна, её
   // можно двигать точно так же, как панель чатов. «В инфопанели» — та же
   // панель, встроенная в низ инфопанели чата (портал в sideHost).
-  const showSidePanel = isDesktop && (playerPos === 'left' || playerPos === 'right' || playerPos === 'info');
+  // «В инфопанели» работает и на телефоне: там инфопанель — полноэкранный
+  // экран, плеер встраивается в его низ, а не висит лентой под чатом.
+  const showSidePanel = (isDesktop && (playerPos === 'left' || playerPos === 'right' || playerPos === 'info')) || playerPos === 'info';
   const embedded = showSidePanel && playerPos === 'info';
   const renderSide = (node: React.ReactNode) => embedded
     ? (sideHost ? createPortal(node, sideHost) : null)

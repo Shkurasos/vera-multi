@@ -46,6 +46,7 @@ function createKeyring(kek) {
   return Object.freeze({
     records: hkdf(kek, 'records:v1'),
     files: hkdf(kek, 'files:v1'),
+    pii: hkdf(kek, 'pii:v1'),
   });
 }
 

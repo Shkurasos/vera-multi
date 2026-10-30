@@ -3,7 +3,7 @@
  * встроенного / своего), включить, редактировать, скачать файлом, загрузить
  * файл, выложить в каталог и поставить чужой пак из каталога.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Box, Button, Typography, TextField, Alert, MenuItem } from '@mui/material';
 import { Add, Upload } from '@mui/icons-material';
 import { useThemeStore } from '../store/themeStore';
@@ -25,11 +25,9 @@ export default function CustomIconPacksPanel() {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const list = Object.values(packs).sort((a, b) => b.updatedAt - a.updatedAt);
   const editingPack = editing ? packs[editing] : null;
-
-  // Пак удалён (или не доехал на это устройство) — замены снимаются.
-  useEffect(() => {
-    if (hydrated && customPack && !packs[customPack]) setCustomPack(null);
-  }, [hydrated, customPack, packs, setCustomPack]);
+  // Паки общие на аккаунте, а включённый пак — свой у каждого устройства
+  // (uiPrefsStore.customPack). Выбор снимается при удалении (remove ниже) или
+  // когда пак удалили на другом устройстве (services/iconPackSync).
 
   const create = () => {
     let id: string | null = null;
@@ -68,7 +66,7 @@ export default function CustomIconPacksPanel() {
     <Box>
       <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 1 }}>Свои паки</Typography>
       <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 1.5 }}>
-        Заменяйте любую иконку чем угодно: другой иконкой, эмодзи, своим рисунком или фото. Свой пак ложится поверх выбранного выше.
+        Заменяйте любую иконку чем угодно: другой иконкой, эмодзи, своим рисунком или фото. Свой пак ложится поверх выбранного выше. Паки общие для всех ваших устройств, а включается пак на каждом устройстве отдельно.
       </Typography>
 
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1.5 }}>

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Chat, Message } from '../types';
+import { Chat, Message, User } from '../types';
 import { chatsApi, messagesApi, aiApi } from '../services/api';
 import { getSocket } from '../services/socket';
 import { peer, isPeerAvailable, PeerChat, PeerMessage } from '../services/peer';
@@ -11,6 +11,7 @@ import {
   mergeById,
 } from '../services/localArchive';
 import { registerAccountStore } from '../services/storeSyncSimple';
+import { isAppOffline } from '../services/offlineMode';
 import { OLDER_PAGE_SIZE, oldestCursor } from '../utils/messagePagination';
 import { splitBoardPrefix } from '../utils/deskBoard';
 
@@ -233,6 +234,15 @@ interface ChatState {
    */
   touchChat: (chatId: string) => void;
   updateChatList: (chat: Chat) => void;
+  /**
+   * Личка, открытая из поиска, но ещё не созданная на сервере (как в Telegram):
+   * в список чатов она не попадает, пока не отправлено первое сообщение.
+   */
+  draftChat: Chat | null;
+  /** Открыть личку с пользователем: существующий чат или черновик. */
+  openDirectDraft: (user: User) => Chat;
+  /** Создать на сервере чат для черновика и добавить его в список. */
+  materializeDraft: (chatId: string) => Promise<Chat>;
   setUserOnline: (userId: string) => void;
   setUserOffline: (userId: string) => void;
   clearOnlineUsers: () => void;
@@ -255,6 +265,20 @@ export function chatActivityAt(chat: Pick<Chat, 'lastMessage' | 'updatedAt' | 'c
 }
 
 const VERA_AI_ID = 'vera-ai';
+
+/** Префикс id черновика лички: `draft-direct-<userId>`. */
+export const DRAFT_DIRECT_PREFIX = 'draft-direct-';
+export function isDraftChatId(id?: string | null): boolean {
+  return !!id && id.startsWith(DRAFT_DIRECT_PREFIX);
+}
+export function draftDirectUserId(id?: string | null): string | null {
+  return id && isDraftChatId(id) ? id.slice(DRAFT_DIRECT_PREFIX.length) || null : null;
+}
+/** Уже существующая личка с пользователем, если она есть в списке. */
+export function findDirectChatWith(chats: Chat[], userId: string): Chat | undefined {
+  return chats.find((c) => c && (c.type === 'private' || c.type === 'direct')
+    && (c.members || []).some((m) => m.userId === userId));
+}
 
 /**
  * Длительность входящей анимации удаления (распад пузыря + схлопывание
@@ -340,6 +364,7 @@ const OLDER_RETRY_MS = 3000;
 export const useChatStore = create<ChatState>((set, get) => ({
   chats: [],
   activeChat: null,
+  draftChat: null,
   messages: {},
   loadingMessages: false,
   olderHistory: {},
@@ -386,6 +411,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       } catch (err) { console.error('[peer] loadChats error:', err); }
       return;
     }
+    // Без сервера — только архив, показанный выше.
+    if (isAppOffline()) return;
     try {
       const res = await chatsApi.getAll();
       const normalized = (res.data as any[]).filter((chat: any) => chat && chat.id).map((chat: any) => {
@@ -443,6 +470,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setActiveChat: (chat) => {
     set({ activeChat: chat });
+    // У черновика нет ни комнаты, ни истории на сервере.
+    if (chat && isDraftChatId(chat.id)) return;
     if (chat) {
       try {
         const socket = getSocket();
@@ -485,11 +514,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     // Показываем архивную историю мгновенно (только для первой загрузки чата).
     if (!before) {
+      const offline = isAppOffline();
       try {
         const archived = await loadArchivedMessages(chatId);
-        if (archived.length > 0 && (!get().messages[chatId] || get().messages[chatId].length === 0)) {
-          const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
-          const displayMessages = isOffline
+        const current = get().messages[chatId] || [];
+        // Офлайн показываем архив даже поверх неотправленных из outbox.
+        if (archived.length > 0 && (offline || current.length === 0)) {
+          const displayMessages = offline
             ? archived.slice(-OFFLINE_MESSAGE_LIMIT) // только последние 10 офлайн
             : archived;
           const marked = displayMessages.map((m) => ({
@@ -497,11 +528,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
             fromArchive: true, // пометка для UI: данные из локального кэша
           }));
           set((state) => ({
-            messages: { ...state.messages, [chatId]: withoutDeleted(marked) },
-            ...(isOffline ? { offlineChats: new Set(state.offlineChats).add(chatId) } : {}),
+            messages: {
+              ...state.messages,
+              [chatId]: withoutDeleted(offline ? mergeById(marked, state.messages[chatId] || []) : marked),
+            },
+            ...(offline ? { offlineChats: new Set(state.offlineChats).add(chatId) } : {}),
           }));
         }
       } catch {}
+      // Без сервера дальше идти некуда: ответ API из кэша смешался бы с полным архивом.
+      if (offline && !isPeerAvailable()) {
+        set((state) => ({
+          olderHistory: { ...state.olderHistory, [chatId]: { loading: false, hasMore: false } },
+        }));
+        return;
+      }
     }
 
     if (chatId === VERA_AI_ID) return;
@@ -1368,6 +1409,40 @@ export const useChatStore = create<ChatState>((set, get) => ({
           }).filter(Boolean) as Chat[]
         : [{ ...normalized, unreadCount: state.activeChat?.id === normalized.id ? 0 : (normalized.unreadCount ?? 0) }, ...state.chats].filter(Boolean) as Chat[],
     }));
+  },
+
+  openDirectDraft: (target) => {
+    // Личка уже есть — просто открываем её, черновик не нужен.
+    const existing = findDirectChatWith(get().chats, target.id);
+    if (existing) return existing;
+    const me = useAuthStore.getState().user;
+    const now = new Date().toISOString();
+    const id = DRAFT_DIRECT_PREFIX + target.id;
+    const member = (u: User): import('../types').ChatMember => ({
+      id: `${id}:${u.id}`, chatId: id, userId: u.id, user: u,
+      role: 'member', isMuted: false, joinedAt: now,
+    });
+    const draft: Chat = {
+      id, type: 'private', isPublic: false,
+      members: [...(me ? [member(me)] : []), member(target)],
+      unreadCount: 0, createdAt: now, updatedAt: now,
+    };
+    set({ draftChat: draft });
+    return draft;
+  },
+
+  materializeDraft: async (chatId) => {
+    const userId = draftDirectUserId(chatId);
+    if (!userId) throw new Error('Это не черновик чата');
+    // Сервер вернёт существующую личку, если собеседник успел написать первым.
+    const res = await chatsApi.createDirect(userId);
+    const created = res.data as Chat;
+    if (!created?.id) throw new Error('Сервер не вернул чат');
+    get().updateChatList(created);
+    const real = get().chats.find((c) => c.id === created.id) || created;
+    set((state) => ({ draftChat: state.draftChat?.id === chatId ? null : state.draftChat }));
+    get().setActiveChat(real);
+    return real;
   },
 
   markMessageRead: (chatId, messageId, userId) => {

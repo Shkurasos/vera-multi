@@ -84,10 +84,12 @@ test('шим подменяет слот своим паком и отдаёт �
   assert.ok(read('scripts/make-icon-shim.mjs').includes("from './iconPackRuntime'"));
 });
 
-test('свой пак сохраняется в теме и не сбрасывается старыми снимками', () => {
+test('включённый свой пак — настройка устройства: в тему не пишется и из темы не применяется', () => {
   const store = read('src/store/themeStore.ts');
-  assert.match(store, /customPack: ui\.customPack/);
-  assert.match(store, /if \(s\.ui\.customPack !== undefined\) ui\.setCustomPack/);
+  const snap = store.slice(store.indexOf('export function snapshotThemeSettings'), store.indexOf('function storeThemeSettings'));
+  assert.doesNotMatch(snap, /customPack: ui\.customPack/, 'снимок темы без customPack');
+  const apply = store.slice(store.indexOf('export function applyThemeSettings'));
+  assert.doesNotMatch(apply, /setCustomPack/, 'старые снимки с customPack не выключают пак');
 });
 
 test('редактор картинки: шахматка под прозрачностью, обрезка и рисование', () => {
