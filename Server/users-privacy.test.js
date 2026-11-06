@@ -53,3 +53,33 @@ test('search returns public profiles without private or future account fields', 
   }
   assert.equal(user.futureSecret, 'private');
 });
+
+test('security-log retention purge drops events older than the retention window and keeps recent ones', () => {
+  const fnStart = source.indexOf('function purgeStaleSecurityLogs()');
+  const fnSrc = source.slice(fnStart, source.indexOf('\n}', fnStart) + 2);
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  const context = {
+    db: {
+      loginEvents: [
+        { id: 'old', createdAt: now - 120 * day },
+        { id: 'edge', createdAt: now - 10 * day },
+        { id: 'fresh', createdAt: now - 1 * day },
+      ],
+    },
+    // 90-day window matches the default in server.js / the privacy policy text.
+    SECURITY_LOG_RETENTION_MS: 90 * day,
+  };
+  vm.runInNewContext(fnSrc + '\nchanged = purgeStaleSecurityLogs();', context);
+  assert.equal(context.changed, true);
+  const ids = context.db.loginEvents.map(e => e.id);
+  assert.deepEqual(ids, ['edge', 'fresh']);
+});
+
+test('privacy policy page documents concrete retention and restricted access', () => {
+  const legal = fs.readFileSync(require.resolve('../Web/src/pages/LegalPage.tsx'), 'utf8');
+  assert.match(legal, /90 дней/);
+  assert.match(legal, /не более 20 последних/);
+  assert.match(legal, /Доступ к журналам безопасности ограничен/);
+  assert.match(legal, /16\+/);
+});

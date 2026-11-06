@@ -468,6 +468,21 @@ function recordModerationIp(userId, ip) {
   if (ips.length > 20) ips.splice(0, ips.length - 20);
   return true;
 }
+// SEC/PRIVACY: срок хранения журналов безопасности (события входа с IP).
+// Политика конфиденциальности обещает удалять такие логи по достижении цели,
+// а не хранить их годами. Держим события входа не дольше 90 дней, после чего
+// они автоматически удаляются (цель — борьба со спамом/злоупотреблениями —
+// к этому моменту уже достигнута). Значение можно переопределить через env.
+const SECURITY_LOG_RETENTION_MS =
+  Number(process.env.SECURITY_LOG_RETENTION_DAYS || 90) * 24 * 60 * 60 * 1000;
+function purgeStaleSecurityLogs() {
+  if (!Array.isArray(db.loginEvents) || !db.loginEvents.length) return false;
+  const cutoff = Date.now() - SECURITY_LOG_RETENTION_MS;
+  const before = db.loginEvents.length;
+  db.loginEvents = db.loginEvents.filter((ev) => Number(ev?.createdAt) >= cutoff);
+  return db.loginEvents.length !== before;
+}
+
 function isIpBanned(ip) {
   const normalized = normalizeIp(ip);
   if (!normalized) return false;
@@ -6077,7 +6092,11 @@ setInterval(() => {
   for (const [id, rec] of wsEventHits) if (rec.reset <= Date.now()) wsEventHits.delete(id);
   for (const [id, hits] of wsSendHits) if (!hits.length || hits[hits.length - 1] < cutoff) wsSendHits.delete(id);
 }, 60_000).unref();
-// SEC: per-user WS message rate-limit state.
+// PRIVACY: периодическая чистка журналов безопасности (событий входа с IP),
+// чтобы они не хранились дольше срока, заявленного в Политике. Выполняем сразу
+// при старте и затем раз в сутки; при фактическом удалении — сохраняем БД.
+if (purgeStaleSecurityLogs()) saveDb();
+setInterval(() => { if (purgeStaleSecurityLogs()) saveDb(); }, 24 * 60 * 60 * 1000).unref();
 const wsSendHits = new Map();
 // в”Ђв”Ђв”Ђ Discord-style voice rooms (in-memory) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // chatId -> Map<userId, { socketId, kind, joinedAt, mic, cam, screen, deaf }>

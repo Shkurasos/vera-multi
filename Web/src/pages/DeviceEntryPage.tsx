@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, Box, Button, Paper, Tab, Tabs, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Checkbox, FormControlLabel, Paper, Tab, Tabs, TextField, Typography } from '@mui/material';
 import { appealsApi, authApi } from '../services/api';
 import { useAuthStore } from '../store/authStore';
 import { saveOfflineCredential } from '../services/offlineAuth';
@@ -25,6 +25,7 @@ function OnlineEntry() {
   const [busy, setBusy] = useState(false);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [captchaBusy, setCaptchaBusy] = useState(false);
+  const [agree, setAgree] = useState(false);
 
   // Сбрасываем CAPTCHA при переключении между Входом / Регистрацией.
   useEffect(() => {
@@ -94,6 +95,7 @@ function OnlineEntry() {
       if (!/^[a-zA-Z0-9_.]{3,32}$/.test(nick)) { setError('Ник: 3–32 символа, латиница, цифры, _ и .'); return; }
       if (password.length < 12) { setError('Пароль должен содержать не менее 12 символов'); return; }
       if (password !== password2) { setError('Пароли не совпадают'); return; }
+      if (!agree) { setError('Подтвердите согласие с Правилами и Политикой конфиденциальности.'); return; }
       if (!captchaToken) {
         setError('Пройдите проверку «Я не робот» перед созданием аккаунта.');
         return;
@@ -221,20 +223,27 @@ function OnlineEntry() {
                   </Typography>
                 </>
               )}
-              <Button fullWidth type="submit" variant="contained" disabled={busy}>
+              {mode === 'register' && (
+                <FormControlLabel
+                  sx={{ alignItems: 'flex-start', mt: 1, mx: 0 }}
+                  control={<Checkbox size="small" checked={agree} onChange={(e) => setAgree(e.target.checked)} sx={{ pt: 0.5 }} />}
+                  label={
+                    <Typography variant="caption" sx={{ opacity: 0.85 }}>
+                      Мне исполнилось 16 лет, я принимаю{' '}
+                      <a href="#/terms" target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>Правила использования</a>
+                      {' '}и{' '}
+                      <a href="#/privacy" target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>Политику конфиденциальности</a>
+                      , в том числе обработку IP-адреса в целях безопасности.
+                    </Typography>
+                  }
+                />
+              )}
+              <Button fullWidth type="submit" variant="contained" disabled={busy || (mode === 'register' && !agree)}>
                 {busy ? 'Подождите…' : mode === 'register' ? 'Создать аккаунт' : 'Войти'}
               </Button>
             </Box>
           )}
           {error && <Alert severity="error" sx={{ mt: 2 }} role="alert">{error}</Alert>}
-          {mode === 'register' && (
-            <Typography variant="caption" sx={{ display: 'block', mt: 2, opacity: 0.7, textAlign: 'center' }}>
-              Создавая аккаунт, вы соглашаетесь с{' '}
-              <a href="#/terms" style={{ color: 'inherit' }}>Правилами использования</a>
-              {' '}и{' '}
-              <a href="#/privacy" style={{ color: 'inherit' }}>Политикой конфиденциальности</a>.
-            </Typography>
-          )}
         </>
       )}
     </Paper>
