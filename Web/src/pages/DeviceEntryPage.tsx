@@ -227,6 +227,14 @@ function OnlineEntry() {
             </Box>
           )}
           {error && <Alert severity="error" sx={{ mt: 2 }} role="alert">{error}</Alert>}
+          {mode === 'register' && (
+            <Typography variant="caption" sx={{ display: 'block', mt: 2, opacity: 0.7, textAlign: 'center' }}>
+              Создавая аккаунт, вы соглашаетесь с{' '}
+              <a href="#/terms" style={{ color: 'inherit' }}>Правилами использования</a>
+              {' '}и{' '}
+              <a href="#/privacy" style={{ color: 'inherit' }}>Политикой конфиденциальности</a>.
+            </Typography>
+          )}
         </>
       )}
     </Paper>

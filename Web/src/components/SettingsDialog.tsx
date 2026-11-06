@@ -320,6 +320,20 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
             </Typography>
           </Box>
 
+          <Box sx={{ px: 2, pb: 1 }}>
+            <Typography sx={{ fontWeight: 600, mb: 0.5 }}>Правовая информация</Typography>
+            <ListItemButton onClick={() => { onClose(); navigate('/privacy'); }} sx={{ px: 0 }}>
+              <ListItemIcon sx={{ color: theme.accent, minWidth: 40 }}><Lock /></ListItemIcon>
+              <ListItemText primary="Политика конфиденциальности" secondary="Какие данные обрабатываются и как" />
+              <ChevronRight sx={{ color: theme.textSec }} />
+            </ListItemButton>
+            <ListItemButton onClick={() => { onClose(); navigate('/terms'); }} sx={{ px: 0 }}>
+              <ListItemIcon sx={{ color: theme.accent, minWidth: 40 }}><Public /></ListItemIcon>
+              <ListItemText primary="Правила использования мессенджера" secondary="Условия и правила поведения" />
+              <ChevronRight sx={{ color: theme.textSec }} />
+            </ListItemButton>
+          </Box>
+
           <ListItemButton onClick={async () => { onClose(); await logout(); }} sx={{ px: 0, mb: 2 }}
             style={{ color: '#b3261e' }}>
             <ListItemIcon sx={{ color: '#b3261e', minWidth: 40 }}><ExitToApp /></ListItemIcon>

@@ -35,6 +35,7 @@ function lazyPage<T extends React.ComponentType<any>>(
 const DevicesPage = lazyPage(() => import('./pages/DevicesPage'), 'DevicesPage');
 const AcceptLinkPage = lazyPage(() => import('./pages/AcceptLinkPage'), 'AcceptLinkPage');
 const DownloadPage = lazyPage(() => import('./pages/DownloadPage'), 'DownloadPage');
+const LegalPage = lazyPage(() => import('./pages/LegalPage'), 'LegalPage');
 const ContactsPage = lazyPage(() => import('./pages/ContactsPage'), 'ContactsPage');
 const CallLogPage = lazyPage(() => import('./pages/CallLogPage'), 'CallLogPage');
 const BotFatherPage = lazyPage(() => import('./pages/BotFatherPage'), 'BotFatherPage');
@@ -655,6 +656,8 @@ export default function App() {
         <Routes>
           <Route path="/link" element={<AcceptLinkPage />} />
           <Route path="/download" element={<DownloadPage />} />
+          <Route path="/privacy" element={<LegalPage kind="privacy" />} />
+          <Route path="/terms" element={<LegalPage kind="terms" />} />
           <Route path="/profile" element={isAuthenticated ? <ProfilePage /> : <Navigate to="/" />} />
           <Route path="/devices" element={isAuthenticated ? <DevicesPage /> : <Navigate to="/" />} />
           <Route path="/contacts" element={isAuthenticated ? <ContactsPage /> : <Navigate to="/" />} />
