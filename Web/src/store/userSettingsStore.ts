@@ -221,7 +221,6 @@ export interface UserSettingsState {
   // Безопасность
   appLockEnabled: boolean;
   appLockPasswordHash: string | null;     // SHA-256 hex
-  appLockRecoveryEmail: string | null;
   cloudPasswordEnabled: boolean;
   /**
    * Десктоп: открывать аккаунт без ввода пароля из защищённого хранилища
@@ -293,7 +292,6 @@ const initial: Omit<UserSettingsState, 'set' | 'reset' | 'setLayout' | 'resetLay
 
   appLockEnabled: false,
   appLockPasswordHash: null,
-  appLockRecoveryEmail: null,
   cloudPasswordEnabled: false,
   desktopAutoUnlock: true,
   autoDeleteInactiveMonths: 0,

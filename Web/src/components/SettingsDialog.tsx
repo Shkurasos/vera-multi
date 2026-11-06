@@ -264,8 +264,6 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
                   <Stack spacing={1}>
                     <TextField size="small" type="password" label="Новый пароль" value={pwd1} onChange={(e) => setPwd1(e.target.value)} />
                     <TextField size="small" type="password" label="Повторите пароль" value={pwd2} onChange={(e) => setPwd2(e.target.value)} />
-                    <TextField size="small" label="E-mail для восстановления (необязательно)"
-                      value={s.appLockRecoveryEmail || ''} onChange={(e) => s.set('appLockRecoveryEmail', e.target.value || null)} />
                     {pwdErr && <Alert severity="error">{pwdErr}</Alert>}
                     {pwdOk && <Alert severity="success">Пароль сохранён</Alert>}
                     <Button variant="contained" onClick={saveAppLockPassword}>Установить пароль</Button>
