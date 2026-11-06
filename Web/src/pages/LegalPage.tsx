@@ -208,8 +208,18 @@ export default function LegalPage({ kind }: { kind: LegalKind }) {
   const title = kind === 'privacy' ? 'Политика конфиденциальности' : 'Правила использования мессенджера';
 
   return (
-    <Box sx={{ minHeight: '100vh', bgcolor: theme.bg, color: theme.text, overflowY: 'auto' }}>
-      <Box sx={{ maxWidth: 820, mx: 'auto', px: 2, pt: 2, pb: `calc(${navHeight}px + 32px)` }}>
+    // body/#root в main.tsx не скроллятся (overflow: hidden), поэтому сама
+    // страница должна быть скролл-контейнером: заполняем relative-родителя из
+    // main.tsx через position:absolute + inset:0 и включаем вертикальный скролл.
+    <Box sx={{
+      position: 'absolute', inset: 0, overflowY: 'auto', overflowX: 'hidden',
+      WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain',
+      bgcolor: theme.bg, color: theme.text,
+    }}>
+      <Box sx={{
+        maxWidth: 820, mx: 'auto', px: 2, pt: 2,
+        pb: `calc(${navHeight}px + 32px + env(safe-area-inset-bottom))`,
+      }}>
         <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
           <PageBackButton />
           <Typography variant="h5" sx={{ fontWeight: 700 }}>{title}</Typography>
