@@ -417,6 +417,14 @@ export default function LayoutDesignerDialog({ open, onClose }: Props) {
               </ToggleButton>
             </Stack>
           </Box>
+          <Box>
+            <Typography sx={{ fontSize: 13, color: theme.textSec, mb: 0.5 }}>Сообщения</Typography>
+            <ToggleButton size="small" selected={layout.showAvatarsInChat !== false} fullWidth
+              onClick={() => setLayout('showAvatarsInChat', layout.showAvatarsInChat === false)}
+              value="chatAvatars" sx={{ textTransform: 'none' }}>
+              Аватарки у сообщений
+            </ToggleButton>
+          </Box>
         </Stack>
       </DialogContent>
 

@@ -14,9 +14,13 @@ test('equipment is public, persisted and broadcast; clearing and invalid IDs are
     app: { get(route, middleware, handler) { routes['GET ' + route] = handler; },
       put(route, middleware, handler) { routes['PUT ' + route] = handler; },
       patch(route, middleware, handler) { routes['PATCH ' + route] = handler; } },
-    authMiddleware() {}, saveDb() {}, withDevFlag: (_req, value) => value,
+    authMiddleware() {}, saveDb() {}, withDevFlag: (_req, value) => value, isAdminUsername: () => false,
     userSockets: new Map([['owner', new Set(['owner-phone'])]]),
     io: { to(rooms) { return { emit(event, payload) { events.push({ rooms, event, payload }); } }; } },
+    accountIsMature: () => false,
+    hasQrLinkedDevice: () => false,
+    inventoryVisibleToOthers: () => true,
+    publicInventory: () => null,
   });
   vm.runInContext(source.slice(source.indexOf('// Publish only equipment IDs'),
     source.indexOf('// GET /api/users/:id/customization')), context);

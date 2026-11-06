@@ -27,11 +27,14 @@ test('auth responses never include credentials or session secrets', () => {
   for (const field of ['passwordHash', 'passwordHashVersion', 'tokenVersion', 'refreshTokens', 'totpSecret', 'recoveryCodes']) {
     assert.equal(Object.hasOwn(result, field), false, field);
   }
-  // Владелец по-прежнему видит свои контакты и баланс.
-  assert.equal(result.email, 'a@example.com');
-  assert.equal(result.phone, '+7900');
+  // Пользователь видит свой профиль: ник, баланс, флаги; контактов, секретов и сессий нет.
+  assert.equal(result.id, 'u1');
+  assert.equal(result.username, 'alice');
+  assert.equal('email' in result, false);
+  assert.equal('phone' in result, false);
   assert.equal(result.walletBalance, 5);
   assert.equal(result.isAdmin, false);
+  assert.equal(result.isDev, false);
   // Исходная запись в БД не изменена.
   assert.equal(user.passwordHash, '$argon2id$...');
 });

@@ -6,12 +6,12 @@ import {
 } from '@mui/material';
 import {
   ArrowBack, Edit, PhotoCamera, Check, Close,
-  Phone, Cake, Info, LocationOn, Palette, QrCode2, ContentCopy, Settings, Inventory2,
+  Info, Palette, QrCode2, ContentCopy, Settings, Inventory2,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore, THEMES } from '../store/themeStore';
-import { usersApi, devicesApi } from '../services/api';
+import { usersApi, devicesApi, filesApi } from '../services/api';
 import QRCode from 'qrcode';
 import { peer, isPeerAvailable } from '../services/peer';
 import { peerInfoToUser } from '../store/authStore';
@@ -37,6 +37,18 @@ import useMaxPetSize, { MIN_PET_SIZE } from '../hooks/useMaxPetSize';
 import { UI_PROFILE_RADIUS, UI_PROFILE_INNER_RADIUS } from '../store/uiPrefsStore';
 import { slidePageSx, leaveSlidePage } from '../utils/slidePanel';
 
+// Относительный /uploads/... → абсолютный (как resolveFileUrl в MessageBubble):
+// баннер должен грузиться и когда клиент открыт через туннель/прод-домен.
+// data-/blob-/http(s)-URL пропускаем как есть.
+function resolveMediaUrl(url?: string): string {
+  if (!url) return '';
+  const value = String(url).trim();
+  if (/^https?:\/\//i.test(value) || /^blob:/i.test(value)) return value;
+  if (/^data:(?:image|video)\//i.test(value)) return value;
+  if (value.startsWith('/')) return window.location.origin + value;
+  return '';
+}
+
 export default function ProfilePage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -47,6 +59,7 @@ export default function ProfilePage() {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [uploadingBanner, setUploadingBanner] = useState(false);
   const [snack, setSnack] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
     open: false, message: '', severity: 'success',
   });
@@ -64,17 +77,22 @@ export default function ProfilePage() {
       setSnack({ open: true, message: `Файл больше ${maxMb} МБ`, severity: 'error' });
       return;
     }
+    // Грузим баннер ФАЙЛОМ на сервер и сохраняем короткий /uploads/... URL.
+    // Раньше баннер хранился как data-URL прямо в сторе кастомизации, но такой
+    // стор не синхронизировался (payload > лимита → 413), поэтому другие
+    // устройства/пользователи видели только градиент. Короткая ссылка
+    // синхронизируется и отдаётся всем через /api/users/:id/customization.
+    setUploadingBanner(true);
     try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(String(r.result || ''));
-        r.onerror = () => reject(new Error('read'));
-        r.readAsDataURL(file);
-      });
-      customization.set('bannerUrl', dataUrl);
+      const { data } = await filesApi.upload(file, false);
+      const url = data?.url;
+      if (!url) throw new Error('no url');
+      customization.set('bannerUrl', url);
       setSnack({ open: true, message: 'Шапка обновлена', severity: 'success' });
     } catch {
       setSnack({ open: true, message: 'Не удалось загрузить', severity: 'error' });
+    } finally {
+      setUploadingBanner(false);
     }
   };
 
@@ -108,38 +126,22 @@ export default function ProfilePage() {
   };
 
   const [form, setForm] = useState({
-    firstName: user?.firstName || '',
-    lastName: user?.lastName || '',
     username: user?.username || '',
     bio: user?.bio || '',
-    birthDate: user?.birthDate ? user.birthDate.slice(0, 10) : '',
-    country: user?.country || '',
-    region: user?.region || '',
-    city: user?.city || '',
   });
   const [usernameError, setUsernameError] = useState('');
 
   // ── Черновик редактора профиля (localStorage + синхронизация между устройствами) ──
+  // Персональные данные (ФИО, дата рождения, местоположение) не собираются:
+  // в профиле редактируются только ник и описание.
   const formFromUser = () => ({
-    firstName: user?.firstName || '',
-    lastName: user?.lastName || '',
     username: user?.username || '',
     bio: user?.bio || '',
-    birthDate: user?.birthDate ? user.birthDate.slice(0, 10) : '',
-    country: user?.country || '',
-    region: user?.region || '',
-    city: user?.city || '',
   });
 
   const isSameAsUser = (f: typeof form) =>
-    f.firstName === (user?.firstName || '') &&
-    f.lastName === (user?.lastName || '') &&
     f.username === (user?.username || '') &&
-    f.bio === (user?.bio || '') &&
-    f.birthDate === (user?.birthDate ? user.birthDate.slice(0, 10) : '') &&
-    f.country === (user?.country || '') &&
-    f.region === (user?.region || '') &&
-    f.city === (user?.city || '');
+    f.bio === (user?.bio || '');
 
   // Общее обновление формы + автосохранение черновика (только если форма отличается от профиля)
   const updateForm = (patch: Partial<typeof form>) => {
@@ -242,9 +244,7 @@ export default function ProfilePage() {
     );
   }
 
-  const displayName = user
-    ? [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username
-    : '';
+  const displayName = user ? user.username : '';
 
   function getInitials(name: string) {
     return name.split(' ').filter(Boolean).map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?';
@@ -291,15 +291,6 @@ export default function ProfilePage() {
       return;
     }
     setUsernameError('');
-    // Валидация даты
-    if (form.birthDate) {
-      const d = new Date(form.birthDate);
-      const now = new Date();
-      if (isNaN(d.getTime()) || d > now) {
-        setSnack({ open: true, message: 'Некорректная дата рождения', severity: 'error' });
-        return;
-      }
-    }
     setSaving(true);
     try {
       if (isPeerAvailable()) {
@@ -418,24 +409,36 @@ export default function ProfilePage() {
 
 
       {/* ── Banner (клик = сменить фон шапки; доступно только в режиме редактирования) ── */}
+      {(() => {
+      const bannerSrc = resolveMediaUrl(customization.bannerUrl);
+      const isBannerVideo = !!customization.bannerUrl && (/^data:video\//i.test(customization.bannerUrl) || /\.(mp4|webm|mov)$/i.test(customization.bannerUrl));
+      return (
       <Box
-        onClick={() => { if (editing) bannerInputRef.current?.click(); }}
+        onClick={() => { if (editing && !uploadingBanner) bannerInputRef.current?.click(); }}
         sx={{
           height: 180, position: 'relative', cursor: editing ? 'pointer' : 'default', overflow: 'hidden',
-          background: (customization.bannerUrl && !/^data:video\//i.test(customization.bannerUrl) && !/\.(mp4|webm|mov)$/i.test(customization.bannerUrl))
-            ? `url(${customization.bannerUrl}) center/cover no-repeat`
-            : (customization.bannerUrl ? 'transparent' : `linear-gradient(135deg, ${customization.bannerColor || theme.accent} 0%, ${theme.bgChat} 100%)`),
+          background: (bannerSrc && !isBannerVideo)
+            ? `url(${bannerSrc}) center/cover no-repeat`
+            : (bannerSrc ? 'transparent' : `linear-gradient(135deg, ${customization.bannerColor || theme.accent} 0%, ${theme.bgChat} 100%)`),
           flexShrink: 0,
           '&:hover .banner-edit': { opacity: 1 },
         }}>
-        {customization.bannerUrl && (/^data:video\//i.test(customization.bannerUrl) || /\.(mp4|webm|mov)$/i.test(customization.bannerUrl)) && (
+        {bannerSrc && isBannerVideo && (
           <video
-            src={customization.bannerUrl}
+            src={bannerSrc}
             autoPlay loop muted playsInline
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
           />
         )}
-        {editing && (
+        {uploadingBanner && (
+          <Box sx={{
+            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            bgcolor: 'rgba(0,0,0,0.4)', color: '#fff', gap: 1, zIndex: 1,
+          }}>
+            <CircularProgress size={22} sx={{ color: '#fff' }} /> Загрузка…
+          </Box>
+        )}
+        {editing && !uploadingBanner && (
         <Box className="banner-edit" sx={{
           position: 'absolute', inset: 0, opacity: 0, transition: 'opacity 0.2s',
           bgcolor: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -447,6 +450,8 @@ export default function ProfilePage() {
         <input ref={bannerInputRef} type="file" hidden accept="image/*,video/*"
           onChange={handleBannerChange} />
       </Box>
+      );
+      })()}
 
       {/* ── Avatar section ── */}
       <Box sx={{
@@ -585,43 +590,10 @@ export default function ProfilePage() {
                   '& .MuiFormHelperText-root': { color: usernameError ? '#f44336' : theme.textSec, fontSize: 11 },
                 }}
               />
-              <Box display="flex" gap={1}>
-                <TextField label="Имя" fullWidth size="small"
-                  value={form.firstName}
-                  onChange={e => updateForm({ firstName: e.target.value })}
-                  sx={inputSx} />
-                <TextField label="Фамилия" fullWidth size="small"
-                  value={form.lastName}
-                  onChange={e => updateForm({ lastName: e.target.value })}
-                  sx={inputSx} />
-              </Box>
               <TextField label="О себе" fullWidth multiline rows={2.5} size="small"
                 value={form.bio} inputProps={{ maxLength: 300 }}
                 onChange={e => updateForm({ bio: e.target.value })}
                 sx={inputSx} />
-              <TextField
-                label="Дата рождения"
-                fullWidth size="small"
-                type="date"
-                value={form.birthDate}
-                onChange={e => updateForm({ birthDate: e.target.value })}
-                InputLabelProps={{ shrink: true }}
-                inputProps={{ max: new Date().toISOString().slice(0, 10) }}
-                sx={{
-                  ...inputSx,
-                  '& input::-webkit-calendar-picker-indicator': { filter: 'invert(0.7)' },
-                }}
-              />
-              <Box display="flex" gap={1}>
-                <TextField label="Страна" fullWidth size="small"
-                  value={form.country}
-                  onChange={e => updateForm({ country: e.target.value })}
-                  sx={inputSx} />
-                <TextField label="Город" fullWidth size="small"
-                  value={form.city}
-                  onChange={e => updateForm({ city: e.target.value })}
-                  sx={inputSx} />
-              </Box>
             <Stack direction="row" spacing={1} mt={2}>
               <Button fullWidth variant="contained" startIcon={<Check />} onClick={handleSave} disabled={saving}
                 sx={{ 
@@ -669,35 +641,6 @@ export default function ProfilePage() {
                 О себе
               </Typography>
               <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, rowGap: 1.5, columnGap: 2.5 }}>
-                {user?.phone && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                    <Phone sx={{ fontSize: 18, color: theme.textSec }} />
-                    <Box>
-                      <Typography sx={{ fontSize: 11, color: theme.textSec }}>Телефон</Typography>
-                      <Typography sx={{ fontSize: 14, color: theme.text }}>{user.phone}</Typography>
-                    </Box>
-                  </Box>
-                )}
-                {user?.birthDate && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                    <Cake sx={{ fontSize: 18, color: theme.textSec }} />
-                    <Box>
-                      <Typography sx={{ fontSize: 11, color: theme.textSec }}>Дата рождения</Typography>
-                      <Typography sx={{ fontSize: 14, color: theme.text }}>{user.birthDate}</Typography>
-                    </Box>
-                  </Box>
-                )}
-                {(user?.country || user?.city) && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                    <LocationOn sx={{ fontSize: 18, color: theme.textSec }} />
-                    <Box>
-                      <Typography sx={{ fontSize: 11, color: theme.textSec }}>Местоположение</Typography>
-                      <Typography sx={{ fontSize: 14, color: theme.text }}>
-                        {[user?.city, user?.region, user?.country].filter(Boolean).join(', ')}
-                      </Typography>
-                    </Box>
-                  </Box>
-                )}
                 {user?.createdAt && (
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                     <Info sx={{ fontSize: 18, color: theme.textSec }} />
@@ -764,7 +707,7 @@ export default function ProfilePage() {
               )}
               <input ref={aboutMediaInputRef} type="file" hidden accept="image/*,video/*"
                 onChange={handleAboutMediaChange} />
-              {!user?.bio && !user?.firstName && (
+              {!user?.bio && (
                 <Box onClick={handleEdit} sx={{
                   mt: 1, border: `1px dashed ${theme.accent}40`,
                   borderRadius: UI_PROFILE_INNER_RADIUS, p: 2, textAlign: 'center', cursor: 'pointer',

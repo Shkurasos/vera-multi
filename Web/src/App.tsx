@@ -1,6 +1,6 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
-import { Box, CircularProgress } from '@mui/material';
+import { Box } from '@mui/material';
 import { useAuthStore } from './store/authStore';
 import { useChatStore } from './store/chatStore';
 import { useOfflineStore } from './store/offlineStore';
@@ -9,6 +9,7 @@ import { useChatSoundStore } from './store/chatSoundStore';
 import { getSocket } from './services/socket';
 import { requestNotificationPermission, showMessageNotification } from './services/notifications';
 import MainLayout from './pages/MainLayout';
+import VeraLoader from './components/VeraLoader';
 // Код-сплиттинг: страницы профиля/устройств/админки и т.п. подгружаются при
 // навигации — начальный бандл несёт только первый экран (чат/экран входа).
 // DeviceEntryPage остаётся статическим: это первый экран без авторизации.
@@ -52,6 +53,7 @@ import { useShopStore } from './store/shopStore';
 import { useLootStore } from './store/lootStore';
 import { usePetStore } from './store/petStore';
 import { useReactionSkinStore } from './store/reactionSkinStore';
+import { useTradeStore } from './store/tradeStore';
 import { useCustomEquipStore } from './store/customEquipStore';
 import { useChatThemeStore } from './store/chatThemeStore';
 import { useChatBgPrefsStore } from './store/chatBgPrefsStore';
@@ -230,7 +232,7 @@ export default function App() {
         id: m.id || ('remote-' + Date.now()),
         chatId: m.chatId || m.from,
         senderId: m.from,
-        sender: { id: m.from, username: m.fromName || 'peer', firstName: m.fromName || 'peer', isOnline: true, createdAt: '', lastName: '' },
+        sender: { id: m.from, username: m.fromName || 'peer', isOnline: true, createdAt: '' },
         type: 'text',
         content: m.text,
         isEdited: false, isPinned: false, isDeleted: false,
@@ -358,7 +360,7 @@ export default function App() {
             const { chats } = useChatStore.getState();
             const chat = chats.find(c => c.id === message.chatId);
             const senderName = message.sender
-              ? [message.sender.firstName, message.sender.lastName].filter(Boolean).join(' ') || message.sender.username || 'Сообщение'
+              ? message.sender.username || 'Сообщение'
               : 'Новое сообщение';
             const chatName = chat?.name || senderName;
             showMessageNotification({
@@ -457,8 +459,16 @@ export default function App() {
       socket.on('reactions:updated', data => useReactionSkinStore.getState().hydrate(data));
       socket.on('pets:updated', data => usePetStore.setState({ ownedPets: data.ownedPets || [], petCounts: data.petCounts || {}, equippedPet: data.equippedPet || null }));
 
+      socket.on('trades:updated', ({ id, status }: { id: string; status: string }) => {
+        useTradeStore.getState().load().catch(() => undefined);
+      });
+
       socket.on('connect', () => {
         void useChatStore.getState().loadChats();
+        // Пока сокета не было, чужие сообщения не приходили. Подтягиваем открытый
+        // чат заново — иначе они появятся только после своего сообщения или F5.
+        const openId = useChatStore.getState().activeChat?.id;
+        if (openId) void useChatStore.getState().loadMessages(openId).catch(console.error);
         void useLootStore.getState().load().catch(console.error);
         void usePetStore.getState().load().catch(console.error);
         void useReactionSkinStore.getState().load().catch(console.error);
@@ -475,6 +485,15 @@ export default function App() {
       // Когда партнёр прочитал наше сообщение — обновляем readBy
       socket.on('message:read', ({ chatId, messageId, userId }: { chatId: string; messageId: string; userId: string }) => {
         markMessageRead(chatId, messageId, userId);
+      });
+
+      // Сервер при aberto чата (chat:join) помечает все сообщения прочитанными
+      // и шлёт messages:read_all — обновляем readBy у всех сообщений чата.
+      socket.on('messages:read_all', ({ chatId, userId }: { chatId: string; userId: string }) => {
+        if (userId === user?.id) return; // свои сообщения и так в readBy
+        setTimeout(() => {
+          useChatStore.getState().markAllMessagesRead(chatId, userId);
+        }, 0);
       });
 
       // Входящий звонок (legacy 1:1 protocol — новые звонки идут через callroom:*)
@@ -506,6 +525,30 @@ export default function App() {
       listenersAttached.current = false;
     }
   }, [isAuthenticated]);
+
+  // Вкладка вернулась на передний план. Браузер замораживает её и рвёт сокет,
+  // а чужие сообщения за это время не приходят. Поднимаем сокет и догоняем
+  // открытый чат — не дожидаясь своего сообщения или обновления страницы.
+  useEffect(() => {
+    if (!isAuthenticated || isPeerMode) return;
+    let last = 0;
+    const onVisible = () => {
+      if (document.visibilityState === 'hidden') return;
+      const now = Date.now();
+      if (now - last < 1500) return;
+      last = now;
+      const live = getSocket();
+      if (live && !live.connected) live.connect();
+      const openId = useChatStore.getState().activeChat?.id;
+      if (openId) void useChatStore.getState().loadMessages(openId).catch(() => {});
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [isAuthenticated, isPeerMode]);
 
   // Применяем глобальные настройки внешнего вида: яркость, масштаб текста и шрифт.
   const brightness = useUserSettingsStore((s) => s.brightness);
@@ -581,12 +624,7 @@ export default function App() {
   }, [isAuthenticated]);
 
   if (isLoading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" height="100vh"
-        sx={{ bgcolor: '#1a1a2e' }}>
-        <CircularProgress sx={{ color: '#7C6AF7' }} />
-      </Box>
-    );
+    return <VeraLoader fullscreen />;
   }
 
   return (
@@ -613,11 +651,7 @@ export default function App() {
           '.vera-anim-float':   { animation: 'vera-float 3s ease-in-out infinite' },
         }}
       />
-      <Suspense fallback={
-        <Box sx={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <CircularProgress sx={{ color: appTheme.accent }} />
-        </Box>
-      }>
+      <Suspense fallback={<VeraLoader size={56} />}>
         <Routes>
           <Route path="/link" element={<AcceptLinkPage />} />
           <Route path="/download" element={<DownloadPage />} />
@@ -636,7 +670,7 @@ export default function App() {
         open={!!settingsOffer}
         busy={settingsOfferApplying}
         senderName={settingsOffer?.sender
-          ? [settingsOffer.sender.firstName, settingsOffer.sender.lastName].filter(Boolean).join(' ') || settingsOffer.sender.username || 'Собеседник'
+          ? settingsOffer.sender.username || 'Собеседник'
           : 'Собеседник'}
         onAccept={applySettingsOffer}
         onReject={() => {

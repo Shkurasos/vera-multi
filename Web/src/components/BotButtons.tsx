@@ -32,6 +32,13 @@ export default function BotButtons({ message }: { message: Message }) {
       if (appLink) {
         await openBotApp(appLink[1], appLink[2]);
       } else if (button.web_app?.url) {
+        // SEC: Перевіряємо, що URL безпечний перед використанням
+        const webAppUrl = String(button.web_app.url).trim();
+        if (!/^https?:\/\//i.test(webAppUrl)) {
+          setError('Небезпечний URL мини-застосунку');
+          setBusy(null);
+          return;
+        }
         const { data } = await botButtonsApi.webAppInit(message.id, button.web_app.url);
         const url = `${button.web_app.url.split('#')[0]}#vgWebAppData=${encodeURIComponent(data.initData)}`;
         openMiniApp({ kind: 'web', url, title: data.bot.name || button.text });

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Боты Vera: аккаунты-боты, системный бот /hub и Bot API.
  *
  * Бот — обычная запись в db.users с флагом isBot, поэтому личка с ботом
@@ -35,6 +35,14 @@ const MAX_QUEUE = 100;
 const UPDATE_TTL_MS = 24 * 60 * 60 * 1000;
 const LONG_POLL_MAX_S = 25;
 const HUB_STATE_TTL_MS = 15 * 60 * 1000;
+/** Сколько отзывов /feedback хранится; старые вытесняются. */
+const MAX_FEEDBACK = 2000;
+const MAX_FEEDBACK_TEXT = 3000;
+/** Награда за принятый отзыв/идею/баг и как часто её можно выдавать одному автору. */
+const FEEDBACK_REWARD_VP = 50;
+const FEEDBACK_REWARD_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/** Короче этого порога отзыв считается «не расписанным» — админу показывается подсказка. */
+const FEEDBACK_DETAILED_MIN_LEN = 40;
 /** Порты вебхука, как у Telegram. '' — порт по умолчанию (443). */
 const WEBHOOK_PORTS = new Set(['', '443', '8443', '88']);
 const WEBHOOK_RETRY_MS = [2000, 10000];
@@ -144,6 +152,7 @@ const HUB_COMMANDS = [
   { command: 'deleteapp', description: 'удалить мини-приложение' },
   { command: 'token', description: 'новый токен бота (старый перестанет работать)' },
   { command: 'deletebot', description: 'удалить бота' },
+  { command: 'feedback', description: 'отправить отзыв, идею или баг' },
   { command: 'stickers', description: 'мини-приложение стикеров' },
   { command: 'api', description: 'как подключить код бота' },
   { command: 'help', description: 'список команд' },
@@ -230,6 +239,9 @@ const API_HELP = [
 function registerBots({
   app, getDb, auth, saveDb, io, userSockets = null, isPrivateHost, makeRateLimit = null,
   resolveSticker = () => null,
+  isAdminUserId = () => false,
+  isAdminRequest = () => false,
+  grantVp = () => ({ ok: false, balance: 0 }),
   fetchImpl = (...args) => globalThis.fetch(...args),
   lookup = (host) => dns.promises.lookup(host, { all: true }),
   now = () => Date.now(),
@@ -501,6 +513,45 @@ function registerBots({
 
   const hubReply = (chatId, text, replyMarkup = null) => postBotMessage(chatId, HUB_ID, { text, replyMarkup });
 
+  /** Личка Hub ↔ пользователь: находим по участникам или создаём. */
+  function ensureHubChat(db, userId) {
+    if (!Array.isArray(db.chats)) db.chats = [];
+    if (!Array.isArray(db.chatMembers)) db.chatMembers = [];
+    const hubChats = new Set(db.chatMembers.filter((m) => m.userId === HUB_ID).map((m) => m.chatId));
+    const existing = db.chatMembers.find((m) => m.userId === userId && hubChats.has(m.chatId)
+      && DIRECT_TYPES.has((db.chats.find((c) => c.id === m.chatId) || {}).type || ''));
+    if (existing) return existing.chatId;
+    const chat = { id: crypto.randomUUID(), type: 'direct', name: null, avatarUrl: null, createdAt: iso(), pinnedMessageId: null };
+    db.chats.push(chat);
+    for (const id of [HUB_ID, userId]) {
+      db.chatMembers.push({ id: crypto.randomUUID(), chatId: chat.id, userId: id, role: 'member', joinedAt: iso() });
+    }
+    return chat.id;
+  }
+
+  /**
+   * /feedback: отзыв сохраняется в db.feedback (раздел «Отзывы» в админ-панели),
+   * а каждому администратору приходит копия в личку с Hub.
+   */
+  function sendFeedback(fromId, feedback) {
+    const db = getDb();
+    if (!Array.isArray(db.feedback)) db.feedback = [];
+    const author = db.users.find((u) => u.id === fromId);
+    const name = author ? (author.username ? `@${author.username}` : (author.firstName || author.id)) : fromId;
+    db.feedback.push({
+      id: crypto.randomUUID(), userId: fromId, username: author?.username || null,
+      text: feedback, status: 'new', createdAt: iso(), rewarded: false, rewardedAt: null,
+    });
+    // Старые отзывы вытесняются, чтобы база не росла без предела.
+    if (db.feedback.length > MAX_FEEDBACK) db.feedback.splice(0, db.feedback.length - MAX_FEEDBACK);
+    saveDb();
+    const admins = db.users.filter((u) => !u.isBot && u.id !== HUB_ID && isAdminUserId(u.id));
+    for (const admin of admins) {
+      postBotMessage(ensureHubChat(db, admin.id), HUB_ID, { text: `Отзыв от ${name}:\n\n${feedback}` });
+    }
+    return true;
+  }
+
   function stateOf(userId) {
     const state = hubState.get(userId);
     if (!state || now() - state.at > HUB_STATE_TTL_MS) { hubState.delete(userId); return null; }
@@ -655,6 +706,9 @@ function registerBots({
         setState(userId, 'menu_bot');
         return hubReply(chatId, `Какому боту настроить кнопку у поля ввода? Пришлите ник.\n\n${list}`);
       }
+      case '/feedback':
+        setState(userId, 'feedback_text');
+        return hubReply(chatId, 'Напишите отзыв, баг, идею или пожелание одним сообщением. Его получат администраторы.\n\nОтмена — /cancel');
       case '/api':
         return hubReply(chatId, API_HELP);
       default:
@@ -786,6 +840,15 @@ function registerBots({
         deleteBot(db, bot);
         return hubReply(chatId, `Бот /${bot.username} удалён. Токен больше не работает, ник свободен.`);
       }
+      case 'feedback_text': {
+        hubState.delete(userId);
+        // Переносы строк сохраняем, остальные управляющие символы убираем.
+        const feedback = String(rawText || '').replace(/\r\n?/g, '\n')
+          .replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').trim().slice(0, MAX_FEEDBACK_TEXT);
+        if (!feedback) return hubReply(chatId, 'Пустой отзыв не отправлен. Попробуйте снова: /feedback');
+        sendFeedback(userId, feedback);
+        return hubReply(chatId, 'Спасибо! Отзыв отправлен администраторам.');
+      }
       default:
         hubState.delete(userId);
         return hubReply(chatId, HUB_HELP, hubMenu);
@@ -816,6 +879,65 @@ function registerBots({
       console.error('[bots] onMessage:', (e && e.message) || e);
     }
   }
+
+  // ─── Отзывы из /feedback: раздел админ-панели ─────────────────────────────
+  const feedbackList = (db) => (Array.isArray(db.feedback) ? db.feedback : []);
+  /** Отзыв «расписан», если текст не короче порога (для подсказки админу). */
+  const feedbackView = (item) => ({ ...item, detailed: String(item.text || '').trim().length >= FEEDBACK_DETAILED_MIN_LEN });
+
+  app.get('/api/admin/feedback', auth, (req, res) => {
+    if (!isAdminRequest(req)) return res.status(403).json({ message: 'Forbidden' });
+    res.json(feedbackList(getDb()).slice().reverse().map(feedbackView));
+  });
+
+  // body.read: true — прочитано, false — снова новое.
+  app.post('/api/admin/feedback/:id/read', auth, (req, res) => {
+    if (!isAdminRequest(req)) return res.status(403).json({ message: 'Forbidden' });
+    const item = feedbackList(getDb()).find((f) => f.id === req.params.id);
+    if (!item) return res.status(404).json({ message: 'Отзыв не найден' });
+    item.status = req.body?.read === false ? 'new' : 'read';
+    saveDb();
+    res.json(feedbackView(item));
+  });
+
+  // Награда за отзыв/идею/баг: +50 ВП автору, но не чаще 50 ВП за 7 дней.
+  // Решение о «полноте» идеи принимает админ — кнопка не блокируется.
+  app.post('/api/admin/feedback/:id/reward', auth, (req, res) => {
+    if (!isAdminRequest(req)) return res.status(403).json({ message: 'Forbidden' });
+    const db = getDb();
+    const item = feedbackList(db).find((f) => f.id === req.params.id);
+    if (!item) return res.status(404).json({ message: 'Отзыв не найден' });
+    if (item.rewarded) return res.status(409).json({ message: 'За этот отзыв награда уже выдана' });
+    const author = (db.users || []).find((u) => u.id === item.userId);
+    if (!author || author.isBot || author.accountDeleted) {
+      return res.status(404).json({ message: 'Автор отзыва недоступен' });
+    }
+    // Недельный лимит: один награждённый отзыв на автора за 7 дней.
+    const since = now() - FEEDBACK_REWARD_WINDOW_MS;
+    const recent = feedbackList(db).find((f) => f.userId === item.userId && f.rewarded
+      && f.rewardedAt && Date.parse(f.rewardedAt) >= since);
+    if (recent) {
+      const nextAt = new Date(Date.parse(recent.rewardedAt) + FEEDBACK_REWARD_WINDOW_MS).toISOString();
+      return res.status(429).json({ message: `Этому автору уже начислено ${FEEDBACK_REWARD_VP} ВП за фидбек на этой неделе. Следующая награда доступна после ${nextAt}.`, nextRewardAt: nextAt });
+    }
+    const result = grantVp(author.id, FEEDBACK_REWARD_VP);
+    if (!result || !result.ok) return res.status(500).json({ message: 'Не удалось начислить ВП' });
+    item.rewarded = true;
+    item.rewardedAt = iso();
+    item.status = 'read';
+    saveDb();
+    res.json({ feedback: feedbackView(item), amount: FEEDBACK_REWARD_VP, balance: result.balance });
+  });
+
+  app.delete('/api/admin/feedback/:id', auth, (req, res) => {
+    if (!isAdminRequest(req)) return res.status(403).json({ message: 'Forbidden' });
+    const db = getDb();
+    const before = feedbackList(db).length;
+    db.feedback = feedbackList(db).filter((f) => f.id !== req.params.id);
+    if (db.feedback.length === before) return res.status(404).json({ message: 'Отзыв не найден' });
+    saveDb();
+    res.json({ ok: true });
+  });
 
   // ─── REST для клиента Vera ─────────────────────────────────────────────────
   app.get('/api/bots/my', auth, (req, res) => {

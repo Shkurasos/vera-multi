@@ -779,7 +779,7 @@ function AccessDialog({ open, onClose, bus }: {
       const res = await usersApi.search(q.trim());
       const list = (res.data?.users || res.data || []).map((u: any) => ({
         id: u.id,
-        name: [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.id,
+        name: u.username || u.id,
       }));
       setFound(list);
     } catch {
@@ -803,7 +803,7 @@ function AccessDialog({ open, onClose, bus }: {
   const levelOf = (userId: string) => bus.rights.members.find((m) => m.userId === userId)?.level;
   const nameOf = (userId: string) => {
     const u = bus.rights.members.find((x) => x.userId === userId)?.user;
-    return u ? ([u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.id) : 'Участник';
+    return u ? (u.username || u.id) : 'Участник';
   };
 
   return (

@@ -560,6 +560,26 @@ import _vTextSnippetOutlined from '@mui/icons-material/TextSnippetOutlined';
 import _vTextSnippetRounded from '@mui/icons-material/TextSnippetRounded';
 import _vTextSnippetSharp from '@mui/icons-material/TextSnippetSharp';
 import _vTextSnippetTwoTone from '@mui/icons-material/TextSnippetTwoTone';
+import _vThumbDownAlt from '@mui/icons-material/ThumbDownAlt';
+import _vThumbDownAltOutlined from '@mui/icons-material/ThumbDownAltOutlined';
+import _vThumbDownAltRounded from '@mui/icons-material/ThumbDownAltRounded';
+import _vThumbDownAltSharp from '@mui/icons-material/ThumbDownAltSharp';
+import _vThumbDownAltTwoTone from '@mui/icons-material/ThumbDownAltTwoTone';
+import _vThumbDownOffAlt from '@mui/icons-material/ThumbDownOffAlt';
+import _vThumbDownOffAltOutlined from '@mui/icons-material/ThumbDownOffAltOutlined';
+import _vThumbDownOffAltRounded from '@mui/icons-material/ThumbDownOffAltRounded';
+import _vThumbDownOffAltSharp from '@mui/icons-material/ThumbDownOffAltSharp';
+import _vThumbDownOffAltTwoTone from '@mui/icons-material/ThumbDownOffAltTwoTone';
+import _vThumbUpAlt from '@mui/icons-material/ThumbUpAlt';
+import _vThumbUpAltOutlined from '@mui/icons-material/ThumbUpAltOutlined';
+import _vThumbUpAltRounded from '@mui/icons-material/ThumbUpAltRounded';
+import _vThumbUpAltSharp from '@mui/icons-material/ThumbUpAltSharp';
+import _vThumbUpAltTwoTone from '@mui/icons-material/ThumbUpAltTwoTone';
+import _vThumbUpOffAlt from '@mui/icons-material/ThumbUpOffAlt';
+import _vThumbUpOffAltOutlined from '@mui/icons-material/ThumbUpOffAltOutlined';
+import _vThumbUpOffAltRounded from '@mui/icons-material/ThumbUpOffAltRounded';
+import _vThumbUpOffAltSharp from '@mui/icons-material/ThumbUpOffAltSharp';
+import _vThumbUpOffAltTwoTone from '@mui/icons-material/ThumbUpOffAltTwoTone';
 import _vUndo from '@mui/icons-material/Undo';
 import _vUndoOutlined from '@mui/icons-material/UndoOutlined';
 import _vUndoRounded from '@mui/icons-material/UndoRounded';
@@ -729,6 +749,10 @@ const MAP: Record<string, Record<string, React.ComponentType<SvgIconProps>>> = {
   TableChart: { filled: _vTableChart, outlined: _vTableChartOutlined, rounded: _vTableChartRounded, sharp: _vTableChartSharp, twoTone: _vTableChartTwoTone },
   TextFields: { filled: _vTextFields, outlined: _vTextFieldsOutlined, rounded: _vTextFieldsRounded, sharp: _vTextFieldsSharp, twoTone: _vTextFieldsTwoTone },
   TextSnippet: { filled: _vTextSnippet, outlined: _vTextSnippetOutlined, rounded: _vTextSnippetRounded, sharp: _vTextSnippetSharp, twoTone: _vTextSnippetTwoTone },
+  ThumbDownAlt: { filled: _vThumbDownAlt, outlined: _vThumbDownAltOutlined, rounded: _vThumbDownAltRounded, sharp: _vThumbDownAltSharp, twoTone: _vThumbDownAltTwoTone },
+  ThumbDownOffAlt: { filled: _vThumbDownOffAlt, outlined: _vThumbDownOffAltOutlined, rounded: _vThumbDownOffAltRounded, sharp: _vThumbDownOffAltSharp, twoTone: _vThumbDownOffAltTwoTone },
+  ThumbUpAlt: { filled: _vThumbUpAlt, outlined: _vThumbUpAltOutlined, rounded: _vThumbUpAltRounded, sharp: _vThumbUpAltSharp, twoTone: _vThumbUpAltTwoTone },
+  ThumbUpOffAlt: { filled: _vThumbUpOffAlt, outlined: _vThumbUpOffAltOutlined, rounded: _vThumbUpOffAltRounded, sharp: _vThumbUpOffAltSharp, twoTone: _vThumbUpOffAltTwoTone },
   Undo: { filled: _vUndo, outlined: _vUndoOutlined, rounded: _vUndoRounded, sharp: _vUndoSharp, twoTone: _vUndoTwoTone },
   Unpublished: { filled: _vUnpublished, outlined: _vUnpublishedOutlined, rounded: _vUnpublishedRounded, sharp: _vUnpublishedSharp, twoTone: _vUnpublishedTwoTone },
   Upload: { filled: _vUpload, outlined: _vUploadOutlined, rounded: _vUploadRounded, sharp: _vUploadSharp, twoTone: _vUploadTwoTone },
@@ -894,6 +918,10 @@ export const SwapHoriz = make('SwapHoriz');
 export const TableChart = make('TableChart');
 export const TextFields = make('TextFields');
 export const TextSnippet = make('TextSnippet');
+export const ThumbDownAlt = make('ThumbDownAlt');
+export const ThumbDownOffAlt = make('ThumbDownOffAlt');
+export const ThumbUpAlt = make('ThumbUpAlt');
+export const ThumbUpOffAlt = make('ThumbUpOffAlt');
 export const Undo = make('Undo');
 export const Unpublished = make('Unpublished');
 export const Upload = make('Upload');

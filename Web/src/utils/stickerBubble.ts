@@ -192,13 +192,14 @@ export function trimShadow(p: SkinPalette, tier: number, alt = false): string {
 }
 
 /**
- * Фишки скина на линии обводки — того же масштаба, что искорки коллекции.
+ * Фишки скина на линии обводки — чуть крупнее искорок коллекции.
  * Мотив свой у каждого скина (см. skinStuds), число растёт с редкостью (1…5). Центр каждой
  * фишки лежит на линии рамки: за край она выступает лишь на пару пикселей.
  */
 // Середины сторон и низ справа: мимо скруглённых углов, значка пака и искорок коллекции.
 const STUD_SLOTS = ['100% 50%', '0% 50%', '50% 100%', '50% 0%', 'right 28px bottom 0'];
-export const STUD_SIZE = 10;
+// 13px: мотив уже различим, но фишка всё ещё меньше значка пака (28px) и не спорит с текстом.
+export const STUD_SIZE = 13;
 
 export function perimeterStuds(key: string, p: SkinPalette, tier: number): { image: string; position: string } {
   const n = clamp(tier, 1, 5);

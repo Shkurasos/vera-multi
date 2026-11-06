@@ -4,11 +4,60 @@ import { useEquipmentStore } from '../store/equipmentStore';
 
 let socket: Socket | null = null;
 
-export const connectSocket = (token: string): Socket => {
-  if (socket?.connected) return socket;
+// Сокет держит токен, с которым подключился. Access-токен живёт 15 минут, и
+// без обновления реконнекты socket.io уходят со старым токеном и падают — живые
+// сообщения перестают приходить, пока страницу не обновят.
+let socketToken = '';
+let refreshingAuth = false;
 
+/** Свежий токен из localStorage: axios-перехватчик обновляет его по 401. */
+function latestToken(): string {
+  try { return localStorage.getItem('vera_token') || ''; } catch { return ''; }
+}
+
+async function refreshSocketAuth(): Promise<void> {
+  if (refreshingAuth || !socket) return;
+  refreshingAuth = true;
+  // Пока токен обновляется, глушим автореконнект: иначе сокет долбит сервер
+  // старым токеном и упирается в лимит подключений.
+  const live = socket;
+  live.io.reconnection(false);
+  try {
+    const { tryRefresh } = await import('./api');
+    const fresh = await tryRefresh();
+    if (!fresh || !socket) return;
+    socketToken = fresh;
+    socket.auth = { token: fresh };
+    if (!socket.connected) socket.connect();
+  } catch { /* сеть ляжет — попробуем на следующем connect_error */ }
+  finally {
+    refreshingAuth = false;
+    live.io.reconnection(true);
+  }
+}
+
+export const connectSocket = (token: string): Socket => {
+  const fresh = latestToken() || token;
+  // Уже есть сокет, но токен сменился: переподключаемся с новым, иначе сервер
+  // отклонит реконнект и входящие так и не дойдут.
+  if (socket && fresh && fresh !== socketToken) {
+    socketToken = fresh;
+    socket.auth = { token: fresh };
+    if (socket.connected) socket.disconnect();
+    socket.connect();
+    return socket;
+  }
+  if (socket?.connected) return socket;
+  // Сокет есть, но отвалился: обновляем токен и поднимаем его заново.
+  if (socket) {
+    if (fresh) { socketToken = fresh; socket.auth = { token: fresh }; }
+    socket.connect();
+    return socket;
+  }
+
+  socketToken = fresh;
   socket = io('/', {
-    auth: { token },
+    auth: { token: fresh },
     transports: ['websocket'],
     reconnection: true,
     reconnectionDelay: 1000,
@@ -16,7 +65,13 @@ export const connectSocket = (token: string): Socket => {
 
   socket.on('connect', () => console.log('🔌 WebSocket подключён'));
   socket.on('disconnect', () => console.log('🔌 WebSocket отключён'));
-  socket.on('connect_error', (err) => console.error('WebSocket ошибка:', err.message));
+  socket.on('connect_error', (err) => {
+    console.error('WebSocket ошибка:', err.message);
+    const msg = String(err?.message || '');
+    // Протухший токен сервер отвергает на рукопожатии. Обновляем его и
+    // переподключаемся, не дожидаясь перезагрузки страницы.
+    if (/invalid token|unauthorized|token/i.test(msg)) void refreshSocketAuth();
+  });
   socket.on('user:equipment', async (equipment: Pick<User, 'id' | 'activeRing' | 'activeSelfCard' | 'activeBubble'> & { chatId?: string; skins?: { ring?: string; selfcard?: string; bubble?: string } }) => {
     if (!equipment?.id) return;
     const { useChatStore } = await import('../store/chatStore');
@@ -77,12 +132,35 @@ export const connectSocket = (token: string): Socket => {
     }));
   });
 
+  // Обработка реакций на сообщения в реальном времени.
+  // Сервер шлёт { messageId, chatId, reactions } после POST /api/messages/:chatId/reaction.
+  socket.on('message:reaction', async (payload: { messageId: string; chatId: string; reactions: any[] }) => {
+    if (!payload?.messageId || !payload?.chatId) return;
+    const { useChatStore } = await import('../store/chatStore');
+    useChatStore.setState(state => {
+      const messages = state.messages[payload.chatId];
+      if (!messages) return state;
+      const idx = messages.findIndex(m => m.id === payload.messageId);
+      if (idx < 0) return state;
+      const next = messages.slice();
+      next[idx] = { ...next[idx], reactions: payload.reactions };
+      return {
+        ...state,
+        messages: {
+          ...state.messages,
+          [payload.chatId]: next,
+        },
+      };
+    });
+  });
+
   return socket;
 };
 
 export const disconnectSocket = () => {
   socket?.disconnect();
   socket = null;
+  socketToken = '';
 };
 
 export const getSocket = (): Socket | null => socket;

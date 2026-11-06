@@ -4,9 +4,6 @@ import {
   List, ListItemButton, ListItemIcon, ListItemText, Divider, Switch,
   MenuItem, Select, TextField, Alert, Accordion, AccordionSummary, AccordionDetails, Stack,
 } from '@mui/material';
-// MUI v5: PhoneOutlined is available through the custom shim or directly from @mui/icons-material
-// Import from shim (which now provides the export after our fix)
-import { PhoneOutlined } from '../mui-icons-shim';
 import {
   Link as LinkIcon, DevicesOther, ChevronRight, ExpandMore, AutoAwesome,
   Language, DataUsage, Notifications, Security, Lock, Public,
@@ -22,6 +19,7 @@ import {
 } from '../store/userSettingsStore';
 import InviteLinkDialog from './InviteLinkDialog';
 import { useShopStore } from '../store/shopStore';
+import { isDesktop, clearSecureSession, saveSecureSession } from '../services/desktopSecure';
 import { useAnimStore, ANIM_GROUPS } from '../store/animStore';
 import { useAuthStore } from '../store/authStore';
 import { UI_SURFACE_RADIUS } from '../store/uiPrefsStore';
@@ -239,22 +237,15 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
                 <ScopeRow label="Кто может звонить" value={s.callsScope} onChange={(v) => s.set('callsScope', v)} />
                 <ScopeRow label="Peer-to-Peer для звонков" value={s.callsP2P} onChange={(v) => s.set('callsP2P', v)} />
                 <ScopeRow label="Кто может добавлять в группы" value={s.groupsInviteScope} onChange={(v) => s.set('groupsInviteScope', v)} />
+                <RowToggle
+                  label="Показывать мой инвентарь в профиле"
+                  hint="Если выключено, другие не увидят ваши кейсы, питомцев и скины"
+                  checked={s.showInventoryToOthers !== false}
+                  onChange={(v) => s.set('showInventoryToOthers', v)}
+                />
                 <Button size="small" sx={{ mt: 1 }} onClick={() => alert('Черный список: раздел в разработке')}>
                   Заблокированные пользователи
                 </Button>
-              </AccordionDetails>
-            </Accordion>
-            <Accordion sx={sectionSx} disableGutters>
-              <AccordionSummary expandIcon={<ExpandMore sx={{ color: theme.accent }} />}>
-                <PhoneOutlined sx={{ mr: 1, color: theme.accent }} />
-                <Typography sx={{ fontWeight: 600 }}>Контактные данные</Typography>
-              </AccordionSummary>
-              <AccordionDetails>
-                <RowToggle label="Требовать телефон при регистрации" checked={s.requirePhone} onChange={(v) => s.set('requirePhone', v)} />
-                <RowToggle label="Требовать почту при регистрации" checked={s.requireEmail} onChange={(v) => s.set('requireEmail', v)} />
-                <Alert severity="info" sx={{ mt: 1, fontSize: 12 }}>
-                  Если включено, новые аккаунты должны указать соответствующее поле при регистрации.
-                </Alert>
               </AccordionDetails>
             </Accordion>
             <Accordion sx={sectionSx} disableGutters>
@@ -281,6 +272,27 @@ export default function SettingsDialog({ open, onClose }: { open: boolean; onClo
                   </Stack>
                 )}
                 <Divider sx={{ my: 2, borderColor: theme.border }} />
+                {isDesktop() && (
+                  <>
+                    <RowToggle
+                      label="Запоминать вход на этом устройстве"
+                      hint="Открывать аккаунт без пароля при запуске, даже без интернета. Токен хранится в зашифрованном виде (защита Windows), в файлах его не прочитать. Выключите на чужом ПК."
+                      checked={s.desktopAutoUnlock}
+                      onChange={(v) => {
+                        s.set('desktopAutoUnlock', v);
+                        // Выключили — стираем зашифрованный токен, чтобы им
+                        // нельзя было открыть аккаунт без сети. Включили —
+                        // сохраняем текущую сессию сразу.
+                        if (!v) { void clearSecureSession(); }
+                        else {
+                          const token = localStorage.getItem('vera_token');
+                          void saveSecureSession(token, currentUser);
+                        }
+                      }}
+                    />
+                    <Divider sx={{ my: 2, borderColor: theme.border }} />
+                  </>
+                )}
                 <RowToggle label="Облачный пароль (пассивный вход)" checked={s.cloudPasswordEnabled} onChange={(v) => s.set('cloudPasswordEnabled', v)} />
                 <Divider sx={{ my: 2, borderColor: theme.border }} />
                 <ListItemButton onClick={() => { onClose(); navigate('/devices'); }} sx={{ px: 0 }}>

@@ -46,6 +46,7 @@ import GroupInviteCard from './GroupInviteCard';
 import WarshipGameCard from './WarshipGameCard';
 import TicTacToeCard from './TicTacToeCard';
 import BotButtons from './BotButtons';
+import { AppealButton } from './AppealDialog';
 import CallSummaryCard from './CallSummaryCard';
 import ContextMenu from './ContextMenu';
 import ChannelComments from './ChannelComments';
@@ -64,6 +65,35 @@ const MEDIA_MAX_SIDE = 420;
 // при каждом открытии чата создаётся заново — без памяти подпись снова
 // сжималась бы в столбик до конца загрузки.
 const mediaFrameCache = new Map<string, { width: number; height: number }>();
+const MEDIA_FRAME_STORAGE_KEY = 'vera-media-frame-sizes';
+
+// Размеры переживают обновление страницы: иначе после перезагрузки подпись
+// снова сжимается в столбик, пока фото не попадёт в экран и не загрузится.
+try {
+  const raw = sessionStorage.getItem(MEDIA_FRAME_STORAGE_KEY);
+  if (raw) {
+    const parsed = JSON.parse(raw) as Record<string, { width?: number; height?: number }>;
+    for (const [key, value] of Object.entries(parsed)) {
+      const width = Number(value?.width);
+      const height = Number(value?.height);
+      if (key && width > 0 && height > 0) mediaFrameCache.set(key, { width, height });
+    }
+  }
+} catch { /* приватный режим — живём только памятью вкладки */ }
+
+function rememberMediaFrame(key: string, size: { width: number; height: number }) {
+  if (!key) return;
+  mediaFrameCache.set(key, size);
+  try {
+    const dump: Record<string, { width: number; height: number }> = {};
+    let count = 0;
+    for (const [storedKey, stored] of mediaFrameCache) {
+      dump[storedKey] = stored;
+      if (++count >= 300) break;
+    }
+    sessionStorage.setItem(MEDIA_FRAME_STORAGE_KEY, JSON.stringify(dump));
+  } catch { /* квота или приватный режим */ }
+}
 
 /**
  * Ширина кадра в пузыре по размерам файла. Без размеров вернёт 0 —
@@ -134,6 +164,23 @@ function resolveFileUrl(url?: string): string {
   return '';
 }
 
+// SEC: Sanitize URL для безпечного використання у href посилань.
+// Блокує javascript:, data:text/html та інші небезпечні протоколи.
+function sanitizeHref(url?: string): string {
+  if (!url) return '';
+  const value = String(url).trim();
+  // Дозволяємо тільки безпечні протоколи
+  if (/^https?:\/\//i.test(value)) return value;
+  if (/^mailto:/i.test(value)) return value;
+  if (/^tel:/i.test(value)) return value;
+  // Внутрішні маршрути (/#/...)
+  if (/^\/#/.test(value)) return value;
+  // Відносні шляхи
+  if (value.startsWith('/')) return value;
+  // Всі інші протоколи (javascript:, data:, vbscript:) блокуємо
+  return '';
+}
+
 function formatTime(dateStr: string): string {
   return new Date(dateStr).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 }
@@ -170,7 +217,10 @@ function splitContent(text: string): Array<{ type: 'emoji' | 'text' | 'link'; va
     const trailing = raw.match(/[.,!?;:)\]}]+$/)?.[0] || '';
     const value = trailing ? raw.slice(0, -trailing.length) : raw;
     if (match.index > last) parts.push(...splitEmoji(text.slice(last, match.index)));
-    if (value) parts.push({ type: 'link', value, href: value });
+    // SEC: Перевіряємо URL через sanitizeHref перед додаванням у href
+    const safeHref = sanitizeHref(value);
+    if (value && safeHref) parts.push({ type: 'link', value, href: safeHref });
+    else if (value) parts.push(...splitEmoji(value)); // Якщо href небезпечний, виводимо як текст
     if (trailing) parts.push(...splitEmoji(trailing));
     last = match.index + raw.length;
   }
@@ -943,12 +993,14 @@ function MessageBubble({
   const fontSize = useChatSettingsStore((s) => s.fontSize);
   const emojiSize = useChatSettingsStore((s) => s.emojiSize);
   // 10 слотов быстрых реакций пользователя (сток или скины из кейса).
-  const reactionSlots = useReactionSkinStore((s) => s.slots);
+  const reactionSlots = useReactionSkinStore(useShallow((s) => s.slots));
   // Шрифт конкретного чата: при смене перерисовываются только пузыри этого чата.
   const chatFont = useChatFontStore((s) => s.perChatFonts[message.chatId]);
   const globalFontFamily = useUserSettingsStore((s) => s.globalFontFamily);
   const fontFamily = chatFont || globalFontFamily;
   const photoTextPos = useUserSettingsStore((s) => s.layout.photoTextPos ?? 'bottom');
+  // Выключено — пузырь идёт от края чата, без аватарки и пустого места под неё.
+  const showAvatarsInChat = useUserSettingsStore((s) => s.layout.showAvatarsInChat !== false);
 
   // На какой стороне показывать сообщение.
   // auto — как обычно (свои справа, чужие слева); left/right — все с одной стороны.
@@ -964,8 +1016,8 @@ function MessageBubble({
   const wallTextAlign = bubbleWallAlign ? (isOwnSide ? 'right' : 'left') : undefined;
 
   // Активные покупки из магазина: обводка аватара и «плашка» своих сообщений.
-  const shopActiveRing = useShopStore((s) => s.activeRing);
-  const shopActiveSelfCard = useShopStore((s) => s.activeSelfCard);
+  const shopActiveRing = useShopStore(useShallow((s) => s.activeRing));
+  const shopActiveSelfCard = useShopStore(useShallow((s) => s.activeSelfCard));
   const ringItem = findShopItem('avatarRing', shopActiveRing);
   const shopActiveBubble = useShopStore((s) => s.activeBubble);
 
@@ -1045,7 +1097,7 @@ function MessageBubble({
   //  • для чужих — из members активного чата (там обновляемый avatarUrl).
   const activeChatMembers = useChatStore((s) => s.activeChat?.members);
   const freshSender = useMemo(() => {
-    if (channelPost) return { ...message.sender, id: groupChat.id, firstName: groupChat.name, lastName: '', avatarUrl: groupChat.avatarUrl, activeRing: groupChat.activeRing, activeSelfCard: groupChat.activeSelfCard, activeBubble: groupChat.activeBubble };
+    if (channelPost) return { ...message.sender, id: groupChat.id, username: groupChat.name, avatarUrl: groupChat.avatarUrl, activeRing: groupChat.activeRing, activeSelfCard: groupChat.activeSelfCard, activeBubble: groupChat.activeBubble };
     if (isOwn && user) return user as any;
     const m = activeChatMembers?.find((mm: any) => mm.userId === message.senderId);
     return (m?.user as any) || message.sender || null;
@@ -1086,7 +1138,7 @@ function MessageBubble({
   const bubbleItem = skinsShown ? findShopItem('bubbleStyle', isOwn ? ownSkinId('bubble', shopActiveBubble) : sender?.activeBubble) : undefined;
   // Кастомные предметы авторов бывают только на своих сообщениях.
   const ownCustomShown = isOwn && showOwnSkins;
-  const senderName = sender ? [sender.firstName, sender.lastName].filter(Boolean).join(' ') || sender.username : 'Бот';
+  const senderName = sender ? sender.username : 'Бот';
   // Добавляем cache-busting параметр по themeVersion, чтобы браузер перечитал
   // картинку аватара после смены (иначе кэш держит старую).
   const senderAvatarUrl = sender?.avatarUrl ? resolveFileUrl(sender.avatarUrl) : undefined;
@@ -1176,8 +1228,50 @@ function MessageBubble({
     const nextHeight = Math.round(next * h / w);
     setMeasuredFrame(next);
     setMeasuredHeight(nextHeight);
-    if (fileUrlKey) mediaFrameCache.set(fileUrlKey, { width: next, height: nextHeight });
+    if (fileUrlKey) rememberMediaFrame(fileUrlKey, { width: next, height: nextHeight });
   };
+  // Сервер размеры не присылает, а loading=lazy и отложенная отрисовка не
+  // грузят файл, пока пузырь не попал в экран. Снимаем размер сами, сразу,
+  // не дожидаясь прокрутки — тогда подпись не живёт узким столбиком.
+  useEffect(() => {
+    if (!singleVisual || knownFrame || measuredFrame || !fileUrlKey) return;
+    const attachment = messageAttachments[0];
+    const url = attachment ? resolveFileUrl(attachment.fileUrl) : '';
+    if (!url) return;
+    let cancelled = false;
+    const apply = (w: number, h: number) => {
+      if (cancelled || !w || !h) return;
+      const next = mediaFrameWidth(w, h);
+      if (!next) return;
+      const nextHeight = Math.round(next * h / w);
+      setMeasuredFrame(next);
+      setMeasuredHeight(nextHeight);
+      rememberMediaFrame(fileUrlKey, { width: next, height: nextHeight });
+    };
+    if (isVideoAttachment(attachment)) {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      const onMeta = () => apply(video.videoWidth, video.videoHeight);
+      video.addEventListener('loadedmetadata', onMeta);
+      video.src = url;
+      return () => {
+        cancelled = true;
+        video.removeEventListener('loadedmetadata', onMeta);
+        video.removeAttribute('src');
+        video.load();
+      };
+    }
+    const img = new Image();
+    img.onload = () => apply(img.naturalWidth, img.naturalHeight);
+    img.src = url;
+    return () => {
+      cancelled = true;
+      img.onload = null;
+    };
+  }, [singleVisual, knownFrame, measuredFrame, fileUrlKey, message.id]);
+  // Пока кадр ещё не измерен, пузырь держим по максимальной стороне фото,
+  // а не по ширине текста. Иначе подпись схлопывается в столбик.
+  const layoutWidth = frameWidth || (singleVisual ? MEDIA_MAX_SIDE : 0);
   // Альбом рисуем сеткой-коллажем, а не каруселью: так, как в ВК.
   const isPhotoAlbum = messageAttachments.length > 1
     && imageAttachments.length === messageAttachments.length;
@@ -1473,7 +1567,7 @@ function MessageBubble({
   // Подпись к фото: по настройке темы — над изображением или под ним.
   const captionBelow = photoTextPos === 'bottom' && imageAttachments.length > 0 && !!message.content;
   const messageTextNode = message.content ? (
-    <Typography ref={textRef} sx={{ flex: hasVisualMedia ? 'none' : 1, minWidth: hasVisualMedia ? (singleVisual ? (frameWidth || '100%') : 0) : 0, width: hasVisualMedia ? (frameWidth || (singleVisual ? 0 : 'max-content')) : undefined, maxWidth: hasVisualMedia ? '100%' : undefined, mt: captionBelow ? 0.75 : 0, textAlign: wallTextAlign, fontSize: bubbleTextSize || fontSize, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', fontFamily }}>
+    <Typography ref={textRef} sx={{ flex: hasVisualMedia ? 'none' : 1, minWidth: hasVisualMedia ? (singleVisual ? (layoutWidth || '100%') : 0) : 0, width: hasVisualMedia ? (layoutWidth || (singleVisual ? 'auto' : 'max-content')) : undefined, maxWidth: hasVisualMedia ? '100%' : undefined, mt: captionBelow ? 0.75 : 0, textAlign: wallTextAlign, fontSize: bubbleTextSize || fontSize, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere', fontFamily }}>
       {contentParts.map((part, i) => part.type === 'emoji'
         ? <span key={i} style={{ fontSize: emojiSize, lineHeight: 1.2 }}>{part.value}</span>
         : part.type === 'link'
@@ -1497,8 +1591,8 @@ function MessageBubble({
   const metaNode = (
     <Box sx={{
       display: 'flex', alignItems: 'center', flexShrink: 0, gap: 0.5,
-      width: metaBesideText ? 'auto' : singleVisual ? (frameWidth || 0) : '100%',
-      minWidth: !metaBesideText && singleVisual ? (frameWidth || '100%') : undefined,
+      width: metaBesideText ? 'auto' : singleVisual ? (layoutWidth || 0) : '100%',
+      minWidth: !metaBesideText && singleVisual ? (layoutWidth || '100%') : undefined,
       maxWidth: !metaBesideText && singleVisual ? '100%' : undefined,
       alignSelf: metaBesideText ? 'center' : 'stretch',
       mt: meta.v === 'bottom' ? 0.25 : 0,
@@ -1594,13 +1688,13 @@ function MessageBubble({
             : <RadioButtonUnchecked />}
         </Box>
       )}
-      {isGroupEnd ? <Avatar
+      {showAvatarsInChat && (isGroupEnd ? <Avatar
           src={senderAvatar}
           sx={avatarSx}
           onClick={() => !channelPost && onAvatarClick?.(sender as User)}
         >
           {senderName[0]?.toUpperCase()}
-        </Avatar> : <Box sx={{ width: 34, flexShrink: 0 }} />}
+        </Avatar> : <Box sx={{ width: 34, flexShrink: 0 }} />)}
 
       <Box
         ref={bubbleRef}
@@ -1695,15 +1789,9 @@ function MessageBubble({
           className={bubbleEnabled && ownCustomShown && customBubbleSpec && !ownOverrideSet('bubble') ? specAnimationClass(customBubbleSpec) : ''}
           sx={{
             position: 'relative',
-            // Экономим layout/paint сообщений, которые сейчас вне экрана.
-            // 'auto' в contain-intrinsic-size заставляет браузер запомнить
-            // реальную высоту после первой отрисовки — оценка в 72px нужна
-            // только до этого, поэтому длина ленты не «прыгает» при скролле.
-            // Важно: это ИМЕННО пузырь, а не строка сообщения — у строки есть
-            // панель действий, выходящая за её пределы, и paint containment
-            // (часть content-visibility) её бы обрезал.
-            contentVisibility: bubbleEnabled ? 'auto' : 'visible',
-            containIntrinsicSize: 'auto 72px',
+            // Не прячем вёрстку вне экрана. content-visibility оставлял фото
+            // узким столбиком, пока до него не доскроллишь, а после обновления
+            // занижал высоту ленты — и чат переставал прокручиваться.
             '@media (pointer: coarse)': {
               userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
               '& input, & textarea': { userSelect: 'text', WebkitUserSelect: 'text', WebkitTouchCallout: 'default' },
@@ -1716,6 +1804,14 @@ function MessageBubble({
             maxWidth: '100%', boxSizing: 'border-box',
             border: `1px solid ${isOwn ? accent + '28' : theme.border}`,
             backdropFilter: bubbleNeedsBackdropBlur ? 'blur(18px)' : 'none',
+            WebkitBackdropFilter: bubbleNeedsBackdropBlur ? 'blur(18px)' : 'none',
+            // backdrop-filter в Chromium оставляет тонкий шов по краю пузыря
+            // (видно как линию у аватарки) и мерцает при перекомпоновке слоёв —
+            // на hover и при ресайзе панели. Свой стабильный слой + stacking
+            // context убирают шов и мерцание.
+            ...(bubbleNeedsBackdropBlur
+              ? { isolation: 'isolate', willChange: 'transform', backfaceVisibility: 'hidden' }
+              : {}),
             transition: `background 220ms ${motion.easeOut}, transform 220ms ${motion.spring}, box-shadow 220ms ${motion.easeOut}`,
             transform: { xs: 'none', md: isHovered ? 'translateY(-2px)' : 'translateY(0)' },
             ...(isOwn
@@ -1751,12 +1847,12 @@ function MessageBubble({
           {message.replyToId && (
             <Box sx={{
               mb: 1, p: 1, borderRadius: 2,
-              ...(singleVisual ? { width: frameWidth || 0, minWidth: frameWidth ? undefined : '100%', maxWidth: '100%', boxSizing: 'border-box' } : {}),
+              ...(singleVisual ? { width: layoutWidth || 0, minWidth: layoutWidth ? undefined : '100%', maxWidth: '100%', boxSizing: 'border-box' } : {}),
               bgcolor: 'rgba(255,255,255,0.08)',
               borderLeft: `3px solid ${theme.accent}`,
             }}>
               <Typography sx={{ fontSize: 12, color: theme.accent, fontWeight: 600, fontFamily }}>
-                {message.replyTo?.sender?.firstName || message.replyTo?.sender?.username || 'Сообщение'}
+                {message.replyTo?.sender?.username || 'Сообщение'}
               </Typography>
               <Typography sx={{ fontSize: 13, color: theme.textSec, fontFamily }} noWrap>
                 {message.replyTo?.content || '📎 Вложение'}
@@ -1770,7 +1866,7 @@ function MessageBubble({
               justifyContent: meta.h === 'right' ? 'flex-end' : meta.h === 'center' ? 'center' : 'flex-start',
             }
             : singleVisual
-              ? { display: 'flex', flexDirection: 'column', alignItems: 'stretch', width: frameWidth || 'fit-content', maxWidth: '100%' }
+              ? { display: 'flex', flexDirection: 'column', alignItems: 'stretch', width: layoutWidth || 'fit-content', maxWidth: '100%' }
               : {}}>
               {!metaBesideText && meta.v === 'top' && metaNode}
               {metaBesideText && meta.h !== 'right' && metaNode}
@@ -1842,7 +1938,7 @@ function MessageBubble({
                 <IconButton aria-label="Предыдущее вложение" onClick={e => { e.stopPropagation(); const el = attachmentsRef.current; el?.scrollBy({ left: -el.clientWidth, behavior: 'smooth' }); }} sx={{ color: 'inherit' }}>←</IconButton>
                 <IconButton aria-label="Следующее вложение" onClick={e => { e.stopPropagation(); const el = attachmentsRef.current; el?.scrollBy({ left: el.clientWidth, behavior: 'smooth' }); }} sx={{ color: 'inherit' }}>→</IconButton>
               </Box>}
-              <Box ref={attachmentsRef} tabIndex={message.attachments?.length ? 0 : undefined} role="region" aria-label="Вложения поста" sx={{ display: 'flex', width: message.attachments?.length && !isRoundNote && !isSticker && !singleVisual ? 360 : singleVisual ? (frameWidth || 'auto') : undefined, maxWidth: '100%', overflowX: 'hidden', scrollSnapType: singleVisual ? undefined : 'x mandatory', gap: 1 }}>
+              <Box ref={attachmentsRef} tabIndex={message.attachments?.length ? 0 : undefined} role="region" aria-label="Вложения поста" sx={{ display: 'flex', width: message.attachments?.length && !isRoundNote && !isSticker && !singleVisual ? 360 : singleVisual ? (layoutWidth || 'auto') : undefined, maxWidth: '100%', overflowX: 'hidden', scrollSnapType: singleVisual ? undefined : 'x mandatory', gap: 1 }}>
               {(message.attachments || []).map((attachment, index, attachments) => {
                 const attachmentUrl = resolveFileUrl(attachment.fileUrl);
                 const isAudio = attachment.mimeType?.startsWith('audio/') || (attachments.length === 1 && message.type === 'voice');
@@ -1904,6 +2000,9 @@ function MessageBubble({
               {captionBelow && messageTextNode}
 
               {!!message.replyMarkup?.inline_keyboard?.length && <BotButtons message={message} />}
+
+              {/* Уведомление о решении администрации: его можно обжаловать. */}
+              {!!message.appealReportId && !isOwn && <AppealButton reportId={message.appealReportId} />}
 
               {message.isEdited && (
                 <Typography sx={{ fontSize: 11, color: messageTimeText, opacity: editedTextOpacity, mt: 0.3, fontStyle: 'italic', fontFamily }}>

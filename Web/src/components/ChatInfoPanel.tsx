@@ -19,6 +19,7 @@ import { peer, isPeerAvailable } from '../services/peer';
 import { useNavigate } from 'react-router-dom';
 import { ChatMember } from '../types';
 import { GROUP_RIGHTS, GroupRight, hasGroupRight } from '../services/groupPermissions';
+import SecurityBars from './SecurityBars';
 import { SHOP_CATALOG, useShopStore } from '../store/shopStore';
 import { useChatSkinStore } from '../store/chatSkinStore';
 import type { ChatSkinSlot } from '../store/chatSkinStore';
@@ -84,7 +85,19 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
   const dragRef = useRef<{ x: number; width: number } | null>(null);
   const [maxWidth, setMaxWidth] = useState(600);
   const [resizing, setResizing] = useState(false);
-  const panelWidth = Math.min(maxWidth, Math.max(300, Number(savedWidth) || 300));
+  // Ширина во время перетаскивания живёт локально: запись в persist-стор на
+  // каждый pointermove пересоздавала layout и писала localStorage — весь
+  // интерфейс перерисовывался и мерцал. В стор кладём один раз, на отпускании.
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
+  const clampWidth = (w: number) => Math.min(maxWidth, Math.max(300, Math.round(w)));
+  const panelWidth = dragWidth ?? clampWidth(Number(savedWidth) || 300);
+  // Фиксируем результат перетаскивания один раз: пишем в стор и выходим из drag.
+  const finishDrag = () => {
+    dragRef.current = null;
+    setResizing(false);
+    if (dragWidth != null) setLayout('chatInfoWidth', dragWidth);
+    setDragWidth(null);
+  };
 
   useEffect(() => {
     const parent = panelRef.current?.parentElement;
@@ -346,7 +359,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
   const displayName = isGroup
     ? (chat.name || 'Группа')
     : otherUser
-      ? ([otherUser.firstName, otherUser.lastName].filter(Boolean).join(' ').trim() || otherUser.username)
+      ? otherUser.username
       : 'Чат';
 
   const avatarSrc = isGroup ? chat.avatarUrl : otherUser?.avatarUrl;
@@ -531,23 +544,20 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
         onPointerMove={event => {
           const drag = dragRef.current;
           if (!drag) return;
-          setLayout('chatInfoWidth', Math.min(maxWidth, Math.max(300,
-            Math.round(drag.width + drag.x - event.clientX))));
+          setDragWidth(clampWidth(drag.width + drag.x - event.clientX));
         }}
         onPointerUp={event => {
-          dragRef.current = null;
-          setResizing(false);
           if (event.currentTarget.hasPointerCapture(event.pointerId)) {
             event.currentTarget.releasePointerCapture(event.pointerId);
           }
+          finishDrag();
         }}
-        onPointerCancel={() => { dragRef.current = null; setResizing(false); }}
-        onLostPointerCapture={() => { dragRef.current = null; setResizing(false); }}
+        onPointerCancel={finishDrag}
+        onLostPointerCapture={finishDrag}
         onKeyDown={event => {
           if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
           event.preventDefault();
-          setLayout('chatInfoWidth', Math.min(maxWidth, Math.max(300,
-            panelWidth + (event.key === 'ArrowLeft' ? 20 : -20))));
+          setLayout('chatInfoWidth', clampWidth(panelWidth + (event.key === 'ArrowLeft' ? 20 : -20)));
         }}
         sx={{
           display: 'none',
@@ -663,6 +673,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
             </Box>
           )}
 
+          {isGroup && chat.ownerId && <SecurityBars userId={chat.ownerId} theme={theme} inline />}
           {/* Status / member count */}
           <Typography sx={{
             fontSize: 13, mt: 0.4,
@@ -800,15 +811,6 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
               textTransform: 'uppercase', letterSpacing: 0.8, mb: 0.75, fontWeight: 600,
             }}>Имя пользователя</Typography>
             <Typography sx={{ fontSize: 14, color: theme.accent, mb: 1.5 }}>@{otherUser.username}</Typography>
-            {otherUser.phone && (
-              <>
-                <Typography sx={{
-                  fontSize: 11, color: theme.textSec,
-                  textTransform: 'uppercase', letterSpacing: 0.8, mb: 0.75, fontWeight: 600,
-                }}>Телефон</Typography>
-                <Typography sx={{ fontSize: 14, color: theme.text }}>{otherUser.phone}</Typography>
-              </>
-            )}
           </Box>
         )}
 
@@ -903,7 +905,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
               {chat.members.map(m => {
                 const u = m.user;
                 if (!u) return null;
-                const name = [u.firstName, u.lastName].filter(Boolean).join(' ').trim() || u.username;
+                const name = u.username;
                 return (
                   <ListItem
                     key={m.id}
@@ -1131,7 +1133,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
         PaperProps={{ sx: { bgcolor: theme.bgHeader, color: theme.text } }}>
         <DialogTitle>Права администратора</DialogTitle>
         <DialogContent>
-          <Typography sx={{ mb: 2 }}>{adminTarget?.user?.firstName || adminTarget?.user?.username}</Typography>
+          <Typography sx={{ mb: 2 }}>{adminTarget?.user?.username}</Typography>
           <TextField fullWidth label="Звание" placeholder="Например: Модератор" value={adminTitle}
             onChange={e => setAdminTitle(e.target.value)} inputProps={{ maxLength: 32 }} disabled={adminSaving}
             helperText="Своё название должности, до 32 символов" sx={{ mb: 2 }} />
@@ -1180,7 +1182,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
                 </Typography>
                 <List disablePadding>
                   {directPartners.map((u: User) => {
-                    const name = [u.firstName, u.lastName].filter(Boolean).join(' ').trim() || u.username;
+                    const name = u.username;
                     return (
                       <ListItem key={u.id} disablePadding sx={{ mb: 0.5 }}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flex: 1, px: 1, py: 0.75, borderRadius: 2, bgcolor: theme.bgHover }}>
@@ -1238,7 +1240,7 @@ export default function ChatInfoPanel({ chat, onClose, onViewProfile, onPlayerHo
           ) : searchResults.length > 0 ? (
             <List disablePadding>
               {searchResults.map(u => {
-                const name = [u.firstName, u.lastName].filter(Boolean).join(' ').trim() || u.username;
+                const name = u.username;
                 return (
                   <ListItem key={u.id} disablePadding sx={{ mb: 0.5 }}>
                     <Box sx={{

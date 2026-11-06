@@ -15,12 +15,27 @@ import {
   type OfflineLockInfo,
 } from '../services/offlineAuth';
 import { isAppOffline, setAppOffline } from '../services/offlineMode';
+import {
+  isDesktop, saveSecureSession, loadSecureSession, clearSecureSession,
+} from '../services/desktopSecure';
+import { useUserSettingsStore } from './userSettingsStore';
 import { startIconPackSync, stopIconPackSync } from '../services/iconPackSync';
 
 /** Ответа нет совсем (сеть, таймаут) или сервер лежит (Render 502/503). */
 function isUnreachable(e: any): boolean {
   const status = e?.response?.status;
   return !status || status >= 500;
+}
+
+/**
+ * Десктоп: после успешного входа кладём токен и снимок профиля в защищённое
+ * хранилище ОС (safeStorage/DPAPI), чтобы при следующем запуске без сети
+ * открыть аккаунт без пароля. В вебе — no-op. Не ждём завершения: запись в
+ * secure-store не должна задерживать вход.
+ */
+function persistSecureSession(token: string | null | undefined, user: User | null | undefined): void {
+  if (!token || !isDesktop()) return;
+  void saveSecureSession(token, user ?? null);
 }
 
 async function hydrateAccount(user: User): Promise<void> {
@@ -30,9 +45,10 @@ async function hydrateAccount(user: User): Promise<void> {
   syncOfflineCredentialUser(user);
   disableSettingsSync();
   await initStoreSyncOnLogin(user.id, () => {
-    const themeId = Number((user as any).themeId || 0);
+    const rawThemeId = (user as any).themeId;
+    const hasTheme = rawThemeId !== null && rawThemeId !== undefined && rawThemeId !== '';
 
-    if (themeId === 0) {
+    if (!hasTheme) {
       // Новый аккаунт без сохранённой темы — назначаем случайную тему из каталога.
       // setTheme применяет настройки темы, сохраняет выбор на сервере и
       // прокидывает themeId/theme в стор. chatPhoto задаём отдельно.
@@ -40,8 +56,10 @@ async function hydrateAccount(user: User): Promise<void> {
       useThemeStore.getState().setTheme(randomTheme.id);
       useThemeStore.setState({ chatPhoto: (user as any).chatPhoto || undefined });
     } else {
+      const themeId = Number(rawThemeId);
       const theme = useThemeStore.getState().customThemes.find((t) => t.id === themeId)
         || useThemeStore.getState().builtinThemes.find((t) => t.id === themeId)
+        || THEMES.find((t) => t.id === themeId)
         || THEMES[0];
       useThemeStore.setState({ themeId, theme, chatPhoto: (user as any).chatPhoto || undefined });
     }
@@ -92,11 +110,8 @@ export function peerInfoToUser(info: Awaited<ReturnType<typeof peer.info>>): Use
   return {
     id: info.deviceId,
     username: p.username || info.name || info.deviceId.slice(0, 8),
-    firstName: p.firstName || info.name || 'Vera',
-    lastName: p.lastName || '',
     avatarUrl: p.avatarUrl || '',
     bio: p.bio || '',
-    birthDate: p.birthDate || '',
     country: p.country || '',
     region: p.region || '',
     city: p.city || '',
@@ -141,6 +156,7 @@ async function tryReconnect(): Promise<void> {
     try { await authApi.device(); } catch {}
     connectSocket(token);
     await hydrateAccount(user);
+    persistSecureSession(token, user);
     useAuthStore.setState({ user, token, isAuthenticated: true, isOfflineSession: false, offlineLock: null });
     const [{ useChatStore }, { useMusicStore }] = await Promise.all([import('./chatStore'), import('./musicStore')]);
     void useChatStore.getState().loadChats();
@@ -193,6 +209,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     initArchive(user.id);
     if (!isPeerAvailable() && !token.startsWith('mock-token-')) {
       try { connectSocket(token); } catch {}
+      persistSecureSession(token, user);
     }
     try {
       const themeId = Number((user as any).themeId || 0);
@@ -217,7 +234,9 @@ export const useAuthStore = create<AuthState>((set) => ({
     stopOfflineReconnect();
     // Вышел сам — без сети этот аккаунт больше не открывается.
     clearOfflineCredential();
+    void clearSecureSession();
     localStorage.removeItem('vera_token');
+    localStorage.removeItem('vera_user');
     set({ user: null, token: null, isAuthenticated: false, isOfflineSession: false, offlineLock: null });
   },
 
@@ -243,17 +262,41 @@ export const useAuthStore = create<AuthState>((set) => ({
     // Повторная проверка (кнопка «Проверить подключение») — старый таймер не нужен.
     stopOfflineReconnect();
 
-    // Сервер недоступен: ник не спрашиваем — только пароль последнего
-    // пользователя этого устройства (см. offlineAuth). Никого не было — форма входа.
-    const enterOfflineLock = () => {
+    // Сервер недоступен: сначала пробуем открыть аккаунт без пароля из
+    // защищённого хранилища (десктоп, safeStorage/DPAPI) — если это включено
+    // в настройках. Иначе спрашиваем пароль последнего пользователя этого
+    // устройства (offlineAuth). Никого не было — форма входа.
+    const enterOfflineLock = async () => {
       setAppOffline(true);
+      // Десктопный авто-вход без сети: расшифровываем токен/профиль из
+      // secure-store и открываем аккаунт. Пароль не спрашиваем.
+      if (isDesktop() && useUserSettingsStore.getState().desktopAutoUnlock) {
+        try {
+          const sess = await loadSecureSession();
+          const cachedRaw = localStorage.getItem('vera_user');
+          const cachedUser = cachedRaw ? (JSON.parse(cachedRaw) as User) : null;
+          const user = (sess?.user as User) || cachedUser;
+          if (sess?.token && user?.id) {
+            localStorage.setItem('vera_token', sess.token);
+            localStorage.setItem('vera_user', JSON.stringify(user));
+            try { initArchive(user.id); } catch {}
+            set({
+              user, token: sess.token,
+              isAuthenticated: true, isOfflineSession: true,
+              offlineLock: null, isLoading: false,
+            });
+            startOfflineReconnect();
+            return;
+          }
+        } catch { /* не вышло — покажем обычный офлайн-замок ниже */ }
+      }
       set({ offlineLock: offlineLockInfo(), isAuthenticated: false, isLoading: false });
       startOfflineReconnect();
     };
 
     setAppOffline(false);
     if (isAppOffline()) {
-      enterOfflineLock();
+      await enterOfflineLock();
       return;
     }
 
@@ -266,6 +309,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         await authApi.device();
         connectSocket(existingToken);
         await hydrateAccount(res.data);
+        persistSecureSession(existingToken, res.data);
         set({ user: res.data, isAuthenticated: true, token: existingToken, isLoading: false });
         try { if (res.data?.id) initArchive(res.data.id); } catch {}
         return;
@@ -278,7 +322,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         }
         // Сервер не ответил — токен не виноват, не стираем его.
         if (isUnreachable(e)) {
-          enterOfflineLock();
+          await enterOfflineLock();
           return;
         }
         localStorage.removeItem('vera_token');
@@ -292,6 +336,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const { accessToken, user } = res.data as any;
       localStorage.setItem('vera_token', accessToken);
       localStorage.setItem('vera_user', JSON.stringify(user));
+      persistSecureSession(accessToken, user);
       try { connectSocket(accessToken); } catch {}
       await hydrateAccount(user);
       set({ token: accessToken, user, isAuthenticated: true, isLoading: false });
@@ -304,7 +349,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         return;
       }
       if (isUnreachable(e)) {
-        enterOfflineLock();
+        await enterOfflineLock();
         return;
       }
       console.error('[auth] device login failed', e);

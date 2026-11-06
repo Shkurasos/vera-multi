@@ -34,7 +34,10 @@ function blockedInChat(db, chatId, senderId) {
   return members.some((memberId) => isBlockedBy(db, memberId, senderId));
 }
 
-function install({ app, getDb, saveDb, auth, isAdmin, isAdminUsername, notify, blocked, resolveInstallationUser }) {
+function install({
+  app, getDb, saveDb, auth, isAdmin, isAdminUsername, notify, blocked, resolveInstallationUser,
+  appealTarget, overturnReport, banReportId,
+}) {
   const db = () => ensureCollections(getDb());
   const sendNotification = typeof notify === 'function' ? notify : () => {};
   const isBannedUser = typeof blocked === 'function' ? blocked : () => false;
@@ -108,14 +111,27 @@ function install({ app, getDb, saveDb, auth, isAdmin, isAdminUsername, notify, b
    * The ban check matters: otherwise anyone could spam admins through this form.
    * A personal block is enough on its own - the appeal still goes to admins only.
    */
-  const createAppeal = (userId, text) => {
+  const createAppeal = (userId, text, requestedReportId = null) => {
+    let reportId = requestedReportId || null;
+    // Апелляция на конкретное решение (предупреждение, бан, режим чтения,
+    // удаление бота): доступна адресату решения, даже если он не забанен.
+    let target = null;
+    if (reportId) {
+      target = typeof appealTarget === 'function'
+        ? appealTarget(userId, reportId)
+        : { code: 404, error: 'Решение не найдено' };
+      if (target.error) return { code: target.code, message: target.error };
+    }
     const banned = isBannedUser(userId);
     const blockedBy = (db().userBlocks || []).filter((block) => block.blockedId === userId);
-    if (!banned && !blockedBy.length) {
+    if (!target && !banned && !blockedBy.length) {
       return { code: 403, message: 'Апелляция доступна только заблокированным и забаненным' };
     }
+    // Экран бана не знает, каким решением выдан бан: привязываем действующий.
+    if (!reportId && banned && typeof banReportId === 'function') reportId = banReportId(userId) || null;
     const openAppeal = (db().appeals || []).find(
-      (appeal) => appeal.userId === userId && appeal.status === 'open',
+      (appeal) => appeal.userId === userId && appeal.status === 'open' &&
+        (appeal.reportId || null) === reportId,
     );
     if (openAppeal) return { code: 409, message: 'Ваша апелляция уже на рассмотрении' };
 
@@ -126,7 +142,8 @@ function install({ app, getDb, saveDb, auth, isAdmin, isAdminUsername, notify, b
       text,
       // ban vs block: a ban has a term and a reason, a personal block only has
       // an author. The admin needs this to know what is being contested.
-      reason: banned ? 'Бан аккаунта' : 'Блокировка пользователем',
+      reason: target ? target.label : banned ? 'Бан аккаунта' : 'Блокировка пользователем',
+      reportId,
       status: 'open',
       createdAt: new Date().toISOString(),
     };
@@ -138,8 +155,9 @@ function install({ app, getDb, saveDb, auth, isAdmin, isAdminUsername, notify, b
       `Апелляция от @${userBrief(userId).username}`,
       appeal.reason,
       text,
+      reportId ? `Решение: /#/admin?report=${reportId}` : '',
       `Рассмотрение: /#/admin?appeal=${appeal.id}`,
-    ].join('\n');
+    ].filter(Boolean).join('\n');
     for (const recipient of recipients) {
       try { sendNotification(userId, recipient.id, lines, appeal.id); } catch {}
     }
@@ -158,7 +176,8 @@ function install({ app, getDb, saveDb, auth, isAdmin, isAdminUsername, notify, b
   app.post('/api/appeals', auth, (req, res) => {
     const parsed = readAppealText(req);
     if (parsed.code) return res.status(parsed.code).json({ message: parsed.message });
-    const result = createAppeal(req.userId, parsed.text);
+    const reportId = req.body?.reportId == null ? null : String(req.body.reportId).trim().slice(0, 64) || null;
+    const result = createAppeal(req.userId, parsed.text, reportId);
     if (result.code !== 201) return res.status(result.code).json({ message: result.message });
     res.status(201).json({ id: result.id });
   });
@@ -201,11 +220,15 @@ function install({ app, getDb, saveDb, auth, isAdmin, isAdminUsername, notify, b
   });
 
   // My latest appeal, so the button stops offering to send a second one.
+  // ?reportId= — апелляция на конкретное решение (кнопка под уведомлением).
   app.get('/api/appeals/mine', auth, (req, res) => {
+    const reportId = req.query?.reportId ? String(req.query.reportId) : null;
     const appeal = (db().appeals || [])
-      .filter((item) => item.userId === req.userId)
+      .filter((item) => item.userId === req.userId && (!reportId || item.reportId === reportId))
       .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
-    res.json(appeal ? { id: appeal.id, status: appeal.status, createdAt: appeal.createdAt } : null);
+    res.json(appeal
+      ? { id: appeal.id, status: appeal.status, createdAt: appeal.createdAt, reportId: appeal.reportId || null }
+      : null);
   });
 
   // -- Admin ---------------------------------------------------------------
@@ -216,6 +239,7 @@ function install({ app, getDb, saveDb, auth, isAdmin, isAdminUsername, notify, b
       user: userBrief(appeal.userId),
       text: appeal.text,
       reason: appeal.reason,
+      reportId: appeal.reportId || null,
       status: appeal.status,
       createdAt: appeal.createdAt,
       decision: appeal.decision || null,
@@ -234,20 +258,33 @@ function install({ app, getDb, saveDb, auth, isAdmin, isAdminUsername, notify, b
       return res.status(400).json({ message: 'Выберите решение' });
     }
 
+    let restored = null;
     if (action === 'overturn') {
-      // An appeal against a ban must actually lift the ban.
-      const before = (db().moderationBans || []).length;
-      db().moderationBans = (db().moderationBans || []).filter((ban) => ban.userId !== appeal.userId);
-      if (before !== db().moderationBans.length) saveDb();
+      if (appeal.reportId && typeof overturnReport === 'function') {
+        // Отменяется только обжалованное решение: его баны, предупреждение,
+        // ограничения; удалённый бот или приложение возвращаются.
+        restored = overturnReport(appeal.reportId, req.userId).restored;
+      } else {
+        // An appeal against a ban must actually lift the ban.
+        const before = (db().moderationBans || []).length;
+        db().moderationBans = (db().moderationBans || []).filter((ban) => ban.userId !== appeal.userId);
+        if (before !== db().moderationBans.length) saveDb();
+      }
     }
     appeal.status = 'resolved';
-    appeal.decision = { action, note, by: req.userId, at: new Date().toISOString() };
+    appeal.decision = { action, note, by: req.userId, at: new Date().toISOString(), restored };
     saveDb();
 
+    const outcome = action !== 'overturn' ? 'отклонена'
+      : appeal.reportId ? 'решение отменено' : 'блокировка снята';
     sendNotification(
       req.userId,
       appeal.userId,
-      `Апелляция рассмотрена: ${action === 'overturn' ? 'блокировка снята' : 'отклонена'}\n${note}`,
+      [
+        `Апелляция рассмотрена: ${outcome}`,
+        restored === false ? 'Бота или приложение вернуть не удалось: ник или имя уже заняты.' : '',
+        note,
+      ].filter(Boolean).join('\n'),
     );
     saveDb();
     res.json({ id: appeal.id, status: appeal.status, decision: appeal.decision });

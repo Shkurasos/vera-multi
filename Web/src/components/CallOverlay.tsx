@@ -96,7 +96,7 @@ export default function CallOverlay() {
   const cols = totalTiles <= 1 ? 1 : totalTiles <= 4 ? 2 : totalTiles <= 9 ? 3 : 4;
   const rows = Math.ceil(totalTiles / cols);
 
-  const meName = `${me?.firstName || ''} ${me?.lastName || ''}`.trim() || me?.username || 'Вы';
+  const meName = me?.username || 'Вы';
   const title = chat?.name || (chat?.type === 'direct' ? 'Личный звонок' : 'Голосовой канал');
 
   return (
@@ -147,7 +147,7 @@ export default function CallOverlay() {
         />
         {peerList.map((p) => {
           const dn = p.user
-            ? (`${p.user.firstName || ''} ${p.user.lastName || ''}`.trim() || p.user.username || p.userId.slice(0, 8))
+            ? (p.user.username || p.userId.slice(0, 8))
             : p.userId.slice(0, 8);
           return (
             <CallTile

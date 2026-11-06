@@ -1,16 +1,11 @@
 export interface User {
   id: string;
-  phone?: string | null;
-  email?: string | null;
   username: string;
-  firstName?: string | null;
-  lastName?: string | null;
   bio?: string | null;
   avatarUrl?: string | null;
   isOnline: boolean;
   lastSeen?: string;
   createdAt: string;
-  birthDate?: string | null;
   country?: string | null;
   region?: string | null;
   city?: string | null;
@@ -27,6 +22,8 @@ export interface User {
   isDev?: boolean;
   /** Админ-режим (сервер выставляет). Всё в магазине бесплатно. */
   isAdmin?: boolean;
+  /** Ограничения администрации без бана (только в /auth/me). */
+  moderation?: { readOnly: boolean; creationBanned: boolean };
   /** ID закреплённого плейлиста, отображается на профиле как мини-плеер. */
   pinnedPlaylistId?: string | null;
   /** ID закреплённого одиночного трека (взаимоисключимо с pinnedPlaylistId). */
@@ -39,6 +36,16 @@ export interface User {
   activeBubble?: string;
   /** Аккаунт-бот (в поиске — «/ник»). */
   isBot?: boolean;
+  /** Владелец разрешил показывать инвентарь в профиле. */
+  inventoryVisible?: boolean;
+  /** Есть только если владелец разрешил показ (или это свой профиль). */
+  inventory?: {
+    skins: string[];
+    pets: string[];
+    petCounts: Record<string, number>;
+    equippedPetId: string;
+    cases: Record<string, number>;
+  };
 }
 
 export type ReputationVoteValue = 'positive' | 'neutral' | 'negative';
@@ -151,6 +158,10 @@ export interface Message {
   sticker?: { id: string; packId: string; packName: string; emoji?: string };
   /** Кнопки под сообщением бота. */
   replyMarkup?: { inline_keyboard: InlineButton[][] } | null;
+  /** Уведомление о жалобе для администратора. */
+  moderationReportId?: string | null;
+  /** Решение администрации, которое получатель может обжаловать. */
+  appealReportId?: string | null;
   reactions?: MessageReaction[];
   poll?: { question: string; multiple?: boolean; options: Array<{ id: string; text: string; votes: number; voterIds?: string[] }> };
   isEdited: boolean;

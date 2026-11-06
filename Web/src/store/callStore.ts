@@ -17,8 +17,6 @@ export interface CallPeer {
   userId: string;
   user?: {
     id: string;
-    firstName?: string;
-    lastName?: string;
     username?: string;
     avatarUrl?: string;
   };

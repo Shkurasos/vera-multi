@@ -39,6 +39,7 @@ test('search returns public profiles without private or future account fields', 
     safeLower: value => String(value || '').toLowerCase(),
     normalizeAllUsers() {}, normalizeUserRecord() {},
     sanitizedEquippedPet: () => null,
+    inventoryVisibleToOthers: () => true,
   };
   const serializer = source.slice(source.indexOf('function publicUserFields(user)'), source.indexOf('// GET /api/users/:id'));
   vm.runInNewContext(serializer + SEARCH_ROUTE, context);

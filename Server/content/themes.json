@@ -1,5 +1,123 @@
 {
   "overrides": {
+    "26": {
+      "id": 26,
+      "name": "Полночный уголёк",
+      "bg": "#061018",
+      "text": "#FFF1EA",
+      "accent": "#FF6B35",
+      "bgSidebar": "#07111A",
+      "bgChat": "#0A141D",
+      "bgHeader": "#03090E",
+      "bgInput": "#13202A",
+      "bgBubbleOwn": "#FF6B35",
+      "bgBubbleOther": "#0D1117",
+      "bgHover": "rgba(255,107,53,0.12)",
+      "bgActive": "rgba(255,107,53,0.22)",
+      "textSec": "#B9826F",
+      "border": "rgba(255,107,53,0.16)",
+      "online": "#FFB088",
+      "backgroundGlowColor": "#8FE3CF",
+      "finish": "glass",
+      "bubbleOwnGradient": "linear-gradient(135deg, #FF8A63 0%, #FF6B35 52%, #D84B1C 100%)",
+      "bubbleOwnShadow": "0 8px 32px rgba(255,107,53,0.25), 0 0 0 1px rgba(255,255,255,0.12) inset",
+      "bubbleOtherShadow": "0 9px 24px rgba(0,0,0,0.40), 0 0 0 1px rgba(255,107,53,0.08) inset",
+      "sidebarGradient": "linear-gradient(180deg, #0D1722 0%, #061018 62%, #03090E 100%)",
+      "headerGradient": "linear-gradient(90deg, #03090E 0%, #142230 52%, #03090E 100%)",
+      "bubbleOwnText": "#111111",
+      "backgroundGlowIntensity": 0.18,
+      "finishAmount": 0.24,
+      "settings": {
+        "wallpaper": {
+          "stockId": "base-photo-vd",
+          "brightness": 1
+        },
+        "ui": {
+          "iconPack": "tile",
+          "uiStyle": "flat",
+          "chatShape": "vera",
+          "chatBorder": true,
+          "chatFill": true
+        },
+        "appearance": {
+          "brightness": 1,
+          "textScale": 1,
+          "globalFontFamily": "'Unbounded', sans-serif"
+        },
+        "layout": {
+          "density": "compact",
+          "radius": 6,
+          "bubbleRadius": 10,
+          "showTabs": true,
+          "showAvatarsInList": true
+        }
+      }
+    },
+    "30": {
+      "id": 30,
+      "name": "Тёмный монохром",
+      "bg": "#1C1C1E",
+      "text": "#FFFFFF",
+      "accent": "#FFFFFF",
+      "bgSidebar": "#282828",
+      "bgChat": "#1C1C1E",
+      "bgHeader": "#262626",
+      "bgInput": "#3A3A3C",
+      "bgBubbleOwn": "#F2F2F7",
+      "bgBubbleOther": "#3A3A3C",
+      "bgHover": "#2E2E30",
+      "bgActive": "#38383A",
+      "textSec": "#98989E",
+      "border": "rgba(255,255,255,0.10)",
+      "online": "#34C759",
+      "backgroundGlowColor": "#8FE3CF",
+      "finish": "matte",
+      "bubbleOwnShadow": "0 1px 2px rgba(0,0,0,0.5)",
+      "bubbleOtherShadow": "0 1px 2px rgba(0,0,0,0.3)",
+      "sidebarGradient": "linear-gradient(180deg, #282828 0%, #1C1C1E 100%)",
+      "headerGradient": "linear-gradient(90deg, #262626 0%, #FFFFFF12 50%, #262626 100%)",
+      "bubbleOwnText": "#000000",
+      "backgroundGlowIntensity": 0.18,
+      "finishAmount": 0.6,
+      "disableBackgroundBlobs": true,
+      "disableBackgroundGlow": true,
+      "settings": {
+        "wallpaper": {
+          "stockId": "base-photo-o",
+          "brightness": 1
+        },
+        "ui": {
+          "iconPack": "sharp",
+          "uiStyle": "flat",
+          "chatShape": "vera",
+          "chatBorder": true,
+          "chatFill": true
+        },
+        "appearance": {
+          "brightness": 1,
+          "textScale": 1,
+          "globalFontFamily": "'Source Code Pro', monospace",
+          "wallClock": {
+            "enabled": true,
+            "pos": "top",
+            "datePos": "above",
+            "seconds": true,
+            "secondsPos": "below",
+            "secondsScale": 0.85,
+            "timeScale": 0.95,
+            "dateScale": 0.85
+          }
+        },
+        "layout": {
+          "density": "compact",
+          "radius": 0,
+          "bubbleRadius": 4,
+          "messageMaxWidth": 78,
+          "showAvatarsInList": false,
+          "showTabs": true
+        }
+      }
+    },
     "33": {
       "id": 33,
       "name": "Сапфир",
@@ -57,7 +175,9 @@
       }
     }
   },
-  "removed": [],
+  "removed": [
+    29
+  ],
   "added": [],
-  "updatedAt": "2026-10-30T13:32:56.459Z"
+  "updatedAt": "2026-11-06T08:46:46.379Z"
 }

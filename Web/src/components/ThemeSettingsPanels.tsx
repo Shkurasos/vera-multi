@@ -734,6 +734,11 @@ export function LayoutPanel() {
       <RowToggle label="Показывать аватары в списке чатов"
         checked={s.layout.showAvatarsInList} onChange={(v) => s.setLayout('showAvatarsInList', v)} />
 
+      <SettingSection title="Сообщения" />
+      <RowToggle label="Аватарки у сообщений"
+        hint="Выключите, чтобы сообщения шли прямо от краёв чата — так на экране помещается больше текста."
+        checked={s.layout.showAvatarsInChat !== false} onChange={(v) => s.setLayout('showAvatarsInChat', v)} />
+
       <SettingSection title="Сброс" />
       <SettingRow label="Сбросить макет" hint="Вернуть расположение и размеры по умолчанию">
         <Button variant="outlined" startIcon={<RestartAlt />} onClick={() => s.resetLayout()}

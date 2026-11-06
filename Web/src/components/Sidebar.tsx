@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
+﻿import React, { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
 const ThemeEditor = lazy(() => import('./ThemeEditor').then(m => ({ default: m.ThemeEditor })));
 const ThemeMarketplace = lazy(() => import('./ThemeMarketplace').then(m => ({ default: m.ThemeMarketplace })));
 import {
@@ -170,21 +170,21 @@ const SidebarChatRow = React.memo(function SidebarChatRow(props: SidebarChatRowP
         // бьёт по ней, а не по .MuiListItem-root — тот же класс используется
         // в списках участников и настройках.
         data-vera-chat-row="true"
+        data-active={active ? 'true' : 'false'}
         sx={{
           cursor: 'pointer',
-          contentVisibility: 'auto',
-          containIntrinsicSize: 'auto 64px',
+          willChange: 'auto',
           ...(horizontal
             ? { flexDirection: 'column', width: 84, minWidth: 84, mr: .5, py: 1, px: .5, alignItems: 'center', textAlign: 'center' }
             : avatarOnly
               ? { justifyContent: 'center', px: .5, py: .65, mb: .4 }
               : { px: open ? 1.15 : .65, py: .85, mb: .55 }),
           bgcolor: active ? theme.bgActive : 'rgba(255,255,255,0.026)',
-          border: `1px solid ${active ? theme.accent + '66' : 'rgba(255,255,255,0.045)'}`,
+          border: `1px solid ${active ? theme.accent + '66' : 'transparent'}`,
           boxShadow: active ? `0 12px 34px ${theme.accent}22` : 'none',
           overflow: 'hidden',
-          '&:hover': { bgcolor: theme.bgHover, transform: 'translateY(-1px)' },
-          transition: `background .22s ${motion.easeOut}, transform .28s ${motion.spring}, box-shadow .22s ${motion.easeOut}`,
+          '&:hover': { bgcolor: theme.bgHover },
+          transition: `background .22s ${motion.easeOut}, box-shadow .22s ${motion.easeOut}, border-color .22s ${motion.easeOut}`,
         }}
       >
         {avatarOnly || showAvatars ? (
@@ -418,10 +418,19 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
   const setLayout = useUserSettingsStore((s) => s.setLayout);
   const viewportWidth = useWindowWidth();
   const sidebarMax = Math.max(SIDEBAR_MIN, Math.floor(viewportWidth / 2));
-  const sidebarWidth = Math.min(Math.max(layout.sidebarWidth, SIDEBAR_MIN), sidebarMax);
+  const [resizing, setResizing] = useState(false);
+  // Во время перетаскивания держим ширину локально и НЕ пишем в стор на
+  // каждый пиксель: setLayout синхронно сохраняет в localStorage и пересоздаёт
+  // объект layout → каскад ре-рендеров всего приложения → интерфейс мерцает.
+  // В стор коммитим один раз на отпускании мыши (onUp).
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
+  const dragWidthRef = useRef<number | null>(null);
+  // Во время перетаскивания берём локальную ширину (dragWidth), иначе — из стора.
+  const effectiveWidth = dragWidth ?? layout.sidebarWidth;
+  const sidebarWidth = Math.min(Math.max(effectiveWidth, SIDEBAR_MIN), sidebarMax);
   const horizontal = layout.sidebarSide === 'top' || layout.sidebarSide === 'bottom';
   const avatarOnly = !mobile && !horizontal && sidebarWidth <= 112;
-  const [resizing, setResizing] = useState(false);
+
 
   useEffect(() => { loadChats(); }, []);
   useEffect(() => () => { if (scrollTimerRef.current) window.clearTimeout(scrollTimerRef.current); }, []);
@@ -434,12 +443,19 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
         ? window.innerWidth - e.clientX
         : e.clientX;
       const w = Math.min(Math.max(x, SIDEBAR_MIN), sidebarMax);
-      setLayout('sidebarWidth', w);
+      // Только локальное состояние — стор не трогаем, пока тянем.
+      dragWidthRef.current = w;
+      setDragWidth(w);
     };
     const onUp = () => {
       setResizing(false);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      // Коммитим финальную ширину в стор один раз.
+      const finalW = dragWidthRef.current;
+      if (finalW != null) setLayout('sidebarWidth', finalW);
+      dragWidthRef.current = null;
+      setDragWidth(null);
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -474,7 +490,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
     const filtered = chats.filter(c => {
       if (!c || !c.id) return false;
       const otherMember = c.members?.find(m => m.userId !== user?.id);
-      const name = c.name || [otherMember?.user?.firstName, otherMember?.user?.lastName].filter(Boolean).join(' ') || otherMember?.user?.username || '';
+      const name = c.name || otherMember?.user?.username || '';
       // «@ник» и «/ник» ищут и по нику собеседника, а не только по отображаемому имени.
       const q = search.trim().toLowerCase();
       const nick = /^[@/]/.test(q) ? q.replace(/^[@/]+/, '') : '';
@@ -599,7 +615,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
     if (chat.type === 'saved') return 'Избранное';
     if (chat.name) return chat.name;
     const other = chat.members?.find(m => m.userId !== user?.id)?.user;
-    return [other?.firstName, other?.lastName].filter(Boolean).join(' ') || other?.username || 'Чат';
+    return other?.username || 'Чат';
   }
 
   function getChatAvatar(chat: Chat): string | undefined {
@@ -623,9 +639,9 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
             minWidth: mobile ? '100%' : sidebarWidth,
             maxWidth: mobile ? '100%' : sidebarWidth,
             height: '100%',
-            borderRight: layout.sidebarSide === 'left' ? `1px solid ${theme.border}` : 'none',
-            borderLeft: layout.sidebarSide === 'right' ? `1px solid ${theme.border}` : 'none',
-            boxShadow: layout.sidebarSide === 'left' ? '18px 0 60px rgba(0,0,0,0.38)' : '-18px 0 60px rgba(0,0,0,0.38)',
+            borderRight: 'none',
+            borderLeft: 'none',
+            boxShadow: 'none',
           }
       ),
       background: hasListWallpaper ? 'transparent' : (theme.sidebarGradient || theme.bgSidebar),
@@ -637,7 +653,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
       transition: resizing ? 'none' : 'width .2s ease, min-width .2s ease',
       overflow: 'hidden',
       position: 'relative',
-      ...getFinishStyles(theme),
+      willChange: resizing ? 'width' : 'auto',
       '&::before': {
         content: '""', position: 'absolute', inset: 0, pointerEvents: 'none',
         background: theme.disableBackgroundGlow ? 'none' : `radial-gradient(circle at 20% 0%, ${theme.backgroundGlowColor || '#8FE3CF'}22 0, transparent 34%), radial-gradient(circle at 80% 100%, ${theme.backgroundGlowColor || '#8FE3CF'}14 0, transparent 30%)`,
@@ -797,7 +813,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
               </Typography>
             )}
             {usersFound.map(u => {
-              const display = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username;
+              const display = u.username;
               return (
                 <ListItem
                   key={u.id}
@@ -876,7 +892,7 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
           // Панель вынесена порталом над питомцем (SidebarNavDock): изнутри
           // сайдбара никакой zIndex не поднимет её выше слоя питомца.
           <SidebarNavDock
-            slotSx={phoneNav ? { mx: 1, mb: 1, mt: .5 } : undefined}
+            slotSx={phoneNav ? { mx: 1, mb: 1, mt: .5, position: 'relative', zIndex: 10 } : undefined}
             panelSx={phoneNav ? {
             display: 'flex', alignItems: 'center', justifyContent: 'space-around',
             gap: .5, flexWrap: 'nowrap',
@@ -886,6 +902,8 @@ export default function Sidebar({ open, onToggle, mobile }: Props) {
             backdropFilter: 'blur(22px) saturate(1.35)',
             border: `1px solid ${theme.border}`,
             boxShadow: '0 -6px 26px rgba(0,0,0,.28), 0 8px 24px rgba(0,0,0,.24)',
+            position: 'relative',
+            zIndex: 10,
           } : {
             // В строку — ровно высота с ползунка; столбиком высота от числа кнопок.
             ...(compactFits ? { px: 1, py: 0, height: compactNavPanelPx(navHeight) } : { p: 1 }),

@@ -18,14 +18,8 @@ import { enableStoreSync } from '../services/storeSyncSimple';
  * чтобы «первый заход» всегда показывал стандартный вид..
  */
 export interface ProfileDraftForm {
-  firstName: string;
-  lastName: string;
   username: string;
   bio: string;
-  birthDate: string;
-  country: string;
-  region: string;
-  city: string;
 }
 
 interface ProfileDraftState {
@@ -41,7 +35,14 @@ export const useProfileDraftStore = create<ProfileDraftState>()(
       saveDraft: (form) => set({ draft: { form, ts: Date.now() } }),
       clearDraft: () => set({ draft: null }),
     }),
-    { name: 'vera-profile-draft' }
+    { name: 'vera-profile-draft', version: 1,
+      // v0 хранил ФИО, дату рождения и местоположение. Оставляем только ник и описание.
+      migrate: (persisted: any) => {
+        const form = persisted?.draft?.form;
+        if (!form) return { draft: null } as any;
+        return { draft: { form: { username: String(form.username || ''), bio: String(form.bio || '') }, ts: persisted.draft.ts || Date.now() } } as any;
+      },
+    }
   )
 );
 

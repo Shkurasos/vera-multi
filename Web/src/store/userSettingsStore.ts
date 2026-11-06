@@ -210,10 +210,6 @@ export interface UserSettingsState {
   storiesWhoCanView: PrivacyScope;
   storiesWhoCanSave: PrivacyScope;
 
-  // Контактные данные
-  requirePhone: boolean;   // требуется ли телефон при регистрации/входе
-  requireEmail: boolean;   // требуется ли почта при регистрации/входе
-
   // Приватность
   lastSeenScope: PrivacyScope;
   profilePhotoScope: PrivacyScope;
@@ -227,6 +223,12 @@ export interface UserSettingsState {
   appLockPasswordHash: string | null;     // SHA-256 hex
   appLockRecoveryEmail: string | null;
   cloudPasswordEnabled: boolean;
+  /**
+   * Десктоп: открывать аккаунт без ввода пароля из защищённого хранилища
+   * (safeStorage/DPAPI), даже когда сервер недоступен. По умолчанию включено.
+   * Настройка только для этого устройства — НЕ синхронизируется на сервер.
+   */
+  desktopAutoUnlock: boolean;
   autoDeleteInactiveMonths: AutoDeleteMonths;
 
   // Layout / раскладка
@@ -282,9 +284,6 @@ const initial: Omit<UserSettingsState, 'set' | 'reset' | 'setLayout' | 'resetLay
   storiesWhoCanView: 'contacts',
   storiesWhoCanSave: 'contacts',
 
-  requirePhone: false,
-  requireEmail: false,
-
   lastSeenScope: 'contacts',
   profilePhotoScope: 'everyone',
   forwardScope: 'everyone',
@@ -296,6 +295,7 @@ const initial: Omit<UserSettingsState, 'set' | 'reset' | 'setLayout' | 'resetLay
   appLockPasswordHash: null,
   appLockRecoveryEmail: null,
   cloudPasswordEnabled: false,
+  desktopAutoUnlock: true,
   autoDeleteInactiveMonths: 0,
 
   layout: { ...defaultLayout },
@@ -383,7 +383,6 @@ const SYNC_KEYS: (keyof UserSettingsState)[] = [
   'inAppSounds', 'inAppVibration', 'vibrationEnabled', 'ledIndicator',
   'popupPreview', 'pinnedPriority',
   'storiesWhoCanView', 'storiesWhoCanSave',
-  'requirePhone', 'requireEmail',
   'lastSeenScope', 'profilePhotoScope', 'forwardScope',
   'callsScope', 'callsP2P', 'groupsInviteScope',
   'appLockEnabled', 'cloudPasswordEnabled', 'autoDeleteInactiveMonths',

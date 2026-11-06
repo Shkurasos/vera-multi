@@ -16,7 +16,7 @@
  *   3) DEFAULT_SERVER_URL — http://localhost:3000 (cd Server; npm start).
  */
 
-const { app, BrowserWindow, Menu, shell, session, desktopCapturer, net, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, shell, session, desktopCapturer, net, ipcMain, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -95,6 +95,87 @@ app.on('online', () => { isOnline = true; updateOnlineState(); });
 app.on('offline', () => { isOnline = false; updateOnlineState(); });
 // При старте считаем онлайн до первой проверки.
 setTimeout(() => updateOnlineState(), 500);
+
+/* ─── Защищённое хранилище секретов (токен, снимок профиля) ───────────────
+ * Токен авторизации нельзя держать в localStorage открытым текстом: любой,
+ * у кого есть доступ к файлам профиля Electron, прочитает его и войдёт в
+ * аккаунт. Поэтому в десктопе шифруем секреты через safeStorage (на Windows
+ * это DPAPI, привязка к учётной записи Windows) и кладём зашифрованный буфер
+ * в secure-store.json в userData. Сам пароль пользователя тут не хранится.
+ */
+const SECURE_STORE_PATH = path.join(app.getPath('userData'), 'secure-store.json');
+const SECURE_KEY = /^[a-zA-Z0-9_.:-]{1,64}$/; // только простые ключи
+
+function readSecureFile() {
+  try {
+    const raw = fs.readFileSync(SECURE_STORE_PATH, 'utf8');
+    const obj = JSON.parse(raw);
+    return obj && typeof obj === 'object' ? obj : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSecureFile(obj) {
+  try {
+    fs.writeFileSync(SECURE_STORE_PATH, JSON.stringify(obj), { encoding: 'utf8', mode: 0o600 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Сохранить секрет (строку) под ключом. Значение шифруется safeStorage.
+ipcMain.handle('vera:secure-set', (e, key, value) => {
+  if (!mainWindow || e.sender !== mainWindow.webContents) return false;
+  if (!SECURE_KEY.test(String(key)) || typeof value !== 'string' || value.length > 100_000) return false;
+  if (!safeStorage.isEncryptionAvailable()) return false;
+  try {
+    const store = readSecureFile();
+    store[key] = safeStorage.encryptString(value).toString('base64');
+    return writeSecureFile(store);
+  } catch {
+    return false;
+  }
+});
+
+// Прочитать и расшифровать секрет; null, если нет или расшифровать нельзя.
+ipcMain.handle('vera:secure-get', (e, key) => {
+  if (!mainWindow || e.sender !== mainWindow.webContents) return null;
+  if (!SECURE_KEY.test(String(key))) return null;
+  if (!safeStorage.isEncryptionAvailable()) return null;
+  try {
+    const store = readSecureFile();
+    const enc = store[key];
+    if (typeof enc !== 'string') return null;
+    return safeStorage.decryptString(Buffer.from(enc, 'base64'));
+  } catch {
+    return null;
+  }
+});
+
+// Удалить один секрет или (без ключа) весь secure-store (при выходе из аккаунта).
+ipcMain.handle('vera:secure-delete', (e, key) => {
+  if (!mainWindow || e.sender !== mainWindow.webContents) return false;
+  if (key == null) {
+    try { fs.rmSync(SECURE_STORE_PATH, { force: true }); return true; } catch { return false; }
+  }
+  if (!SECURE_KEY.test(String(key))) return false;
+  try {
+    const store = readSecureFile();
+    delete store[key];
+    return writeSecureFile(store);
+  } catch {
+    return false;
+  }
+});
+
+// Доступно ли вообще шифрование ОС (renderer решает, предлагать ли авто-вход).
+ipcMain.handle('vera:secure-available', (e) => {
+  if (!mainWindow || e.sender !== mainWindow.webContents) return false;
+  try { return safeStorage.isEncryptionAvailable(); } catch { return false; }
+});
+
 
 /* ─── Локальные страницы: заставка и «нет сети» ─────────────────────────
  * Раньше окно сразу грузило сервер: пока Render просыпается (до минуты) или

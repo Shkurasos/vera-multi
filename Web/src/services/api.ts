@@ -2,6 +2,8 @@
 import axios, { AxiosError, AxiosRequestConfig } from 'axios';
 import { useOfflineStore } from '../store/offlineStore';
 import { isAppOffline } from './offlineMode';
+import { getDeviceFingerprintHash } from './deviceFingerprint';
+import { captchaProvider } from './captcha';
 
 const api = axios.create({
   baseURL: '/api',
@@ -197,12 +199,26 @@ api.interceptors.response.use(
     return Promise.reject(err);
   },
 );
+export { tryRefresh };
 
 export const authApi = {
   device: () => api.post('/auth/device', { deviceId: getDeviceId(), deviceName: getDeviceName() }, { timeout: 15000 }),
-  /** Регистрация по нику и паролю; почта и телефон необязательны. */
-  register: (username: string, password: string, email?: string, phone?: string) => api.post('/auth/register', { username, password, email: email || undefined, phone: phone || undefined, deviceId: getDeviceId(), deviceName: getDeviceName() }, { timeout: 30000 }),
-  /** Вход по нику (или почте) и паролю — работает на любом устройстве. */
+  /** Регистрация по нику и паролю. Персональные данные не собираются. */
+  register: async (username: string, password: string, captchaToken?: string) => {
+    // fpHash — необратимый хэш не-ПД характеристик устройства (анти-мультиаккаунтинг).
+    const fpHash = await getDeviceFingerprintHash();
+    const ref = getStoredReferralCode() || undefined;
+    return api.post('/auth/register', {
+      username,
+      password,
+      fpHash,
+      deviceId: getDeviceId(),
+      deviceName: getDeviceName(),
+      ref,
+      captchaToken,
+    }, { timeout: 30000 });
+  },
+  /** Вход по нику и паролю — работает на любом устройстве. */
   login: (identifier: string, password: string) => api.post('/auth/login', { identifier, password, deviceId: getDeviceId(), deviceName: getDeviceName() }, { timeout: 30000 }),
   /** Задать пароль (старым аккаунтам без него) или сменить текущий. */
   setPassword: (newPassword: string, currentPassword?: string) => api.post('/auth/password', { newPassword, currentPassword }, { timeout: 30000 }),
@@ -220,6 +236,35 @@ export const authApi = {
  * в localStorage. Именно на нём работает правило «1 аккаунт = 1 устройство,
  * второе добавляется только по QR/ссылке».
  */
+/**
+ * Реферальный код приглашения. Ссылка вида `/?ref=<code>` открывается ДО
+ * входа; код сохраняем сразу при загрузке модуля (он же грузится до любого
+ * экрана) и подставляем при регистрации нового аккаунта. На зарегистрированных
+ * устройствах код всё равно сохраняется, но сервер его проигнорирует.
+ */
+const REFERRAL_STORAGE_KEY = 'vera_referral_code';
+export function captureReferralCode(): void {
+  try {
+    const raw = new URLSearchParams(window.location.search).get('ref');
+    const code = (raw || '').trim();
+    if (/^r[a-f0-9]{11}$/i.test(code)) {
+      localStorage.setItem(REFERRAL_STORAGE_KEY, code.toLowerCase());
+      // Убираем ?ref из адреса, чтобы он не «прилипал» при шеринге/обновлении.
+      const url = new URL(window.location.href);
+      url.searchParams.delete('ref');
+      window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+    }
+  } catch { /* приватный режим / недоступный localStorage — не критично */ }
+}
+export function getStoredReferralCode(): string {
+  try { return localStorage.getItem(REFERRAL_STORAGE_KEY) || ''; } catch { return ''; }
+}
+export function clearStoredReferralCode(): void {
+  try { localStorage.removeItem(REFERRAL_STORAGE_KEY); } catch { /* ignore */ }
+}
+// Запускаем захват при загрузке модуля (api импортируется во всём приложении).
+if (typeof window !== 'undefined') captureReferralCode();
+
 export function getDeviceId(): string {
   let id = localStorage.getItem('vera_device_id');
   if (!id) {
@@ -268,6 +313,22 @@ export const walletApi = {
   mockPay: (orderId: string) => api.post('/wallet/mock-pay', { orderId }),
   /** Купить платный товар — списание ВП с баланса. */
   buy: (itemId: string) => api.post('/shop/buy', { itemId }),
+};
+
+/** Реферальная программа: моя ссылка приглашения и статистика. */
+export interface ReferralInfo {
+  code: string;
+  link: string;
+  invitedCount: number;
+  activeCount: number;
+  earnedVp: number;
+  cashbackPercent: number;
+  cashbackMinDays: number;
+  tenureDays: number;
+  tenureBonusVp: number;
+}
+export const referralApi = {
+  get: () => api.get<ReferralInfo>('/referral'),
 };
 
 export interface MarketListing {
@@ -322,7 +383,29 @@ export const adminApi = {
   banIp: (ip: string, expiresInMinutes = 0, reason?: string) =>
     api.post('/admin/ip-bans', { ip, expiresInMinutes, reason }),
   unbanIp: (ip: string) => api.delete(`/admin/ip-bans/${encodeURIComponent(ip)}`),
+  /** Отзывы, идеи и баги из /feedback в /hub, новые сверху. */
+  listFeedback: () => api.get<FeedbackItem[]>('/admin/feedback'),
+  markFeedback: (id: string, read: boolean) =>
+    api.post<FeedbackItem>(`/admin/feedback/${encodeURIComponent(id)}/read`, { read }),
+  deleteFeedback: (id: string) => api.delete(`/admin/feedback/${encodeURIComponent(id)}`),
+  /** Наградить автора отзыва 50 ВП (не чаще 50 ВП за 7 дней на автора). */
+  rewardFeedback: (id: string) =>
+    api.post<{ feedback: FeedbackItem; amount: number; balance: number }>(
+      `/admin/feedback/${encodeURIComponent(id)}/reward`, {}),
 };
+
+export interface FeedbackItem {
+  id: string;
+  userId: string;
+  username: string | null;
+  text: string;
+  status: 'new' | 'read';
+  createdAt: string;
+  rewarded?: boolean;
+  rewardedAt?: string | null;
+  /** Текст достаточно подробный (иначе админу показывается подсказка). */
+  detailed?: boolean;
+}
 
 /**
  * Каталог встроенных тем. Правит его только админ, но читают все клиенты:
@@ -442,6 +525,20 @@ export const fontsApi = {
   },
   remove: (id: string) => api.delete(`/themes/fonts/${encodeURIComponent(id)}`),
 };
+export const tradesApi = {
+  // Текущий список + eligible-статус авторизованного пользователя.
+  list: () => api.get<{ eligible: boolean; trades: any[] }>('/trades'),
+  // Инвентарь, доступный для обмена (свой или чужого пользователя).
+  inventory: (userId: string) => api.get<{ items: any[]; balance?: number }>(`/trades/inventory/${userId}`),
+  // Предложить обмен: offer (мои вещи + ВП) за request (его вещи + ВП).
+  create: (toUserId: string, offer: { items: string[]; vp: number }, request: { items: string[]; vp: number }) =>
+    api.post<{ trade: any }>('/trades', { toUserId, offer, request }),
+  // Принять, отклонить или отменить.
+  accept: (id: string) => api.post<{ trade: any }>(`/trades/${id}/accept`),
+  decline: (id: string) => api.post<{ trade: any }>(`/trades/${id}/decline`),
+  cancel: (id: string) => api.post<{ trade: any }>(`/trades/${id}/cancel`),
+};
+
 export const chatsApi = {
   searchChannels: (q: string) => api.get('/channels/search', { params: { q } }),
   joinChannel: (id: string) => api.post(`/channels/${id}/join`),
@@ -696,8 +793,13 @@ export const blocksApi = {
 };
 
 export const appealsApi = {
-  send: (text: string) => api.post<{ id: string }>('/appeals', { text }),
-  mine: () => api.get<{ id: string; status: string; createdAt: string } | null>('/appeals/mine'),
+  /** reportId — апелляция на конкретное решение (кнопка под уведомлением). */
+  send: (text: string, reportId?: string | null) =>
+    api.post<{ id: string }>('/appeals', reportId ? { text, reportId } : { text }),
+  mine: (reportId?: string | null) =>
+    api.get<{ id: string; status: string; createdAt: string; reportId?: string | null } | null>(
+      '/appeals/mine', reportId ? { params: { reportId } } : undefined,
+    ),
   /**
    * Путь для забаненных: работает по cookie установки, а не по JWT — у
    * забаненного токена нет вовсе. Ответ сразу говорит, забанен ли аккаунт.
@@ -709,18 +811,107 @@ export const appealsApi = {
     api.post<any>(`/admin/appeals/${id}/decision`, { action, note }),
 };
 
+/* ─── Типы для модерации ───────────────────────────────────────────────────── */
+export type ReportTargetType = 'user' | 'bot' | 'group' | 'channel' | 'sticker' | 'icon';
+export type ReportStatus = 'open' | 'resolved';
+export type ModerationAction =
+  | 'dismiss' | 'warn' | 'temporary' | 'permanent' | 'ip' | 'device' | 'readonly' | 'nobots' | 'delete';
+
+/** Автоудаление аккаунта после блокировки: включается, выключается, срок в днях. */
+export interface AutoDeleteSetting {
+  enabled: boolean;
+  days: number;
+}
+
+export interface AdminChatLookup {
+  chat: { id: string; name: string | null; type: string | null; createdAt: string | null; deleted: boolean };
+  members: Array<{ id: string; username: string; role: string }>;
+  messages: any[];
+  total: number;
+}
+
+export interface Report {
+  id: string;
+  reporterId: string;
+  targetId: string;
+  targetType: ReportTargetType;
+  targetName?: string;
+  chatId?: string;
+  comment: string;
+  hasPhoto: boolean;
+  createdAt: string;
+  status: ReportStatus;
+  decision?: {
+    action: ModerationAction;
+    reason: string;
+    by: string;
+    at: string;
+    expiresAt?: number | null;
+    appShortName?: string;
+    autoDelete?: AutoDeleteSetting;
+    autoDeletedAt?: string;
+    overturned?: { by: string; at: string; restored: boolean | null };
+  };
+  reporter: {
+    id: string;
+    username: string;
+  };
+  target?: {
+    id: string;
+    username?: string;
+    name?: string;
+    type?: string;
+  };
+}
+
+export interface ReportStats {
+  total: number;
+  open: number;
+  byType: Record<ReportTargetType, number>;
+}
+
 export const reportsApi = {
   sharedChats: (targetId: string) => api.get<Array<{ id: string; name: string; type: string }>>(`/reports/chats/${targetId}`),
   create: (formData: FormData) => api.post<{ id: string }>('/reports', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   }),
-  list: () => api.get<any[]>('/admin/reports'),
-  get: (id: string) => api.get<any>(`/admin/reports/${id}`),
+  list: (filters?: { type?: ReportTargetType | 'all'; status?: ReportStatus | 'all' }) => 
+    api.get<Report[]>('/admin/reports', { params: filters }),
+  get: (id: string) => api.get<Report>(`/admin/reports/${id}`),
   photo: (id: string) => api.get<Blob>(`/admin/reports/${id}/photo`, { responseType: 'blob' }),
   messages: (id: string, offset = 0) => api.get<{ messages: any[]; total: number }>(`/admin/reports/${id}/messages`, { params: { offset } }),
-  decide: (id: string, action: string, reason: string, minutes: number) =>
-    api.post<any>(`/admin/reports/${id}/decision`, { action, reason, minutes }),
+  decide: (
+    id: string, action: ModerationAction, reason: string, minutes: number,
+    extra: { autoDelete?: AutoDeleteSetting; appShortName?: string } = {},
+  ) => api.post<Report>(`/admin/reports/${id}/decision`, { action, reason, minutes, ...extra }),
+  setAutoDelete: (id: string, setting: AutoDeleteSetting) =>
+    api.patch<Report>(`/admin/reports/${id}/auto-delete`, setting),
+  /** Чат по ссылке /#/chat/<id>: вся история, включая удалённые сообщения. */
+  lookupChat: (link: string, offset = 0) =>
+    api.get<AdminChatLookup>('/admin/chats/lookup', { params: { link, offset } }),
+  stats: () => api.get<ReportStats>('/admin/reports/stats'),
 };
+
+// Appeals types
+export type AppealStatus = 'open' | 'resolved';
+export type AppealAction = 'uphold' | 'overturn';
+
+export interface Appeal {
+  id: string;
+  user: { id: string; username: string };
+  text: string;
+  reason: string;
+  /** Обжалованное решение; null — апелляция на бан с экрана входа или на личную блокировку. */
+  reportId?: string | null;
+  status: AppealStatus;
+  createdAt: string;
+  decision?: {
+    action: AppealAction;
+    note?: string;
+    by: string;
+    at: string;
+  } | null;
+}
 
 export const musicApi = {
   getAll: (page?: number, limit?: number) => api.get('/music/my', { params: { page, limit } }),

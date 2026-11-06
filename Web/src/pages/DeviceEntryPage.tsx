@@ -3,6 +3,7 @@ import { Alert, Box, Button, Paper, Tab, Tabs, TextField, Typography } from '@mu
 import { appealsApi, authApi } from '../services/api';
 import { useAuthStore } from '../store/authStore';
 import { saveOfflineCredential } from '../services/offlineAuth';
+import { captchaProvider } from '../services/captcha';
 import OfflineUnlock from '../components/OfflineUnlock';
 
 type Mode = 'login' | 'register' | 'link';
@@ -19,11 +20,16 @@ function OnlineEntry() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [password2, setPassword2] = useState('');
-  const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
   const [link, setLink] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaBusy, setCaptchaBusy] = useState(false);
+
+  // Сбрасываем CAPTCHA при переключении между Входом / Регистрацией.
+  useEffect(() => {
+    setCaptchaToken(null);
+  }, [mode]);
   // Экран бана: вход не проходит, но апелляцию подать можно — иначе забаненный
   // останется без единого способа оспорить решение.
   const isBanned = useAuthStore((s) => s.isBanned);
@@ -63,6 +69,23 @@ function OnlineEntry() {
     window.location.replace('/');
   }
 
+  async function handleCaptcha() {
+    setError('');
+    setCaptchaBusy(true);
+    try {
+      const token = await captchaProvider.execute();
+      if (token) {
+        setCaptchaToken(token);
+      } else {
+        setError('Не удалось пройти проверку. Попробуйте ещё раз.');
+      }
+    } catch {
+      setError('Ошибка проверки. Попробуйте позже.');
+    } finally {
+      setCaptchaBusy(false);
+    }
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
@@ -71,18 +94,27 @@ function OnlineEntry() {
       if (!/^[a-zA-Z0-9_.]{3,32}$/.test(nick)) { setError('Ник: 3–32 символа, латиница, цифры, _ и .'); return; }
       if (password.length < 12) { setError('Пароль должен содержать не менее 12 символов'); return; }
       if (password !== password2) { setError('Пароли не совпадают'); return; }
+      if (!captchaToken) {
+        setError('Пройдите проверку «Я не робот» перед созданием аккаунта.');
+        return;
+      }
     } else if (!nick || !password) {
       setError('Введите ник и пароль'); return;
     }
     setBusy(true);
     try {
       const { data } = mode === 'register'
-        ? await authApi.register(nick, password, email.trim() || undefined, phone.trim() || undefined)
+        ? await authApi.register(nick, password, captchaToken)
         : await authApi.login(nick, password);
       await finishAuth(data);
     } catch (err: any) {
-      if (err?.response?.data?.code === 'ACCOUNT_BANNED') { useAuthStore.setState({ isBanned: true }); }
-      setError(err?.response?.data?.message || 'Не удалось войти. Проверьте соединение.');
+      if (err?.response?.data?.code === 'CAPTCHA_REQUIRED') {
+        setError('Требуется пройти проверку CAPTCHA.');
+      } else if (err?.response?.data?.code === 'ACCOUNT_BANNED') {
+        useAuthStore.setState({ isBanned: true });
+      } else {
+        setError(err?.response?.data?.message || 'Не удалось войти. Проверьте соединение.');
+      }
       setBusy(false);
     }
   }
@@ -174,18 +206,19 @@ function OnlineEntry() {
                     autoComplete="new-password" inputProps={{ maxLength: 256 }}
                     sx={{ mb: 2 }}
                   />
-                  <TextField
-                    fullWidth label="E-mail (необязательно)" value={email} disabled={busy}
-                    onChange={e => setEmail(e.target.value)}
-                    autoComplete="email" inputProps={{ maxLength: 256 }}
-                    sx={{ mb: 2 }}
-                  />
-                  <TextField
-                    fullWidth label="Телефон (необязательно)" value={phone} disabled={busy}
-                    onChange={e => setPhone(e.target.value)}
-                    autoComplete="tel" inputProps={{ maxLength: 20 }}
-                    sx={{ mb: 2 }}
-                  />
+                  <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+                    <Button
+                      fullWidth
+                      variant="outlined"
+                      disabled={captchaBusy || !!captchaToken}
+                      onClick={handleCaptcha}
+                    >
+                      {captchaBusy ? 'Проверка…' : captchaToken ? 'Проверено ✅' : 'Я не робот'}
+                    </Button>
+                  </Box>
+                  <Typography variant="caption" color="text.secondary" sx={{ mb: 2 }}>
+                    Защита от автоматического создания аккаунтов
+                  </Typography>
                 </>
               )}
               <Button fullWidth type="submit" variant="contained" disabled={busy}>

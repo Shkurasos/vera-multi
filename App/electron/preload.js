@@ -59,6 +59,14 @@ const api = {
       return true;
     },
   },
+  // Защищённое хранилище ОС (safeStorage/DPAPI): токен и снимок профиля
+  // шифруются в main-процессе, в файлах устройства открытым текстом их нет.
+  secure: {
+    available: () => ipcRenderer.invoke('vera:secure-available'),
+    set: (key, value) => ipcRenderer.invoke('vera:secure-set', String(key), String(value)),
+    get: (key) => ipcRenderer.invoke('vera:secure-get', String(key)),
+    delete: (key) => ipcRenderer.invoke('vera:secure-delete', key == null ? null : String(key)),
+  },
   onDeepLink(handler) {
     const wrapped = (_e, url) => { try { handler(url); } catch (e) { console.error('[vera] onDeepLink', e); } };
     ipcRenderer.on('vera:deeplink', wrapped);

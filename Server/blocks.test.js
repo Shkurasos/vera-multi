@@ -4,7 +4,7 @@ const express = require('express');
 const http = require('node:http');
 const { install, isBlockedBy, blockedInChat, ensureCollections } = require('./blocks');
 
-function createHarness() {
+function createHarness(extra = {}) {
   const db = {
     users: [
       { id: 'alice', username: 'alice' },
@@ -48,6 +48,7 @@ function createHarness() {
       const match = raw.match(/sess=([a-z]+)/);
       return match ? match[1] : null;
     },
+    ...extra,
   });
   return { app, db, notifications };
 }
@@ -274,6 +275,33 @@ test('забаненный подаёт апелляцию по cookie уста�
       body: JSON.stringify({ text: 'ещё раз' }),
     });
     assert.equal(again.status, 409);
+  } finally { server.close(); }
+});
+
+test('апелляция на решение доступна без бана, отмена снимает только это решение', async () => {
+  const overturned = [];
+  const harness = createHarness({
+    appealTarget: (userId, reportId) => (userId === 'carol' && reportId === 'r1'
+      ? { report: { id: 'r1' }, label: 'Предупреждение' }
+      : { code: 404, error: 'Решение не найдено' }),
+    overturnReport: (reportId, by) => { overturned.push([reportId, by]); return { ok: true, restored: null }; },
+  });
+  harness.db.moderationBans.push({ userId: 'bob', kind: 'account' });
+  const { server, base } = await start(harness.app);
+  try {
+    const send = (reportId) => fetch(`${base}/api/appeals`, json(asUserJson('carol'), { text: 'не согласна', reportId }));
+    assert.equal((await send('nope')).status, 404, 'чужое решение не обжаловать');
+    assert.equal((await send('r1')).status, 201, 'carol не забанена, но решение обжаловать может');
+    assert.equal((await send('r1')).status, 409, 'вторая апелляция на то же решение не принимается');
+    const appeal = harness.db.appeals[0];
+    assert.equal(appeal.reportId, 'r1');
+    assert.equal(appeal.reason, 'Предупреждение');
+    const mine = await (await fetch(`${base}/api/appeals/mine?reportId=r1`, asUser('carol'))).json();
+    assert.equal(mine.status, 'open');
+    const res = await fetch(`${base}/api/admin/appeals/${appeal.id}/decision`, json(asAdmin, { action: 'overturn', note: 'ок' }));
+    assert.equal(res.status, 200);
+    assert.deepEqual(overturned, [['r1', 'admin']]);
+    assert.equal(harness.db.moderationBans.length, 1, 'бан другого пользователя не тронут');
   } finally { server.close(); }
 });
 

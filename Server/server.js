@@ -143,7 +143,10 @@ if (_pub) CORS_ALLOWED.push(_pub.replace(/\/+$/, ''));
 function corsOriginFn(origin, cb) {
   // Same-origin / curl / server-to-server (нет Origin) — пропускаем.
   if (!origin) return cb(null, true);
-  if (CORS_ALLOWED.length === 0) return cb(null, !IS_PROD); // в деве разрешаем всё, в проде запрещаем
+  if (CORS_ALLOWED.length === 0) {
+    // В разработке разрешаем только локальный клиент Vite, а не любой origen
+    return cb(null, origin === 'http://localhost:5173' || origin === 'http://127.0.0.1:5173');
+  }
   if (CORS_ALLOWED.includes(origin)) return cb(null, true);
   return cb(null, false);
 }
@@ -211,7 +214,12 @@ if (!Array.isArray(db.reports)) db.reports = [];
 // Личные блокировки (userBlocks) и апелляции (appeals).
 if (!Array.isArray(db.userBlocks)) db.userBlocks = [];
 if (!Array.isArray(db.appeals)) db.appeals = [];
+// Отзывы, идеи и баги из /feedback в /hub.
+if (!Array.isArray(db.feedback)) db.feedback = [];
 if (!db.moderationIps || typeof db.moderationIps !== 'object' || Array.isArray(db.moderationIps)) db.moderationIps = {};
+// Анти-мультиаккаунтинг: только необратимые HMAC-хэши IP и отпечатка устройства.
+// Сырые IP/характеристики не хранятся — из хэша личность восстановить нельзя.
+if (!Array.isArray(db.regLedger)) db.regLedger = [];
 if (!Array.isArray(db.customItems)) db.customItems = [];
 if (!db.creatorProfiles || typeof db.creatorProfiles !== 'object') db.creatorProfiles = {};
 if (typeof db.platformRevenueVp !== 'number') db.platformRevenueVp = 0;
@@ -289,7 +297,14 @@ process.on('exit', () => {
   }
   try { dataSource.close(); } catch {}
 });
-for (const signal of ['SIGINT', 'SIGTERM']) {
+// beforeExit: последний шанс синхронно сбросить отложенную запись, пока цикл
+// событий ещё жив (сюда мы НЕ попадаем при явном process.exit() и сигналах —
+// их ловим ниже отдельно).
+process.on('beforeExit', () => { flushDb(); });
+// SIGBREAK — это Ctrl+Break в консоли Windows; SIGHUP — закрытие терминала.
+// Без них отложенная запись (в т.ч. удаление чата) терялась при таких
+// перезапусках, и данные «возвращались» после рестарта.
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
   process.on(signal, () => { flushDb(); process.exit(0); });
 }
 
@@ -324,6 +339,7 @@ function reloadDb() {
       if (!Array.isArray(db.reports)) db.reports = [];
       if (!Array.isArray(db.scheduledMessages)) db.scheduledMessages = [];
       if (!db.moderationIps || typeof db.moderationIps !== 'object' || Array.isArray(db.moderationIps)) db.moderationIps = {};
+      if (!Array.isArray(db.regLedger)) db.regLedger = [];
       normalizeAllUsers();
       if (migrateChatKinds()) saveDb();
       // Новая база с диска могла прийти без системного бота /hub.
@@ -380,6 +396,69 @@ function normalizeIp(raw) {
 function requestIp(req) {
   return normalizeIp(clientIp(req)) || normalizeIp(req.socket?.remoteAddress) || '';
 }
+// ─── Анти-мультиаккаунтинг (152-ФЗ: храним только необратимые HMAC-хэши) ──────
+// Мы НЕ сохраняем сырые IP и характеристики браузера. Из HMAC-хэша нельзя
+// восстановить ни IP, ни личность — можно лишь сравнить «это же устройство/сеть,
+// что и раньше?». Поэтому это обезличенные технические данные, а не ПД, и
+// регистрации оператором ПД в РКН не требуется. Canvas/WebRTC не используются.
+const MAX_ACCOUNTS_PER_DEVICE = 2;
+const MAX_ACCOUNTS_PER_IP = 3;
+// Старые записи реестра не влияют на лимит и чистятся (устройство/сеть могли
+// смениться у нового владельца). Окно — 180 дней.
+const REG_LEDGER_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+const REG_LEDGER_MAX = 50000;
+
+// HMAC-ключ привязан к JWT_SECRET: при утечке дампа базы хэши бесполезны без ключа.
+function regHmac(value) {
+  const v = String(value || '').trim().toLowerCase();
+  if (!v) return null;
+  return crypto.createHmac('sha256', 'reg:' + JWT_SECRET).update(v).digest('hex');
+}
+// Отпечаток устройства приходит от клиента уже как хэш (hex). Пропускаем только
+// корректный формат и повторно «подсаливаем» HMAC — сервер не видит компоненты.
+function deviceFingerprintHash(req) {
+  const raw = req.body?.fpHash;
+  if (typeof raw !== 'string' || !/^[a-f0-9]{16,128}$/i.test(raw)) return null;
+  return regHmac('fp:' + raw.toLowerCase());
+}
+function pruneRegLedger() {
+  const since = Date.now() - REG_LEDGER_TTL_MS;
+  const list = (db.regLedger || []).filter(e => Number(e.at) >= since);
+  if (list.length > REG_LEDGER_MAX) list.splice(0, list.length - REG_LEDGER_MAX);
+  db.regLedger = list;
+  return list;
+}
+// Сколько РАЗНЫХ аккаунтов уже связано с данным хэшем (устройства или сети).
+function countAccountsForHash(kind, hash) {
+  if (!hash) return 0;
+  const since = Date.now() - REG_LEDGER_TTL_MS;
+  const ids = new Set();
+  for (const e of db.regLedger || []) {
+    if (e.kind === kind && e.h === hash && Number(e.at) >= since) ids.add(e.userId);
+  }
+  return ids.size;
+}
+// Проверка лимитов ДО создания аккаунта. Возвращает { ok } или { ok:false, message }.
+function checkRegistrationLimits(req) {
+  const deviceHash = deviceFingerprintHash(req);
+  const ipHash = regHmac('ip:' + requestIp(req));
+  if (deviceHash && countAccountsForHash('device', deviceHash) >= MAX_ACCOUNTS_PER_DEVICE) {
+    return { ok: false, message: 'С этого устройства уже зарегистрировано максимальное число аккаунтов.' };
+  }
+  if (ipHash && countAccountsForHash('ip', ipHash) >= MAX_ACCOUNTS_PER_IP) {
+    return { ok: false, message: 'С этой сети уже зарегистрировано максимальное число аккаунтов.' };
+  }
+  return { ok: true, deviceHash, ipHash };
+}
+// Фиксируем регистрацию в реестре (после успешного создания аккаунта).
+function recordRegistration(userId, deviceHash, ipHash) {
+  if (!userId) return;
+  pruneRegLedger();
+  const at = Date.now();
+  if (deviceHash) db.regLedger.push({ kind: 'device', h: deviceHash, userId, at });
+  if (ipHash) db.regLedger.push({ kind: 'ip', h: ipHash, userId, at });
+}
+
 function recordModerationIp(userId, ip) {
   const normalized = normalizeIp(ip);
   if (!userId || !normalized) return false;
@@ -409,7 +488,11 @@ function isDevIp(req) {
 }
 // SEC: поля учётной записи, которые никогда не уходят клиенту (даже владельцу).
 // Плюс любые поля, похожие на секрет, — на случай новых полей в будущем.
-const PRIVATE_USER_FIELDS = new Set(['passwordHash', 'passwordHashVersion', 'tokenVersion', 'refreshTokens']);
+const PRIVATE_USER_FIELDS = new Set([
+  'passwordHash', 'passwordHashVersion', 'tokenVersion', 'refreshTokens',
+  // Персональные данные не собираются и не отдаются никому, включая владельца.
+  'email', 'phone', 'firstName', 'lastName', 'birthDate', 'country', 'region', 'city',
+]);
 const PRIVATE_USER_FIELD_RE = /hash|secret|salt|token|otp|recovery/i;
 function safeUser(user) {
   if (!user || typeof user !== 'object') return user;
@@ -438,7 +521,7 @@ const ADMIN_ENV = (() => {
   if (process.env.NODE_ENV === 'production' && !String(process.env.ADMIN_USERNAMES || '').trim()) {
     throw new Error('[FATAL] ADMIN_USERNAMES is not set. Set it explicitly in production (fly secrets set ADMIN_USERNAMES=...).');
   }
-  const raw = String(process.env.ADMIN_USERNAMES || 'Vera_koto_a,Vera_koto_b');
+  const raw = String(process.env.ADMIN_USERNAMES || '');
   return raw.split(',').map(s => s.trim().replace(/^@+/, '').toLowerCase()).filter(Boolean);
 })();
 function normAdminName(v) { return String(v || '').trim().replace(/^@+/, '').toLowerCase(); }
@@ -453,9 +536,25 @@ function isAdminUser(req, user) {
   return isAdminUsername(user?.username);
 }
 
+// Персональные данные не храним. Разовая очистка уже записанных значений
+// (телефон, почта, ФИО, дата рождения, местоположение) при старте и при
+// перечитывании базы с диска. Описания (bio) не трогаем: это свободный текст,
+// а не отдельное поле ПД.
+const PERSONAL_DATA_FIELDS = ['email', 'phone', 'firstName', 'lastName', 'birthDate', 'country', 'region', 'city'];
+function stripPersonalData(user) {
+  // У ботов имя задаёт владелец бота, это не персональные данные человека.
+  if (!user || user.isBot) return false;
+  let changed = false;
+  for (const key of PERSONAL_DATA_FIELDS) {
+    if (user[key]) { user[key] = null; changed = true; }
+  }
+  return changed;
+}
+
 function normalizeAllUsers() {
   if (!Array.isArray(db.users)) db.users = [];
   db.users.forEach(normalizeUserRecord);
+  if (db.users.filter(stripPersonalData).length) saveDb();
 }
 
 normalizeAllUsers();
@@ -617,6 +716,17 @@ function acceptLinkInviteOnServer(invite, newDeviceId, newDeviceName) {
   return { ok: true, device };
 }
 
+// Признаки надёжности без персональных данных.
+// Аккаунт старше месяца и к нему привязано второе устройство через QR.
+const ACCOUNT_AGE_TRUST_MS = 30 * 24 * 60 * 60 * 1000;
+function accountIsMature(user) {
+  const created = Date.parse(user?.createdAt || '');
+  return Number.isFinite(created) && Date.now() - created >= ACCOUNT_AGE_TRUST_MS;
+}
+function hasQrLinkedDevice(userId) {
+  return (db.devices || []).some(d => d.userId === userId && d.linkedViaQr && !d.revoked);
+}
+
 function setInstallationCookie(req, res, raw) {
   res.cookie('vera_installation', raw, { httpOnly: true, sameSite: 'lax', secure: req.secure || req.headers['x-forwarded-proto'] === 'https', path: '/', maxAge: 400 * 24 * 60 * 60 * 1000 });
 }
@@ -673,7 +783,6 @@ function bindInstallationForUser(req, res, user, deviceName) {
   device.name = name;
   return device;
 }
-
 function createSavedMessagesChat(userId) {
   const savedChat = {
     id: uuidv4(),
@@ -685,6 +794,21 @@ function createSavedMessagesChat(userId) {
   };
   db.chats.push(savedChat);
   db.chatMembers.push({ id: uuidv4(), chatId: savedChat.id, userId, role: 'owner', joinedAt: new Date().toISOString() });
+}
+
+// Добавляет пользователя в глобальный чат обратной связи
+function addUserToFeedbackChat(userId) {
+  const feedbackChatId = 'feedback-global';
+  const chatMember = (db.chatMembers || []).find(m => m.chatId === feedbackChatId && m.userId === userId);
+  if (!chatMember) {
+    (db.chatMembers || []).push({
+      id: uuidv4(),
+      chatId: feedbackChatId,
+      userId,
+      role: 'member',
+      joinedAt: new Date().toISOString(),
+    });
+  }
 }
 
 // ─── Express app ─────────────────────────────────────────────────────────────
@@ -824,6 +948,10 @@ const writeLimiter   = makeRateLimit({ windowMs: 60_000, max: 300, key: byUserKe
 const languageCorrectionLimiter = makeRateLimit({ windowMs: 60_000, max: 20, key: byUserKey });
 app.use(['/api/auth/device', '/api/auth/register', '/api/auth/login', '/api/auth/password', '/api/auth/passkey', '/api/auth/logout', '/api/auth/refresh'], authLimiter);
 app.use('/api/users/search', searchLimiter);
+// SEC: комментарии стены пользователя и проверка занятности ника — GET-маршруты,
+// которые легко использовать для скрейпинга/перебора. Назначаем свой лимитер.
+app.use('/api/users/:id/comments', searchLimiter);
+app.use('/api/users/username-available', searchLimiter);
 app.use(['/api/messages'], messageLimiter);
 app.use(['/api/files', '/api/users/avatar', '/api/users/me/avatar', '/api/music', '/api/ai/models'], uploadLimiter);
 app.use('/api/chats/:id/language-correction', languageCorrectionLimiter);
@@ -1021,6 +1149,11 @@ function authMiddleware(req, res, next) {
     req.userId = userId;
     req.deviceId = deviceId;
     if (recordModerationIp(userId, requestIp(req))) saveDb();
+    // Режим «только чтение»: читать и подавать апелляцию можно, менять — нет.
+    if (moderation.readOnly(db, userId) &&
+      !moderation.readOnlyAllows(req.method, String(req.originalUrl || req.url || '').split('?')[0])) {
+      return res.status(403).json({ message: 'Аккаунт в режиме только чтения', code: 'READ_ONLY' });
+    }
     next();
   } catch (e) {
     res.status(401).json({ message: 'Invalid token', reason: e.message });
@@ -1037,6 +1170,52 @@ function issueAccessToken(user, deviceId) {
     JWT_SECRET,
     { expiresIn: '15m' },
   );
+}
+
+// ─── CAPTCHA проверка при регистрации ────────────────────────────────────────
+// В режиме разработки принимает любой непустой токен длиной >= 10 символов.
+// Для продакшена: задайте CAPTCHA_PROVIDER (hcaptcha|recaptcha|turnstile) и
+// CAPTCHA_SECRET_KEY в переменных окружения, тогда токен будет проверяться
+// через API провайдера (siteverify) перед созданием аккаунта.
+async function verifyCaptchaToken(token) {
+  if (!token || typeof token !== 'string' || token.length < 10) return false;
+
+  const provider = process.env.CAPTCHA_PROVIDER;
+  const secret = process.env.CAPTCHA_SECRET_KEY;
+
+  // Режим разработки — мок, без реальной проверки провайдера.
+  if (!provider || !secret) return true;
+
+  try {
+    const fetchFn = globalThis.fetch;
+    if (!fetchFn) return false;
+    let verifyUrl;
+    let body;
+
+    if (provider === 'hcaptcha') {
+      verifyUrl = 'https://hcaptcha.com/siteverify';
+      body = new URLSearchParams({ secret, response: token });
+    } else if (provider === 'recaptcha') {
+      verifyUrl = 'https://www.google.com/recaptcha/api/siteverify';
+      body = new URLSearchParams({ secret, response: token });
+    } else if (provider === 'turnstile') {
+      verifyUrl = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+      body = JSON.stringify({ secret, response: token });
+    } else {
+      return true; // неизвестный провайдер — пропускаем (fail open для дебага)
+    }
+
+    const res = await fetchFn(verifyUrl, {
+      method: 'POST',
+      headers: provider === 'turnstile' ? { 'Content-Type': 'application/json' } : { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+    const json = await res.json();
+    return json.success === true;
+  } catch {
+    // При ошибке сети к провайдеру —fail closed: не создаём аккаунт.
+    return false;
+  }
 }
 
 // ─── Refresh tokens (ротация + reuse-detection) ──────────────────────────────
@@ -1283,10 +1462,18 @@ const uploadAvatar  = multer({ storage: makeStorage('avatars'), limits: { fileSi
 const uploadWallpaper = multer({ storage: makeStorage('wallpapers'), limits: { fileSize: 15 * 1024 * 1024 }, fileFilter: mimeFilter(['image/'], []) });
 // Фото прото доски: своя папка, чтобы удаление карточки сносило и файл.
 const uploadProtoPhoto = multer({ storage: makeStorage('proto'), limits: { fileSize: 12 * 1024 * 1024 }, fileFilter: mimeFilter(['image/'], []) });
-// Общие шрифты админа: fileFilter НЕ проверяет mime — у шрифтов он ненадёжен
-// (обычно application/octet-stream), их тип определяется по расширению в
-// admin-fonts.js, поэтому пропускаем любой файл и решаем там.
-const uploadFont = multer({ storage: makeStorage('fonts'), limits: { fileSize: 12 * 1024 * 1024 } });
+// Общие шрифты админа: MIME у шрифтов ненадёжен (обычно application/octet-stream),
+// поэтому фильтруем по расширению файла.
+const uploadFont = multer({
+  storage: makeStorage('fonts'),
+  limits: { fileSize: 12 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = ['.woff', '.woff2', '.ttf', '.otf'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (!allowed.includes(ext)) return cb(new Error('Недопустимое расширение шрифта'));
+    cb(null, true);
+  },
+});
 const uploadCommunityTheme = multer({
   storage: makeStorage('community-themes'),
   limits: { fileSize: 12 * 1024 * 1024, files: 3, fields: 6 },
@@ -1455,7 +1642,7 @@ app.post('/api/auth/verify', (req, res) => {
     }
   }
 
-  const accessToken = jwt.sign({ sub: user.id, email: user.email, username: user.username, deviceId }, JWT_SECRET, { expiresIn: '7d' });
+  const accessToken = issueAccessToken(user, deviceId);
   res.json({ accessToken, user, isNewUser });
 });
 
@@ -1536,7 +1723,7 @@ app.post('/api/auth/verify-code', (req, res) => {
     }
   }
 
-  const accessToken = jwt.sign({ sub: user.id, phone: user.phone, deviceId }, JWT_SECRET, { expiresIn: '7d' });
+  const accessToken = issueAccessToken(user, deviceId);
   res.json({ accessToken, user, isNewUser });
 });
 */
@@ -1547,6 +1734,7 @@ function authUserResponse(req, res, user, device, isNewUser = false) {
   const deviceId = device.deviceId;
   user.isOnline = true;
   user.lastSeen = new Date().toISOString();
+  markActiveDay(user); // учёт активных дней (реферальная программа)
   recordModerationIp(user.id, requestIp(req));
   db.loginEvents.push({ id: uuidv4(), userId: user.id, deviceId, method: 'password', ip: requestIp(req), createdAt: Date.now() });
   db.loginEvents = db.loginEvents.slice(-5000);
@@ -1581,28 +1769,34 @@ function recordPasswordFailure(key) {
   return current;
 }
 
-// POST /api/auth/register — регистрация по нику и паролю. Почта и телефон необязательны.
+// Приветственный бонус новому аккаунту (в ВП).
+const REGISTRATION_BONUS_VP = 200;
+// POST /api/auth/register — регистрация по нику и паролю.
+// Телефон и почта не принимаются: персональные данные не собираются.
 app.post('/api/auth/register', async (req, res) => {
   const username = String(req.body?.username || '').trim().replace(/^@+/, '');
-  const email = normalizeIdentifier(req.body?.email) || null;
-  const phone = req.body?.phone ? String(req.body.phone).trim() : null;
   const password = req.body?.password;
   if (!/^[a-zA-Z0-9_.]{3,32}$/.test(username)) return res.status(400).json({ message: 'Ник: 3–32 символа, латиница, цифры, _ и .' });
-  if (email && !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ message: 'Некорректная почта' });
-  if (phone && !/^\+?[0-9]{7,20}$/.test(phone)) return res.status(400).json({ message: 'Некорректный телефон' });
   if (typeof password !== 'string' || password.length < 12) return res.status(400).json({ message: 'Пароль должен содержать не менее 12 символов' });
   if (password.length > 256) return res.status(400).json({ message: 'Пароль слишком длинный' });
+  // SEC: CAPTCHA обязательна при регистрации (защита от автоматического создания аккаунтов).
+  const captchaToken = req.body?.captchaToken;
+  const captchaOk = await verifyCaptchaToken(captchaToken);
+  if (!captchaOk) {
+    return res.status(400).json({ message: 'Требуется подтверждение CAPTCHA', code: 'CAPTCHA_REQUIRED' });
+  }
   // SEC: права админа выдаются по имени — зарезервированные ники занять нельзя.
   if (isAdminUsername(username)) return res.status(403).json({ message: 'Этот ник зарезервирован' });
-  const taken = () => db.users.some(u => normalizeIdentifier(u.username) === normalizeIdentifier(username)
-    || (email && normalizeIdentifier(u.email) === email)
-    || (phone && normalizeIdentifier(u.phone) === phone));
-  if (taken()) return res.status(409).json({ message: 'Этот ник, почта или телефон уже заняты' });
+  // Анти-мультиаккаунтинг: лимит аккаунтов на устройство/сеть (по HMAC-хэшам).
+  const regLimit = checkRegistrationLimits(req);
+  if (!regLimit.ok) return res.status(429).json({ message: regLimit.message, code: 'REG_LIMIT' });
+  const taken = () => db.users.some(u => normalizeIdentifier(u.username) === normalizeIdentifier(username));
+  if (taken()) return res.status(409).json({ message: 'Этот ник уже занят' });
   const passwordHash = await hashPassword(password);
   // Пока считался хэш, ник могли занять параллельным запросом.
-  if (taken()) return res.status(409).json({ message: 'Этот ник, почта или телефон уже заняты' });
-  const user = { id: uuidv4(), email, phone, username, passwordHash, passwordHashVersion: 2,
-    firstName: null, lastName: null, birthDate: null, country: null, region: null, city: null,
+  if (taken()) return res.status(409).json({ message: 'Этот ник уже занят' });
+  const user = { id: uuidv4(), username, passwordHash, passwordHashVersion: 2,
+    walletBalance: REGISTRATION_BONUS_VP,
     avatarUrl: null, bio: null, isOnline: true, lastSeen: new Date().toISOString(), createdAt: new Date().toISOString() };
   db.users.push(user);
   const device = bindInstallationForUser(req, res, user, getDeviceNameForRequest(req));
@@ -1610,11 +1804,17 @@ app.post('/api/auth/register', async (req, res) => {
     db.users = db.users.filter(u => u.id !== user.id);
     return;
   }
+  // Аккаунт создан — фиксируем в анти-мультиаккаунт реестре (только хэши).
+  recordRegistration(user.id, regLimit.deviceHash, regLimit.ipHash);
+  // Реферальная привязка: только для НОВОГО устройства/сети. Если на этом
+  // устройстве или в этой сети уже был аккаунт — «для зареганных не работает».
+  linkReferralOnRegister(user, req.body?.ref, regLimit);
   createSavedMessagesChat(user.id);
+  addUserToFeedbackChat(user.id);
   return authUserResponse(req, res, user, device, true);
 });
 
-// POST /api/auth/login — вход по нику (или почте) и паролю на любом устройстве.
+// POST /api/auth/login — вход по нику и паролю на любом устройстве.
 app.post('/api/auth/login', async (req, res) => {
   const identifier = normalizeIdentifier(req.body?.identifier).replace(/^@+/, '');
   const password = req.body?.password;
@@ -1623,7 +1823,7 @@ app.post('/api/auth/login', async (req, res) => {
     res.setHeader('Retry-After', String(Math.ceil(PASSWORD_LOCK_MS / 1000)));
     return res.status(429).json({ message: 'Слишком много неудачных попыток. Попробуйте позже.' });
   }
-  const user = identifier && db.users.find(u => normalizeIdentifier(u.email) === identifier || normalizeIdentifier(u.username) === identifier);
+  const user = identifier && db.users.find(u => normalizeIdentifier(u.username) === identifier);
   if (!user || typeof password !== 'string' || password.length > 256) {
     recordPasswordFailure(attemptKey);
     return res.status(401).json({ message: 'Неверный ник или пароль' });
@@ -1637,6 +1837,7 @@ app.post('/api/auth/login', async (req, res) => {
   if (moderation.blocked(db, user.id)) return res.status(403).json({ message: 'Доступ заблокирован', code: 'ACCOUNT_BANNED' });
   const device = bindInstallationForUser(req, res, user, getDeviceNameForRequest(req));
   if (!device) return;
+  addUserToFeedbackChat(user.id);
   return authUserResponse(req, res, user, device);
 });
 
@@ -1712,7 +1913,10 @@ app.get('/api/auth/me', authMiddleware, (req, res) => {
   if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
   // Добавляем инфу об устройствах, чтобы клиент мог показать QR-экран
   const devices = (db.devices || []).filter(d => d.userId === user.id);
-  res.json({ ...withDevFlag(req, user), hasPassword: !!user.passwordHash, devices: devices.map(d => ({
+  res.json({ ...withDevFlag(req, user), hasPassword: !!user.passwordHash,
+    // Клиенту нужно знать об ограничениях, чтобы закрыть поле ввода заранее.
+    moderation: { readOnly: moderation.readOnly(db, user.id), creationBanned: moderation.creationBanned(db, user.id) },
+    devices: devices.map(d => ({
     id: d.id, deviceId: d.deviceId, name: d.name,
     isPrimary: !!d.isPrimary, linkedViaQr: !!d.linkedViaQr,
     createdAt: d.createdAt, lastSeenAt: d.lastSeenAt,
@@ -1822,6 +2026,7 @@ app.post('/api/admin/delete-all-chats', authMiddleware, (req, res) => {
   db.favorites = [];
   db.callLogs = [];
   saveDb();
+  flushDb(); // массовое удаление — пишем на диск немедленно
   io?.emit('admin:data-cleared', { type: 'chats' });
   res.json({ ok: true, counts });
 });
@@ -1908,10 +2113,12 @@ app.delete('/api/admin/ip-bans/:ip', authMiddleware, (req, res) => {
 // ─── USERS routes ─────────────────────────────────────────────────────────────
 moderation.install({ app, getDb: () => db, saveDb, auth: authMiddleware,
   isAdmin: req => isAdminUser(req, db.users.find(u => u.id === req.userId)), isAdminUsername, requestIp,
-  notify: (from, to, text, reportId) => {
+  // extra.appealReportId — решение, которое получатель может обжаловать кнопкой.
+  notify: (from, to, text, reportId, extra) => {
     const chat = ensureDirectChat(from, to);
     const message = { id: uuidv4(), chatId: chat.id, senderId: from, text, content: text,
-      type: 'system', moderationReportId: reportId || null, readBy: [], attachments: [], createdAt: new Date().toISOString() };
+      type: 'system', moderationReportId: reportId || null, appealReportId: extra?.appealReportId || null,
+      readBy: [], attachments: [], createdAt: new Date().toISOString() };
     db.messages.push(message);
     for (const uid of [from, to]) for (const sid of userSockets.get(uid) || []) {
       io.to(sid).socketsJoin('chat:' + chat.id);
@@ -1938,6 +2145,17 @@ blocks.install({ app, getDb: () => db, saveDb, auth: authMiddleware,
     }
   },
   blocked: (userId) => moderation.blocked(db, userId),
+  // Апелляция на конкретное решение администрации (бан, предупреждение,
+  // удаление бота или приложения) и отмена этого решения.
+  appealTarget: (userId, reportId) => moderation.decisionForAppeal(db, userId, reportId),
+  overturnReport: (reportId, by) => {
+    const report = (db.reports || []).find((r) => r.id === reportId);
+    return report ? moderation.overturnDecision(db, report, by) : { ok: false, restored: null };
+  },
+  // Экран бана подаёт апелляцию без ссылки на решение: берём действующий бан.
+  banReportId: (userId) => (db.moderationBans || [])
+    .filter((ban) => ban.userId === userId && ban.kind === 'account' && ban.reportId && moderation.isActiveBan(ban))
+    .map((ban) => ban.reportId).at(-1) || null,
   // Кто за установкой по её cookie: этим путём подают апелляцию забаненные,
   // которым обычный /api/appeals с auth недоступен (verifyAccessToken бросает
   // ACCOUNT_BANNED). Cookie — тот же секрет, что и у /auth/device.
@@ -1957,21 +2175,17 @@ app.get('/api/users/search', authMiddleware, (req, res) => {
   const rawQuery = String(req.query.q || '').trim().replace(/^[@/]+/, '').slice(0, 50);
   const kind = req.query.kind === 'bots' || req.query.kind === 'people' ? req.query.kind : null;
   const q = safeLower(rawQuery);
-  const phoneQuery = rawQuery.replace(/\D/g, '');
   if (!q) return res.json([]);
   normalizeAllUsers();
   function getUserSearchRank(u) {
+    // Поиск только по нику: персональные данные не хранятся.
+    // Имя бота — не ПД, по нему ботов по-прежнему можно найти.
     const username = safeLower(u.username).replace(/^@+/, '');
-    const email = safeLower(u.email);
-    const phone = safeLower(u.phone);
-    const fullName = safeLower(`${u.firstName || ''} ${u.lastName || ''}`.trim());
-    const firstName = safeLower(u.firstName);
-    const lastName = safeLower(u.lastName);
-    const userPhone = String(u.phone || '').replace(/\D/g, '');
+    const botName = u.isBot ? safeLower(u.firstName) : '';
 
-    if (username === q || email === q || phone === q || (!!phoneQuery && userPhone === phoneQuery)) return 0;
-    if (username.startsWith(q) || email.startsWith(q) || firstName.startsWith(q) || lastName.startsWith(q) || fullName.startsWith(q) || (!!phoneQuery && userPhone.startsWith(phoneQuery))) return 1;
-    if ([username, firstName, lastName, fullName, email, phone].some(value => value.includes(q)) || (!!phoneQuery && userPhone.includes(phoneQuery))) return 2;
+    if (username === q) return 0;
+    if (username.startsWith(q) || (botName && botName.startsWith(q))) return 1;
+    if (username.includes(q) || (botName && botName.includes(q))) return 2;
     return 99;
   }
 
@@ -2006,8 +2220,9 @@ function publicUserFields(user) {
   return {
     id: user.id,
     username: user.username,
-    firstName: user.firstName,
-    lastName: user.lastName,
+    // Имя показываем только у ботов: у людей ФИО не хранится.
+    firstName: user.isBot ? user.firstName : null,
+    lastName: null,
     avatarUrl: user.avatarUrl,
     bio: user.bio,
     isOnline: user.isOnline,
@@ -2021,26 +2236,44 @@ function publicUserFields(user) {
     pinnedPlaylistId: user.pinnedPlaylistId || null,
     pinnedTrackId: user.pinnedTrackId || null,
     isBot: !!user.isBot,
+    // false — владелец скрыл инвентарь; сам список при этом не отдаём.
+    inventoryVisible: inventoryVisibleToOthers(user),
+  };
+}
+
+// Булевы признаки для полосок безопасности в профиле. Персональные данные
+// не используются: возраст аккаунта и привязка второго устройства по QR.
+// Предупреждения, жалобы и баны видны лишь как «есть/нет».
+function securityFlags(user) {
+  const hasActiveBan = !!user.isBot && (db.moderationBans || []).some(ban => {
+    if (ban.userId !== user.id) return false;
+    return moderation.isActiveBan(ban);
+  });
+  const hasComplaints = !!user.isBot && (db.reports || []).some(r => 
+    r.targetId === user.id && r.status !== 'resolved'
+  );
+  return {
+    isAdminAccount: isAdminUsername(user.username),
+    accountMature: accountIsMature(user),
+    hasLinkedDevice: hasQrLinkedDevice(user.id),
+    hasAdminWarnings: (db.moderationWarnings || []).some(w => w.userId === user.id),
+    hasComplaints,
+    hasActiveBan,
   };
 }
 
 // GET /api/users/:id
-// SEC: возвращаем только публичные поля. phone/email/tokenVersion/etc не отдаём.
+// SEC: возвращаем только публичные поля. Персональные данные не хранятся и не отдаются.
 app.get('/api/users/:id', authMiddleware, (req, res) => {
   const user = db.users.find(u => u.id === req.params.id);
   if (!user) return res.status(404).json({ message: 'Не найден' });
   const isSelf = user.id === req.userId;
-  const publicFields = publicUserFields(user);
-  // Себе можно вернуть больше (email/phone для настроек).
-  if (isSelf) {
-    publicFields.email = user.email;
-    publicFields.phone = user.phone;
-    publicFields.birthDate = user.birthDate;
-    publicFields.country = user.country;
-    publicFields.region = user.region;
-    publicFields.city = user.city;
-    publicFields.chatPhoto = user.chatPhoto;
+  const publicFields = { ...publicUserFields(user), ...securityFlags(user) };
+  // Инвентарь — только с разрешения владельца. Себе отдаём всегда.
+  if (isSelf || publicFields.inventoryVisible) {
+    publicFields.inventory = publicInventory(user);
   }
+  if (isSelf) publicFields.chatPhoto = user.chatPhoto;
   res.json(publicFields);
 });
 
@@ -2149,7 +2382,8 @@ app.put('/api/pets/equipment', authMiddleware, (req, res) => {
 app.patch('/api/users/me', authMiddleware, (req, res) => {
   const user = db.users.find(u => u.id === req.userId);
   if (!user) return res.status(404).json({ message: 'Не найден' });
-  const allowed = ['firstName', 'lastName', 'username', 'bio', 'birthDate', 'country', 'region', 'city', 'themeId', 'chatPhoto', 'pinnedPlaylistId', 'pinnedTrackId', 'activeRing', 'activeSelfCard', 'activeBubble'];
+  // Персональные поля (ФИО, дата рождения, местоположение) больше не принимаются.
+  const allowed = ['username', 'bio', 'themeId', 'chatPhoto', 'pinnedPlaylistId', 'pinnedTrackId', 'activeRing', 'activeSelfCard', 'activeBubble'];
   for (const key of ['activeRing', 'activeSelfCard', 'activeBubble']) {
     if (req.body[key] !== undefined && (typeof req.body[key] !== 'string' || req.body[key].length > 128)) {
       return res.status(400).json({ message: 'Некорректный ID предмета' });
@@ -2781,6 +3015,31 @@ function emitPetsUpdated(user) {
   for (const sid of userSockets.get(user.id) || []) io.to(sid).emit('pets:updated', petState(user));
 }
 
+// Владелец скрыл инвентарь в настройках — другим его не отдаём вовсе.
+function inventoryVisibleToOthers(user) {
+  const settings = db.userSettings?.[user?.id];
+  return !settings || settings.showInventoryToOthers !== false;
+}
+
+// Публичная проекция инвентаря: только известные id и количества, без цен,
+// баланса и истории выпадений. Выложенное на площадку уже вычтено.
+function publicInventory(user) {
+  const skins = [...accountOwnedSkinIds(user)];
+  const pets = petState(user);
+  const cases = normalizeCaseInventory(user?.caseCounts);
+  const caseCounts = {};
+  for (const [id, count] of Object.entries(cases)) {
+    if (count > 0) caseCounts[id] = count;
+  }
+  return {
+    skins,
+    pets: pets.ownedPets,
+    petCounts: pets.petCounts,
+    equippedPetId: pets.equippedPet?.id || '',
+    cases: caseCounts,
+  };
+}
+
 function emptyCaseInventory() {
   return Object.fromEntries([...CASE_IDS].map(id => [id, 0]));
 }
@@ -2910,6 +3169,138 @@ function pushWalletEmit(user) {
   });
 }
 
+// ─── Реферальная программа ─────────────────────────────────────────────────
+// Друг переходит по ссылке и РЕГИСТРИРУЕТ новый аккаунт. Награды пригласившему:
+//  • 5% от каждого пополнения друга — но только после того, как друг
+//    пользовался мессенджером не менее REFERRAL_CASHBACK_MIN_DAYS дней;
+//  • единоразовый бонус REFERRAL_TENURE_BONUS_VP ВП, когда друг отработал
+//    REFERRAL_TENURE_DAYS активных дней.
+// «Для зареганных акков не работает»: если на устройстве/в сети уже есть
+// аккаунт (анти-мультиаккаунт реестр), реферальная привязка не создаётся.
+const REFERRAL_CASHBACK_PERCENT = 5;       // % от пополнений друга пригласившему
+const REFERRAL_CASHBACK_MIN_DAYS = 3;      // друг должен пользоваться ≥ 3 дней
+const REFERRAL_TENURE_DAYS = 7;            // 7 активных дней → разовый бонус
+const REFERRAL_TENURE_BONUS_VP = 50;       // размер разового бонуса, ВП
+
+// Код приглашения стабилен для аккаунта. Генерируем лениво из id (без ПД).
+function referralCodeFor(user) {
+  if (!user) return '';
+  if (!user.referralCode) {
+    user.referralCode = 'r' + require('crypto').createHash('sha256')
+      .update('referral:' + user.id).digest('hex').slice(0, 11);
+    saveDb();
+  }
+  return user.referralCode;
+}
+function findUserByReferralCode(code) {
+  const c = String(code || '').trim().toLowerCase();
+  if (!/^r[a-f0-9]{11}$/.test(c)) return null;
+  return db.users.find(u => (u.referralCode || referralCodeFor(u)) === c) || null;
+}
+// Счётчик РАЗНЫХ активных дней аккаунта (UTC-даты). Используется и для
+// 3-дневного порога кэшбэка, и для 7-дневного разового бонуса.
+function markActiveDay(user) {
+  if (!user) return;
+  if (!Array.isArray(user.activeDays)) user.activeDays = [];
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  if (!user.activeDays.includes(today)) {
+    user.activeDays.push(today);
+    if (user.activeDays.length > 400) user.activeDays = user.activeDays.slice(-400);
+    saveDb();
+    maybeGrantReferralTenureBonus(user);
+  }
+}
+function referralActiveDays(user) {
+  return Array.isArray(user?.activeDays) ? user.activeDays.length : 0;
+}
+// Разовый бонус пригласившему за 7 активных дней друга.
+function maybeGrantReferralTenureBonus(friend) {
+  if (!friend || !friend.referredBy || friend.referralTenureBonusPaid) return;
+  if (referralActiveDays(friend) < REFERRAL_TENURE_DAYS) return;
+  const referrer = ensureWallet(db.users.find(u => u.id === friend.referredBy));
+  if (!referrer || referrer.id === friend.id) { friend.referralTenureBonusPaid = true; saveDb(); return; }
+  const prev = referrer.walletBalance || 0;
+  if (!Number.isSafeInteger(prev + REFERRAL_TENURE_BONUS_VP)) return;
+  referrer.walletBalance = prev + REFERRAL_TENURE_BONUS_VP;
+  friend.referralTenureBonusPaid = true;
+  referrer.referralEarnedVp = (referrer.referralEarnedVp || 0) + REFERRAL_TENURE_BONUS_VP;
+  try { saveDb(); } catch { referrer.walletBalance = prev; friend.referralTenureBonusPaid = false; return; }
+  pushWalletEmit(referrer);
+}
+// 5%-кэшбэк пригласившему с оплаченного пополнения друга.
+// Вызывается из обоих webhook'ов после зачисления ВП другу.
+function grantReferralCashback(friend, topupVp) {
+  if (!friend || !friend.referredBy) return;
+  if (!Number.isSafeInteger(topupVp) || topupVp <= 0) return;
+  // Друг должен пользоваться мессенджером не меньше 3 дней.
+  if (referralActiveDays(friend) < REFERRAL_CASHBACK_MIN_DAYS) return;
+  const referrer = ensureWallet(db.users.find(u => u.id === friend.referredBy));
+  if (!referrer || referrer.id === friend.id) return;
+  const reward = Math.floor(topupVp * REFERRAL_CASHBACK_PERCENT / 100);
+  if (reward <= 0) return;
+  const prev = referrer.walletBalance || 0;
+  if (!Number.isSafeInteger(prev + reward)) return;
+  referrer.walletBalance = prev + reward;
+  referrer.referralEarnedVp = (referrer.referralEarnedVp || 0) + reward;
+  try { saveDb(); } catch { referrer.walletBalance = prev; return; }
+  pushWalletEmit(referrer);
+}
+
+// Привязка реферала при РЕГИСТРАЦИИ нового аккаунта.
+// Условия: валидный код, не самоприглашение, и это устройство/сеть раньше
+// не регистрировали аккаунтов (кроме только что созданного) — иначе бонус не
+// начисляем («для зареганных акков не работает»). Привязка односторонняя и
+// неизменяемая.
+function linkReferralOnRegister(newUser, rawCode, regLimit) {
+  try {
+    if (!newUser || newUser.referredBy) return;
+    const code = String(rawCode || '').trim();
+    if (!code) return;
+    const referrer = findUserByReferralCode(code);
+    if (!referrer || referrer.id === newUser.id) return;
+    // Сколько РАЗНЫХ аккаунтов уже на этом устройстве/в сети, не считая нового.
+    const deviceCount = countAccountsForHashExcluding('device', regLimit?.deviceHash, newUser.id);
+    const ipCount = countAccountsForHashExcluding('ip', regLimit?.ipHash, newUser.id);
+    if (deviceCount > 0 || ipCount > 0) return; // устройство/сеть уже «зареганы»
+    newUser.referredBy = referrer.id;
+    newUser.referredAt = Date.now();
+    newUser.referralTenureBonusPaid = false;
+    markActiveDay(newUser); // день регистрации — первый активный день
+    saveDb();
+  } catch (e) { console.error('[referral] link failed:', e?.message); }
+}
+// Как countAccountsForHash, но исключает заданный userId из подсчёта.
+function countAccountsForHashExcluding(kind, hash, excludeUserId) {
+  if (!hash) return 0;
+  const since = Date.now() - REG_LEDGER_TTL_MS;
+  const ids = new Set();
+  for (const e of db.regLedger || []) {
+    if (e.kind === kind && e.h === hash && Number(e.at) >= since && e.userId !== excludeUserId) ids.add(e.userId);
+  }
+  return ids.size;
+}
+
+// Моя реферальная ссылка и статистика.
+app.get('/api/referral', authMiddleware, (req, res) => {
+  const user = db.users.find(u => u.id === req.userId);
+  if (!user) return res.status(404).json({ message: 'Пользователь не найден' });
+  const code = referralCodeFor(user);
+  const proto = (req.headers['x-forwarded-proto'] === 'https' || req.secure) ? 'https' : 'http';
+  const host = req.headers.host || 'localhost:3000';
+  const invited = db.users.filter(u => u.referredBy === user.id);
+  res.json({
+    code,
+    link: `${proto}://${host}/?ref=${code}`,
+    invitedCount: invited.length,
+    activeCount: invited.filter(u => referralActiveDays(u) >= REFERRAL_CASHBACK_MIN_DAYS).length,
+    earnedVp: user.referralEarnedVp || 0,
+    cashbackPercent: REFERRAL_CASHBACK_PERCENT,
+    cashbackMinDays: REFERRAL_CASHBACK_MIN_DAYS,
+    tenureDays: REFERRAL_TENURE_DAYS,
+    tenureBonusVp: REFERRAL_TENURE_BONUS_VP,
+  });
+});
+
 // Баланс + купленные товары
 app.post('/api/admin/wallet/grant', authMiddleware, (req, res) => {
   if (!adminRequest(req)) return res.status(403).json({ message: 'Нет прав администратора' });
@@ -2977,12 +3368,26 @@ for (const action of ['buy', 'open']) {
       counts[definition.id]++;
     } else {
       // Веса могут быть дробными (Ночной кот в «Базе» — 0.001%). randomInt принимает
-      // только целые, поэтому доли переводим в целые с общим масштабом.
-      const weights = definition.rewards.map(reward => Math.round(reward.weight * 1e12));
-      const total = weights.reduce((sum, weight) => sum + weight, 0);
-      if (!Number.isSafeInteger(total) || total < 1) return res.status(500).json({ message: 'Некорректные веса кейса' });
-      let roll = crypto.randomInt(total);
-      const reward = definition.rewards[weights.findIndex(weight => (roll -= weight) < 0)];
+      // только целые и только до 2^48−1, поэтому доли переводим в целые с общим
+      // масштабом, а диапазон больше предела режем на части: сумма весов кейса
+      // «Космос» (672) после масштаба даёт 672·10^12 и роняла открытие
+      // с ERR_OUT_OF_RANGE.
+      const weights = definition.rewards.map(reward => BigInt(Math.round(Number(reward.weight) * 1e12)));
+      const total = weights.reduce((sum, weight) => sum + weight, 0n);
+      if (total < 1n) return res.status(500).json({ message: 'Некорректные веса кейса' });
+      // Случайное число от 0 до total−1. Пока диапазон больше потолка randomInt,
+      // берём случайный «кусок» и добиваем остаток — каждый кусок равновероятен,
+      // поэтому распределение не смещается.
+      const LIMIT = 281474976710655n; // 2^48 − 1
+      let roll = 0n;
+      let span = total;
+      while (span > LIMIT) {
+        const parts = (span + LIMIT - 1n) / LIMIT;
+        roll += BigInt(crypto.randomInt(Number(parts))) * (span / parts);
+        span = span / parts;
+      }
+      roll += BigInt(crypto.randomInt(Number(span)));
+      const reward = definition.rewards[weights.findIndex(weight => (roll -= weight) < 0n)];
       const key = reward.key;
       if (key.startsWith('rx-')) {
         // Скин реакции: копия идёт в счётчик, слоты пользователь настраивает сам.
@@ -3025,7 +3430,7 @@ const yoomoney = require('./yoomoney');
 // the real module; the guard keeps those focused tests independent of payment
 // integration while preserving the normal registration path.
 if (typeof yoomoney?.registerYoomoney === 'function') {
-  yoomoney.registerYoomoney(app, { getDb: () => db, saveDb, authMiddleware, ensureWallet, pushWalletEmit });
+  yoomoney.registerYoomoney(app, { getDb: () => db, saveDb, authMiddleware, ensureWallet, pushWalletEmit, onTopupPaid: (user, amountVs) => grantReferralCashback(user, amountVs) });
 }
 
 // Создать инвойс на пополнение (amount в ВП)
@@ -3123,6 +3528,7 @@ app.post('/api/wallet/webhook', (req, res) => {
         order.status = 'paid'; order.paidAt = Date.now();
         saveDb();
         pushWalletEmit(user);
+        grantReferralCashback(user, order.amountVs);
       }
     }
   }
@@ -3142,6 +3548,7 @@ app.post('/api/wallet/mock-pay', authMiddleware, (req, res) => {
     order.status = 'paid'; order.paidAt = Date.now();
     saveDb();
     pushWalletEmit(user);
+    grantReferralCashback(user, order.amountVs);
   }
   res.json({ ok: true, balance: user.walletBalance });
 });
@@ -3853,7 +4260,14 @@ app.post('/api/channels/:id/join', authMiddleware, (req, res) => {
 
 app.get('/api/chats/:id', authMiddleware, (req, res) => {
   const isMember = db.chatMembers.find(m => m.chatId === req.params.id && m.userId === req.userId);
-  if (!isMember) return res.status(403).json({ message: 'Нет доступа' });
+  const currentUser = db.users.find(u => u.id === req.userId);
+  const isAdmin = currentUser?.isAdmin === true;
+  
+  // Доступ только участникам чата или глобальным админам
+  if (!isMember && !isAdmin) {
+    return res.status(403).json({ message: 'Нет доступа' });
+  }
+  
   const chat = db.chats.find(c => c.id === req.params.id);
   if (!chat) return res.status(404).json({ message: 'Чат не найден' });
   const members = db.chatMembers.filter(m => m.chatId === chat.id).map(m => ({
@@ -4074,6 +4488,9 @@ app.delete('/api/chats/:id/leave', authMiddleware, (req, res) => {
   if (idx === -1) return res.status(404).json({ message: 'Вы не являетесь участником этого чата' });
   db.chatMembers.splice(idx, 1);
   saveDb();
+  // Выход из чата тоже пишем сразу: иначе при рестарте сервера участник
+  // «возвращался» в покинутый чат (отложенная запись не успевала сброситься).
+  flushDb();
   // Уведомляем остальных участников
   io.to(`chat:${chatId}`).emit('chat:member_left', { chatId, userId: req.userId });
   res.json({ success: true });
@@ -4341,6 +4758,11 @@ app.delete('/api/chats/:id', authMiddleware, (req, res) => {
   if (db.favorites) db.favorites = db.favorites.filter(f => f.chatId !== chatId);
   db.chats.splice(chatIdx, 1);
   saveDb();
+  // Удаление чата — необратимая операция. Пишем на диск СРАЗУ (синхронно),
+  // не полагаясь на 300мс-дебаунс: при рестарте/перезапуске сервера (особенно
+  // на Windows — SIGKILL/taskkill/nodemon не всегда дают сработать обработчикам
+  // сигналов) отложенная запись терялась, и удалённый чат «возвращался».
+  flushDb();
 
   // Уведомляем всех участников через сокет
   io.to(`chat:${chatId}`).emit('chat:deleted', { chatId });
@@ -4453,14 +4875,28 @@ app.post('/api/messages/:id/unpin', authMiddleware, (req, res) => {
 // GET /api/messages/:chatId
 app.get('/api/messages/:chatId/comments/:postId', authMiddleware, (req, res) => {
   const { chatId, postId } = req.params;
-  if (!db.chatMembers.some(m => m.chatId === chatId && m.userId === req.userId)) return res.status(403).json({ message: 'Нет доступа' });
+  const isMember = db.chatMembers.some(m => m.chatId === chatId && m.userId === req.userId);
+  const currentUser = db.users.find(u => u.id === req.userId);
+  const isAdmin = currentUser?.isAdmin === true;
+  
+  // Доступ только участникам чата или глобальным админам
+  if (!isMember && !isAdmin) {
+    return res.status(403).json({ message: 'Нет доступа' });
+  }
+  
   res.json(db.messages.filter(m => m.chatId === chatId && m.replyToId === postId && !m.isDeleted)
     .map(m => ({ ...m, sender: messageSender(m) })));
 });
 
 app.get('/api/messages/:chatId', authMiddleware, (req, res) => {
   const isMember = db.chatMembers.find(m => m.chatId === req.params.chatId && m.userId === req.userId);
-  if (!isMember) return res.status(403).json({ message: 'Нет доступа' });
+  const currentUser = db.users.find(u => u.id === req.userId);
+  const isAdmin = currentUser?.isAdmin === true;
+  
+  // Доступ только участникам чата или глобальным админам
+  if (!isMember && !isAdmin) {
+    return res.status(403).json({ message: 'Нет доступа' });
+  }
 
   // SEC/PERF: limit ограничен [1..500] — иначе `?limit=999999` (или нечисловой
   // ввод, превращающий slice в «всё сразу») отдавал бы всю историю одним запросом.
@@ -4837,6 +5273,15 @@ app.delete('/api/messages/:id', authMiddleware, (req, res) => {
 app.post('/api/messages/:id/read', authMiddleware, (req, res) => {
   const msg = db.messages.find(m => m.id === req.params.id);
   if (!msg) return res.status(404).json({ message: 'Не найдено' });
+  
+  // SEC: проверяем, что пользователь является участником чата (защита от IDOR)
+  const isMember = db.chatMembers.find(m => m.chatId === msg.chatId && m.userId === req.userId);
+  const currentUser = db.users.find(u => u.id === req.userId);
+  const isAdmin = currentUser?.isAdmin === true;
+  if (!isMember && !isAdmin) {
+    return res.status(403).json({ message: 'Нет доступа к этому чату' });
+  }
+  
   const cutoff = new Date(msg.createdAt).getTime();
   let changed = false;
   for (const m of db.messages) {
@@ -4963,6 +5408,9 @@ app.get('/api/music/my', authMiddleware, (req, res) => {
 app.get('/api/music/:id', authMiddleware, (req, res) => {
   const track = db.tracks.find(t => t.id === req.params.id);
   if (!track) return res.status(404).json({ message: 'Трек не найден' });
+  if (track.uploadedById !== req.userId && !track.isPublic) {
+    return res.status(403).json({ message: 'Нет доступа к треку' });
+  }
   const uploadedBy = db.users.find(u => u.id === track.uploadedById) || null;
   res.json({ ...track, uploadedBy });
 });
@@ -4996,6 +5444,9 @@ app.post('/api/music/upload', authMiddleware, uploadMusic.single('file'), (req, 
 app.post('/api/music/:id/play', authMiddleware, (req, res) => {
   const track = db.tracks.find(t => t.id === req.params.id);
   if (!track) return res.status(404).json({ message: 'Трек не найден' });
+  if (track.uploadedById !== req.userId && !track.isPublic) {
+    return res.status(403).json({ message: 'Нет доступа' });
+  }
   track.playsCount = (track.playsCount || 0) + 1;
   saveDb();
   res.json({ success: true });
@@ -5586,30 +6037,34 @@ app.post('/api/voice/transcribe/:attachmentId', authMiddleware,
 
 // ─── PROFILE COMMENTS (Steam-style стена) ────────────────────────────────────
 // Хранятся на сервере, чтобы владелец профиля видел записи от других.
-// Модель: { id, targetUserId, authorId, text, createdAt }. Автор+текст —
-// подтягиваются на клиенте по authorId (актуальный ник/аватар).
+// Модель: { id, targetUserId, authorId, text, createdAt, likes, dislikes }.
+// likes/dislikes — списки userId; клиенту уходят только счётчики и свой голос.
+const profileComments = require('./profile-comments');
 if (!Array.isArray(db.profileComments)) db.profileComments = [];
+
+function profileCommentPayload(record, viewerId) {
+  const author = db.users.find(u => u.id === record.authorId);
+  return {
+    id: record.id,
+    targetUserId: record.targetUserId,
+    authorId: record.authorId,
+    authorName: author
+      ? ([author.firstName, author.lastName].filter(Boolean).join(' ') || author.username)
+      : 'Пользователь',
+    authorAvatar: author?.avatarUrl || null,
+    text: record.text,
+    ts: new Date(record.createdAt).getTime(),
+    ...profileComments.publicVotes(record, viewerId),
+  };
+}
 
 app.get('/api/users/:id/comments', authMiddleware, (req, res) => {
   const targetUserId = req.params.id;
-  const items = (db.profileComments || [])
-    .filter(c => c.targetUserId === targetUserId)
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    .slice(0, 200)
-    .map(c => {
-      const author = db.users.find(u => u.id === c.authorId);
-      return {
-        id: c.id,
-        targetUserId: c.targetUserId,
-        authorId: c.authorId,
-        authorName: author
-          ? ([author.firstName, author.lastName].filter(Boolean).join(' ') || author.username)
-          : 'Пользователь',
-        authorAvatar: author?.avatarUrl || null,
-        text: c.text,
-        ts: new Date(c.createdAt).getTime(),
-      };
-    });
+  const sort = ['new', 'old', 'likes'].includes(req.query.sort) ? req.query.sort : 'new';
+  const items = profileComments.sortComments(
+    (db.profileComments || []).filter(c => c.targetUserId === targetUserId),
+    sort,
+  ).slice(0, 200).map(c => profileCommentPayload(c, req.userId));
   res.json(items);
 });
 
@@ -5625,23 +6080,25 @@ app.post('/api/users/:id/comments', authMiddleware, (req, res) => {
     authorId: req.userId,
     text,
     createdAt: new Date().toISOString(),
+    likes: [],
+    dislikes: [],
   };
   db.profileComments.push(record);
   saveDb();
-  const author = db.users.find(u => u.id === req.userId);
-  const payload = {
-    id: record.id,
-    targetUserId,
-    authorId: record.authorId,
-    authorName: author
-      ? ([author.firstName, author.lastName].filter(Boolean).join(' ') || author.username)
-      : 'Пользователь',
-    authorAvatar: author?.avatarUrl || null,
-    text,
-    ts: new Date(record.createdAt).getTime(),
-  };
+  const payload = profileCommentPayload(record, req.userId);
   try { io.emit('profileComment:new', payload); } catch {}
   res.json(payload);
+});
+
+app.post('/api/users/:id/comments/:commentId/vote', authMiddleware, (req, res) => {
+  const { id: targetUserId, commentId } = req.params;
+  const record = (db.profileComments || []).find(c => c.id === commentId && c.targetUserId === targetUserId);
+  if (!record) return res.status(404).json({ message: 'Не найден' });
+  profileComments.applyVote(record, req.userId, req.body?.value);
+  saveDb();
+  const votes = profileComments.publicVotes(record, req.userId);
+  try { io.emit('profileComment:voted', { id: commentId, targetUserId, ...votes, voterId: req.userId }); } catch {}
+  res.json(votes);
 });
 
 app.delete('/api/users/:id/comments/:commentId', authMiddleware, (req, res) => {
@@ -5674,7 +6131,11 @@ app.get('/api/favorites', authMiddleware, (req, res) => {
         .filter(m => m.chatId === chatId)
         .map(m => ({ ...m, user: db.users.find(u => u.id === m.userId) || null }));
       const lastMsg = lastMessageOf(chatId, false);
-      return { ...chat, members, lastMessage: lastMsg, unreadCount: 0 };
+      // Считаем реальные непрочитанные сообщения (где пользователь не в readBy и не автор)
+      const unreadCount = db.messages.reduce((acc, msg) => acc + (
+        msg.chatId === chatId && !msg.readBy?.includes(req.userId) && msg.senderId !== req.userId ? 1 : 0
+      ), 0);
+      return { ...chat, members, lastMessage: lastMsg, unreadCount };
     })
     .filter(Boolean);
   res.json(chats);
@@ -5709,6 +6170,25 @@ const io = new IOServer(server, {
 });
 
 const userSockets = new Map(); // userId -> Set<socketId>
+// Грейс-период перед пометкой оффлайн (чтобы не мигать при кратковременном разрыве связи)
+const OFFLINE_GRACE_MS = 30000;
+const offlineTimers = new Map(); // userId -> NodeJS.Timeout
+function cancelOfflineTimer(userId) {
+  const t = offlineTimers.get(userId);
+  if (t) { clearTimeout(t); offlineTimers.delete(userId); }
+}
+function scheduleOffline(userId) {
+  cancelOfflineTimer(userId);
+  const t = setTimeout(() => {
+    offlineTimers.delete(userId);
+    const sockets = userSockets.get(userId);
+    if (sockets && sockets.size > 0) return; // успели переподключиться
+    const u = db.users.find(u => u.id === userId);
+    if (u) { u.isOnline = false; u.lastSeen = new Date().toISOString(); saveDb(); }
+    io.emit('user:offline', { userId, lastSeen: new Date().toISOString() });
+  }, OFFLINE_GRACE_MS);
+  offlineTimers.set(userId, t);
+}
 // Морской бой (/warship): сессии-карточки в чате с accept/decline/finish.
 // Регистрируем ПОСЛЕ создания io — модуль рассылает message:edited.
 if (typeof require === 'function') {
@@ -5728,6 +6208,49 @@ if (typeof require === 'function') {
   botsModule = require('./bots').registerBots({
     app, getDb: () => db, auth: authMiddleware, saveDb, io, userSockets,
     isPrivateHost, makeRateLimit, resolveSticker: stickersModule.resolveSticker,
+    creationBlocked: (userId) => moderation.creationBanned(db, userId),
+    isAdminUserId: (userId) => isAdminUsername(db.users.find(u => u.id === userId)?.username),
+    isAdminRequest: (req) => adminRequest(req),
+    // Начисление ВП автору (например, награда за отзыв/идею/баг). Возвращает { ok, balance }.
+    grantVp: (userId, amount) => {
+      const user = db.users.find(u => u.id === userId);
+      if (!user || !Number.isSafeInteger(amount) || amount <= 0) return { ok: false, balance: 0 };
+      ensureWallet(user);
+      const previous = user.walletBalance;
+      if (!Number.isSafeInteger(previous + amount)) return { ok: false, balance: previous };
+      user.walletBalance = previous + amount;
+      try { saveDb(); } catch { user.walletBalance = previous; return { ok: false, balance: previous }; }
+      pushWalletEmit(user);
+      return { ok: true, balance: user.walletBalance };
+    },
+  });
+  // Прямой обмен предметами и ВП (аккаунт старше месяца + второе устройство по QR).
+  require('./trades').registerTrades({
+    app, getDb: () => db, auth: authMiddleware, saveDb, ensureWallet,
+    maxVp: MARKET_MAX_PRICE_VP,
+    emitToUser: (userId, event, data) => {
+      for (const sid of userSockets.get(userId) || []) io.to(sid).emit(event, data);
+    },
+    afterInventoryChange: (user) => { pushWalletEmit(user); emitPetsUpdated(user); publishEquipment(user); },
+    isBlocked: (blockerId, blockedId) => blocks.isBlockedBy(db, blockerId, blockedId),
+    items: {
+      isTradable: isTradableItemId,
+      isPet: isPetId,
+      normalize: (id) => (isPetId(id) ? normalizePetId(id) : id),
+      owns: userOwnsItem,
+      locked: lockedItemIdsForSeller,
+      grant: grantItemToUser,
+      // Как при выставлении на площадку: отданный скин снимается со слотов.
+      take: (user, itemId) => {
+        removeItemFromUser(user, itemId);
+        if (isPetId(itemId)) return;
+        for (const slot of ['activeRing', 'activeSelfCard', 'activeBubble']) {
+          if (user[slot] === itemId) user[slot] = '';
+          const shop = db.userStores?.[user.id]?.shop?.data;
+          if (shop?.[slot] === itemId) shop[slot] = '';
+        }
+      },
+    },
   });
 }
 const socketIpCounts = new Map();
@@ -5885,6 +6408,12 @@ io.on('connection', (socket) => {
       wsEventHits.set(userId, rec);
     }
     if (++rec.count > 600) { socket.disconnect(true); return; }
+    // Режим «только чтение»: событие отбрасывается, клиент получает ошибку в ack.
+    if (moderation.READ_ONLY_SOCKET_EVENTS.has(_packet[0]) && moderation.readOnly(db, userId)) {
+      const ack = _packet[_packet.length - 1];
+      if (typeof ack === 'function') ack({ error: 'Аккаунт в режиме только чтения', code: 'READ_ONLY' });
+      return;
+    }
     next();
   });
   socketIpCounts.set(socket.ip, (socketIpCounts.get(socket.ip) || 0) + 1);
@@ -5896,7 +6425,7 @@ io.on('connection', (socket) => {
 
   // Mark online
   const user = db.users.find(u => u.id === userId);
-  if (user) { user.isOnline = true; saveDb(); }
+  if (user) { user.isOnline = true; user.lastSeen = new Date().toISOString(); markActiveDay(user); cancelOfflineTimer(userId); saveDb(); }
   io.emit('user:online', { userId });
 
   // Join all user's chats automatically
@@ -5917,7 +6446,23 @@ io.on('connection', (socket) => {
 
   socket.on('chat:join', (chatId) => {
     const isMember = db.chatMembers.find(m => m.chatId === chatId && m.userId === userId);
-    if (isMember) socket.join(`chat:${chatId}`);
+    if (!isMember) return;
+    socket.join(`chat:${chatId}`);
+    // Автоматически помечаем все непрочитанные сообщения в чате как прочитанные
+    // когда пользователь открывает чат (включая избранное)
+    let marked = 0;
+    for (const msg of db.messages) {
+      if (msg.chatId !== chatId) continue;
+      if (!msg.readBy) msg.readBy = [];
+      if (!msg.readBy.includes(userId) && msg.senderId !== userId) {
+        msg.readBy.push(userId);
+        marked++;
+      }
+    }
+    if (marked > 0) {
+      saveDb();
+      io.to(`chat:${chatId}`).emit('messages:read_all', { chatId, userId, count: marked });
+    }
   });
 
   socket.on('chat:leave', (chatId) => {
@@ -6307,9 +6852,8 @@ io.on('connection', (socket) => {
       sockets.delete(socket.id);
       if (sockets.size === 0) {
         userSockets.delete(userId);
-        const u = db.users.find(u => u.id === userId);
-        if (u) { u.isOnline = false; u.lastSeen = new Date().toISOString(); saveDb(); }
-        io.emit('user:offline', { userId, lastSeen: new Date().toISOString() });
+        // Не ставим оффлайн сразу — грейс-период 30 сек на случай кратковременного разрыва
+        scheduleOffline(userId);
       }
     }
     console.log(`❌ Отключился: ${userId}`);
@@ -6478,6 +7022,26 @@ if (fs.existsSync(CLIENT_DIST)) {
     res.sendFile(path.join(CLIENT_DIST, 'index.html'));
   });
 }
+
+// ─── Глобальный обработчик ошибок Express ─────────────────────────────────────
+// Должен быть ПОСЛЕ всех роутов и middleware. Никогда не отдаём стек-трейс
+// клиенту — только общее сообщение и код ошибки. В разработке логируем подробно.
+app.use((err, req, res, next) => {
+  const isDev = process.env.NODE_ENV === 'development';
+  if (err) {
+    if (isDev) console.error('[UNHANDLED ERROR]', err);
+    else console.error('[UNHANDLED ERROR]', err?.message || err);
+  }
+  // Не перезаписываем ответ, если он уже начат.
+  if (res.headersSent) return next(err);
+  const status = err?.status || err?.statusCode || 500;
+  const message = err?.message || 'Внутренняя ошибка сервера';
+  // Не раскрываем внутренние детали в продакшене.
+  const body = isDev
+    ? { message, stack: err?.stack, code: err?.code }
+    : { message: status === 500 ? 'Внутренняя ошибка сервера' : message, code: err?.code };
+  res.status(status).json(body);
+});
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;

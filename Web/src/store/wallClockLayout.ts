@@ -91,8 +91,8 @@ export function clockAvoidShift(
 
   // Сколько стоит уйти вправо и влево. Оба числа положительные: это длина
   // пути, знак задаётся в конце.
-  const toRight = rect.right + GAP - box.left;
-  const toLeft = box.right - (rect.left - GAP);
+  const toRight = Math.max(0, rect.right + GAP - box.left);
+  const toLeft = Math.max(0, box.right - (rect.left - GAP));
   const fitsRight = box.right + toRight <= area.right + 1;
   const fitsLeft = box.left - toLeft >= area.left - 1;
 

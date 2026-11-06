@@ -7,11 +7,12 @@
  * - Fallback: если сеть недоступна и есть кэш — отдаём его,
  *   данные подгружаются из IndexedDB-архива (offlineStore / localArchive).
  */
-// v12: оболочка приложения (index.html, /assets/*) перешла на NetworkFirst.
-// Иначе обычное обновление страницы отдавало закэшированный index.html и старые
-// JS-бандлы, и исправления не доходили до пользователя до переустановки SW.
-const CACHE = 'vera-v12';
-const RUNTIME_CACHE = 'vera-runtime-v12';
+// v13: подняли версию, чтобы принудительно сбросить старые кэши (vera-v12 и
+// ранее) на устройствах пользователей — иначе старый SW продолжал отдавать
+// закэшированный index.html и JS-бандлы, и свежие правки UI не доходили.
+// Оболочка приложения (index.html, /assets/*) — NetworkFirst (см. ниже).
+const CACHE = 'vera-v13';
+const RUNTIME_CACHE = 'vera-runtime-v13';
 const APP_SHELL = ['./', './index.html', './vera.svg', './vera-icon.png', './favicon.ico', './icons/icon-192.png', './icons/icon-512.png', './manifest.webmanifest'];
 
 // Runtime-кэшируемые API-префиксы (Stale-While-Revalidate).

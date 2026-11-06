@@ -146,7 +146,8 @@ export default function BotCommandsMenu({ username, text, theme, disabled, onPic
             onKeyDown={(e) => { if (e.key === 'Escape') close(); }}
             sx={{
               position: 'absolute', left: { xs: 6, md: 12 }, right: { xs: 6, md: 12 }, bottom: 'calc(100% + 6px)',
-              maxHeight: 280, overflowY: 'auto', zIndex: 5,
+              // contain: прокрутка списка не передаётся ленте чата у края списка.
+              maxHeight: 280, overflowY: 'auto', overscrollBehavior: 'contain', zIndex: 5,
               bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`, borderRadius: 3,
               boxShadow: '0 12px 36px rgba(0,0,0,0.45)', py: 0.5,
             }}

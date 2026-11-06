@@ -15,6 +15,26 @@ import { isAppOffline } from '../services/offlineMode';
 import { OLDER_PAGE_SIZE, oldestCursor } from '../utils/messagePagination';
 import { splitBoardPrefix } from '../utils/deskBoard';
 
+/** Список чатов, из которых пользователь вышел. Хранится в localStorage,
+ * чтобы при перезагрузке или перезапуске сервера эти чаты не появлялись снова. */
+const LEFT_CHATS_KEY = 'vera_left_chats';
+function getLeftChats(): Set<string> {
+  try {
+    const raw = localStorage.getItem(LEFT_CHATS_KEY);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch { return new Set(); }
+}
+function addLeftChat(chatId: string): void {
+  const left = getLeftChats();
+  left.add(chatId);
+  try { localStorage.setItem(LEFT_CHATS_KEY, JSON.stringify([...left])); } catch {}
+}
+function removeLeftChat(chatId: string): void {
+  const left = getLeftChats();
+  left.delete(chatId);
+  try { localStorage.setItem(LEFT_CHATS_KEY, JSON.stringify([...left])); } catch {}
+}
+
 /** Кэш размера окна рендера по чатам: при возврате в уже открытый чат не
  * начинаем с RENDER_CHUNK, а продолжаем с последнего значения. */
 const renderLimitByChat = new Map<string, number>();
@@ -44,7 +64,7 @@ function peerChatToChat(c: PeerChat): Chat {
       id: pk, chatId: c.id, userId: pk,
       role: (ownerId && pk === ownerId) ? 'owner' : (admins.includes(pk) ? 'admin' : 'member'),
       isMuted: false, joinedAt: new Date().toISOString(),
-      user: { id: pk, username: pk.slice(0, 8), firstName: pk.slice(0, 8), isOnline: false, createdAt: '', lastName: '' } as any,
+      user: { id: pk, username: pk.slice(0, 8), isOnline: false, createdAt: '' } as any,
     })),
     unreadCount: 0,
     createdAt: new Date(c.lastTs || Date.now()).toISOString(),
@@ -67,13 +87,11 @@ function peerMsgToMsg(m: PeerMessage): Message {
     ? {
         id: selfUser.id,
         username: selfUser.username,
-        firstName: selfUser.firstName,
-        lastName: selfUser.lastName,
         avatarUrl: selfUser.avatarUrl,
         isOnline: true,
         createdAt: selfUser.createdAt || '',
       }
-    : { id: senderId, username: m.fromName, firstName: m.fromName, isOnline: true, createdAt: '', lastName: '' };
+    : { id: senderId, username: m.fromName, isOnline: true, createdAt: '' };
   return {
     id: m.id,
     chatId: m.chatId,
@@ -415,7 +433,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (isAppOffline()) return;
     try {
       const res = await chatsApi.getAll();
-      const normalized = (res.data as any[]).filter((chat: any) => chat && chat.id).map((chat: any) => {
+      // Фильтруем чаты, из которых пользователь вышел (left), чтобы они не
+      // возвращались при перезагрузке или перезапуске сервера.
+      const leftChats = getLeftChats();
+      const normalized = (res.data as any[])
+        .filter((chat: any) => chat && chat.id && !leftChats.has(chat.id))
+        .map((chat: any) => {
         const rawType = chat.type || 'private';
         const type = rawType === 'direct' ? 'private' : rawType;
         const members: import('../types').ChatMember[] = (chat.members || []).map((m: any) => {
@@ -716,12 +739,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const response = await aiApi.chat(content);
         const answerText = String(response.data?.answer || '').trim();
         if (!answerText) throw new Error('Vera AI вернула пустой ответ');
-        const answer: Message = { id: `vera-${Date.now()}`, chatId, senderId: VERA_AI_ID, sender: { id: VERA_AI_ID, username: 'vera-ai', firstName: 'Vera AI', isOnline: true, createdAt: new Date().toISOString() } as any, type: 'text', content: answerText, isEdited: false, isPinned: false, isDeleted: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+        const answer: Message = { id: `vera-${Date.now()}`, chatId, senderId: VERA_AI_ID, sender: { id: VERA_AI_ID, username: 'vera-ai', isOnline: true, createdAt: new Date().toISOString() } as any, type: 'text', content: answerText, isEdited: false, isPinned: false, isDeleted: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
         set(state => ({ messages: { ...state.messages, [chatId]: [...(state.messages[chatId] || []), answer] } }));
         saveArchivedMessages([answer]).catch(() => {});
       } catch (error: any) {
         const errorText = error?.response?.data?.message || error?.message || 'Не удалось получить ответ от Vera AI';
-        const failed: Message = { id: `vera-error-${Date.now()}`, chatId, senderId: VERA_AI_ID, sender: { id: VERA_AI_ID, username: 'vera-ai', firstName: 'Vera AI', isOnline: false, createdAt: new Date().toISOString() } as any, type: 'text', content: `Ошибка: ${errorText}`, isEdited: false, isPinned: false, isDeleted: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+        const failed: Message = { id: `vera-error-${Date.now()}`, chatId, senderId: VERA_AI_ID, sender: { id: VERA_AI_ID, username: 'vera-ai', isOnline: false, createdAt: new Date().toISOString() } as any, type: 'text', content: `Ошибка: ${errorText}`, isEdited: false, isPinned: false, isDeleted: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
         set(state => ({ messages: { ...state.messages, [chatId]: [...(state.messages[chatId] || []), failed] } }));
         saveArchivedMessages([failed]).catch(() => {});
       }
@@ -819,7 +842,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const myPk = info.nostrPk || info.deviceId;
       const target = chat?.type === 'group' ? chatId : chat?.members.find(m => m.userId !== myPk && m.userId !== info.deviceId)?.userId;
       if (!target) throw new Error('Не найден получатель пересылки');
-      const name = source.forwardFromName || source.sender?.firstName || source.sender?.username || 'Пользователь';
+      const name = source.forwardFromName || source.sender?.username || 'Пользователь';
       const result = await peer.sendMessage(target, `Переслано от ${name}:\n${source.content || ''}`);
       if (!result.ok) throw new Error(result.note || 'Не удалось переслать сообщение');
       await get().loadMessages(chatId);
@@ -1123,6 +1146,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   leaveChat: async (chatId) => {
     try {
       await chatsApi.leaveChat(chatId);
+      // Добавляем chatId в список покинутых чатов, чтобы он не возвращался
+      // при перезагрузке или перезапуске сервера.
+      addLeftChat(chatId);
     } catch {}
     await get().forgetChat(chatId);
   },

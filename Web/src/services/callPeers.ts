@@ -48,15 +48,20 @@ async function ensureLocalStream(kind: CallKind): Promise<MediaStream> {
   // Сохранённый пользователем микрофон (ПКМ по кнопке микрофона в звонке).
   const savedInput = useCallStore.getState().audioInputId;
   let s: MediaStream;
+  console.log('[callPeers] getUserMedia запрос:', { kind, savedInput, video: !!video });
   try {
     s = await navigator.mediaDevices.getUserMedia({
       audio: savedInput ? { ...baseAudio, deviceId: { exact: savedInput } } : baseAudio,
       video,
     });
-  } catch (e) {
+    console.log('[callPeers] ✅ getUserMedia OK:', s.getTracks().map(t => `${t.kind}:${t.label} (id=${t.id.slice(0,8)})`));
+  } catch (e: any) {
+    console.error('[callPeers] ❌ getUserMedia FAILED:', e.name, e.message, e);
     if (!savedInput) throw e;
     // Устройство недоступно (выключено/отключено) — берём системное по умолчанию.
+    console.log('[callPeers] Retry с дефолтным микрофоном...');
     s = await navigator.mediaDevices.getUserMedia({ audio: baseAudio, video });
+    console.log('[callPeers] ✅ getUserMedia (retry) OK:', s.getTracks().map(t => `${t.kind}:${t.label}`));
   }
   localStream = s;
   useCallStore.getState()._setLocalStream(s);
@@ -117,7 +122,12 @@ function createPeer(otherId: string): PeerConn {
   }
 
   pc.onicecandidate = (e) => {
-    if (e.candidate) sendSignal(otherId, { type: 'ice', candidate: e.candidate.toJSON() });
+    if (e.candidate) {
+      console.log(`[callPeers] ICE candidate to ${otherId}:`, e.candidate.candidate.slice(0, 60) + '...');
+      sendSignal(otherId, { type: 'ice', candidate: e.candidate.toJSON() });
+    } else {
+      console.log(`[callPeers] ICE gathering complete для ${otherId}`);
+    }
   };
 
   pc.ontrack = (e) => {

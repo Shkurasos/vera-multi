@@ -1,6 +1,7 @@
 import React, { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Button, ButtonBase, Checkbox, Collapse, Dialog, DialogContent, DialogTitle, FormControlLabel, IconButton, MenuItem, TextField, Typography } from '@mui/material';
-import { AccountBalanceWallet, Close, Inventory2, Search, Storefront } from '@mui/icons-material';
+import { AccountBalanceWallet, Close, Inventory2, Search, Storefront, SwapHoriz } from '@mui/icons-material';
+import TradesPanel from './TradesPanel';
 import { SHOP_CATALOG, MarketListing, ShopItem, selectShopItem, useShopStore } from '../store/shopStore';
 import { caseCount, casePacks, drawPack, packChance, SkinPack, useLootStore } from '../store/lootStore';
 import { CASE_CATALOG, CaseDefinition, caseDescription, findCase, isHiddenCase } from '../store/caseCatalog';
@@ -19,6 +20,7 @@ import ReactionGlyph from './ReactionGlyph';
 import { findReactionSkin, useReactionSkinStore } from '../store/reactionSkinStore';
 import { frostedPaperSx } from '../styles/frosted';
 import { UI_SURFACE_RADIUS, UI_INNER_RADIUS } from '../store/uiPrefsStore';
+import { useTradeStore, pendingIncoming } from '../store/tradeStore';
 import { readableTextOn } from '../utils/contrast';
 
 /** Доли ниже 0.01% показываем с тысячными, иначе 0.001% схлопывается в «0.00%». */
@@ -511,14 +513,17 @@ export default function Store({ onClose }: { onClose: () => void }) {
   });
   const [topupOpen, setTopupOpen] = useState(false);
   const equippedIds = useMemo(() => new Set([shop.activeRing, shop.activeSelfCard, shop.activeBubble].filter(Boolean)), [shop.activeRing, shop.activeSelfCard, shop.activeBubble]);
+  const { trades } = useTradeStore();
+  const badge = pendingIncoming(trades);
   const tabs = [
     { id: 'inventory', label: 'Инвентарь', icon: <Inventory2 sx={{ fontSize: 18 }} /> },
     { id: 'market', label: 'Площадка', icon: <Storefront sx={{ fontSize: 18 }} /> },
+    { id: 'trades', label: badge > 0 ? `Обмены (${badge})` : 'Обмены', icon: <SwapHoriz sx={{ fontSize: 18 }} /> },
   ];
   return <Dialog open fullWidth maxWidth="xl" onClose={() => !busy && onClose()} PaperProps={{ sx: { ...panelSx, width: { xs: 'calc(100vw - 12px)', sm: 'calc(100% - 64px)' }, minHeight: { xs: 'calc(100dvh - 12px)', sm: '70vh' } } }}>
     {/* Шапка: название, переключатель разделов, баланс и закрытие в одну строку. */}
     <DialogTitle component="div" sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: { xs: 1, sm: 2 }, px: { xs: 1.5, sm: 3 }, py: { xs: 1.25, sm: 1.75 }, borderBottom: `1px solid ${theme.border}`, bgcolor: theme.bgHeader }}>
-      <Typography component="h2" sx={{ fontSize: { xs: 17, sm: 19 }, fontWeight: 800, letterSpacing: 0.2, mr: { sm: 1 } }}>VERA <Box component="span" sx={{ color: theme.textSec, fontWeight: 600 }}>· {tab === 'inventory' ? 'инвентарь' : 'площадка'}</Box></Typography>
+      <Typography component="h2" sx={{ fontSize: { xs: 17, sm: 19 }, fontWeight: 800, letterSpacing: 0.2, mr: { sm: 1 } }}>VERA <Box component="span" sx={{ color: theme.textSec, fontWeight: 600 }}>· {tab === 'inventory' ? 'инвентарь' : tab === 'trades' ? 'обмены' : 'площадка'}</Box></Typography>
       <Box role="tablist" aria-label="Раздел" sx={{ order: { xs: 3, md: 0 }, width: { xs: '100%', md: 'auto' }, display: 'flex', p: 0.5, gap: 0.5, borderRadius: UI_SURFACE_RADIUS, bgcolor: theme.bgInput, border: `1px solid ${theme.border}` }}>
         {tabs.map(t => <ButtonBase key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}
           sx={{ flex: 1, gap: 0.75, px: 2, py: 0.85, borderRadius: UI_INNER_RADIUS, fontSize: 14, fontWeight: 700, color: tab === t.id ? readableTextOn(theme.accent) : theme.textSec, bgcolor: tab === t.id ? theme.accent : 'transparent', transition: 'background-color 140ms ease, color 140ms ease', '&:hover': { color: tab === t.id ? undefined : theme.text }, '&.Mui-focusVisible': { outline: `2px solid ${theme.accent}`, outlineOffset: 2 } }}>
@@ -539,7 +544,7 @@ export default function Store({ onClose }: { onClose: () => void }) {
         <Box sx={{ mt: 1.5, mb: 2, p: 2, borderRadius: UI_SURFACE_RADIUS, border: `1px solid ${theme.border}`, bgcolor: theme.bgInput, '& > .MuiBox-root': { mb: 0 } }}><WalletTopup /></Box>
       </Collapse>
       {error && <Typography role="alert" sx={{ mt: 1.5, mb: 1, px: 1.5, py: 1, borderRadius: UI_INNER_RADIUS, bgcolor: '#f4433618', border: '1px solid #f4433655', color: '#ff8a80', fontSize: 13.5 }}>{error}</Typography>}
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0,1fr)', md: tab === 'inventory' ? '260px minmax(0,1fr)' : 'minmax(0,1fr)' }, gap: { xs: 1.5, md: 2.5 }, alignItems: 'start', mt: 1.5 }}>
+      {tab === 'trades' ? <Box sx={{ mt: 1.5 }}><TradesPanel theme={theme} /></Box> : <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'minmax(0,1fr)', md: tab === 'inventory' ? '260px minmax(0,1fr)' : 'minmax(0,1fr)' }, gap: { xs: 1.5, md: 2.5 }, alignItems: 'start', mt: 1.5 }}>
       {tab === 'inventory' && <Box component="aside" aria-label="Надетые и избранные скины" sx={{ position: { md: 'sticky' }, top: { md: 0 }, p: { xs: 1.25, sm: 1.75 }, bgcolor: theme.bgHeader, border: `1px solid ${theme.border}`, borderRadius: UI_SURFACE_RADIUS, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
         <Box>
           <Typography component="h3" sx={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.2, textTransform: 'uppercase', color: theme.textSec, mb: 1 }}>Надето</Typography>
@@ -611,7 +616,7 @@ export default function Store({ onClose }: { onClose: () => void }) {
         {(query || category !== 'all' || tier !== 'all' || collection !== 'all') && <Button sx={{ mt: 1.5 }} onClick={() => { setQuery(''); setCategory('all'); setTier('all'); setCollection('all'); }}>Сбросить фильтры</Button>}
       </Box>}
       </Box>
-      </Box>
+      </Box>}
     </DialogContent>
     <Dialog open={!!selected} fullWidth maxWidth="md" onClose={() => !busy && setSelected(null)} PaperProps={{ sx: panelSx }}>
       <DialogTitle component="div" sx={{ display: 'flex', alignItems: 'center', gap: 1, borderBottom: `1px solid ${theme.border}`, py: 1.5 }}>

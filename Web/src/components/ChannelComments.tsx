@@ -27,7 +27,7 @@ export default function ChannelComments({ post }: { post: Message }) {
   const live = useChatStore(s => s.messages[post.chatId]);
   const userId = useAuthStore(s => s.user?.id);
   const member = useChatStore(s => s.chats.find(c => c.id === post.chatId)?.members.find(m => m.userId === userId));
-  const author = (m: Message) => m.sender?.firstName || m.sender?.username || 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ';
+   const author = (m: Message) => m.sender?.username || 'Пользователь';
   async function react(message: Message, emoji: string) {
     if (reactionBusy) return;
     setReactionBusy(message.id); setError('');

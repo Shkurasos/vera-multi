@@ -10,7 +10,7 @@ const THEMES: Record<string, { kind: ParticleKind; colors: string[] }> = {
   // угольки тыквы и розовые искры медузы.
   'pet-spider': { kind: 'star', colors: ['#ffffff', '#f3e9dc', '#d8cfc4'] },
   'pet-bear': { kind: 'heart', colors: ['#ff9db0', '#ffc7d3', '#ffe3ea'] },
-  'pet-snake': { kind: 'bubble', colors: ['#8fc93f', '#b8e07a', '#e2f5c8'] },
+  'pet-snake': { kind: 'spark', colors: ['#7bb84f', '#a6d46e', '#e9dcae'] },
   'pet-pumpkin': { kind: 'ember', colors: ['#ff8c2a', '#ffc24d', '#ffe8a3'] },
   'pet-jellyfish': { kind: 'spark', colors: ['#ff8fc0', '#ffb3d6', '#e8fbff'] },
   'pet-panda': { kind: 'heart', colors: ['#ffffff', '#dce5ee', '#9aa9b8'] },

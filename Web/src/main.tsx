@@ -531,30 +531,8 @@ const darkTheme = createTheme({
           borderRadius: 'inherit',
         },
 
-        // Glass: полупрозрачные поверхности с блюром. Помимо бумаги и пузырей
-        // накрываем выпадающие списки, поповеры и подсказки — иначе стиль
-        // выглядел наполовину: окна стеклянные, а меню под ними матовые.
-        'html[data-ui-glass="on"] .MuiPaper-root': {
-          backdropFilter: 'blur(16px) saturate(1.4)',
-          backgroundColor: 'rgba(255,255,255,0.06) !important',
-          border: '1px solid rgba(255,255,255,0.12)',
-        },
-        'html[data-ui-glass="on"] [data-vera-bubble]': {
-          backdropFilter: 'blur(12px) saturate(1.3)',
-        },
-        'html[data-ui-glass="on"] .MuiDialog-paper': {
-          backgroundColor: 'rgba(15,18,30,0.72) !important',
-        },
-        'html[data-ui-glass="on"] .MuiMenu-paper, html[data-ui-glass="on"] .MuiPopover-paper': {
-          backgroundColor: 'rgba(15,18,30,0.72) !important',
-        },
-        'html[data-ui-glass="on"] .MuiTooltip-tooltip': {
-          backgroundColor: 'rgba(15,18,30,0.82) !important',
-          backdropFilter: 'blur(12px)',
-        },
-        'html[data-ui-glass="on"] .MuiChip-root': {
-          backgroundColor: 'rgba(255,255,255,0.10) !important',
-        },
+        // Режим «Glass» удалён: прозрачные поверхности с backdrop-filter давали
+        // мерцающие швы по краям (линии у аватарки и в шапке) и ломали темы.
 
         // Плоский: убираем все тени, оставляя заливку и границы. Плоские
         // поверхности читаются за счёт контраста, а не объёма.

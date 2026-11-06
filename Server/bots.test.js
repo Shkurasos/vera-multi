@@ -326,3 +326,40 @@ test('/hub: /newapp создаёт мини-приложение, /setmenubutton
   assert.equal((await call('POST /api/bots/app-init', 'bob', { body: { username: 'echo_bot', app: 'shop' } })).code, 404);
   assert.match((await say('/myapps')).content, /пока нет/);
 });
+
+test('запрет администрации: бота не создать ни через API, ни через /hub', async () => {
+  const { db, call, directChat, userSays } = setup({ creationBlocked: (id) => id === 'alice' });
+  const res = await call('POST /api/bots/create', 'alice', { body: { name: 'Эхо', username: 'echo_bot' } });
+  assert.equal(res.code, 403);
+  assert.match(res.data.message, /запретила/);
+  directChat('hubchat', 'alice', HUB_ID);
+  userSays('hubchat', 'alice', '/newbot'); await tick();
+  assert.match(db.messages.filter((m) => m.senderId === HUB_ID).at(-1).text, /запретила/);
+  userSays('hubchat', 'alice', '/newapp'); await tick();
+  assert.match(db.messages.filter((m) => m.senderId === HUB_ID).at(-1).text, /запретила/);
+  assert.equal(db.bots.filter((b) => b.userId).length, 0);
+  // Другим пользователям запрет не мешает.
+  assert.equal((await call('POST /api/bots/create', 'bob', { body: { name: 'Эхо', username: 'echo_bot' } })).code, 201);
+});
+
+test('/hub: /feedback сохраняет отзыв для админ-панели и шлёт копию админу', async () => {
+  const { db, call, directChat, userSays } = setup({
+    isAdminUserId: (id) => id === 'bob',
+    isAdminRequest: (req) => req.userId === 'bob',
+  });
+  directChat('hubchat', 'alice', HUB_ID);
+  userSays('hubchat', 'alice', '/feedback'); await tick();
+  userSays('hubchat', 'alice', 'Кнопка не работает\nвторая строка'); await tick();
+  assert.equal(db.feedback.length, 1);
+  assert.equal(db.feedback[0].text, 'Кнопка не работает\nвторая строка');
+  assert.equal(db.feedback[0].status, 'new');
+  assert.ok(db.messages.some((m) => m.senderId === HUB_ID && /Отзыв от @alice:\n\nКнопка/.test(m.text)), 'копия админу в личку с Hub');
+
+  assert.equal((await call('GET /api/admin/feedback', 'alice')).code, 403, 'не админу список закрыт');
+  const list = await call('GET /api/admin/feedback', 'bob');
+  assert.equal(list.data.length, 1);
+  const id = list.data[0].id;
+  assert.equal((await call('POST /api/admin/feedback/:id/read', 'bob', { params: { id }, body: { read: true } })).data.status, 'read');
+  assert.equal((await call('DELETE /api/admin/feedback/:id', 'bob', { params: { id } })).code, 200);
+  assert.equal(db.feedback.length, 0);
+});

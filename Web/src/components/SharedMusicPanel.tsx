@@ -32,7 +32,7 @@ function formatDuration(s: number): string {
 function authorName(track: Track): string {
   const u = track.uploadedBy;
   if (!u) return '';
-  return [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || '';
+  return u.username || '';
 }
 
 export default function SharedMusicPanel() {

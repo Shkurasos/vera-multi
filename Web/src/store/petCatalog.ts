@@ -20,7 +20,7 @@ export const PET_CATALOG: PetDefinition[] = [
   // тыква-джек и медуза — выпадают только там.
   { id: 'pet-spider', name: 'Пушистый паук', rarity: 'common', color: '#d9843a', caseIds: ['case-pets-bestiary'] },
   { id: 'pet-bear', name: 'Мягкий медвежонок', rarity: 'uncommon', color: '#d9a078', caseIds: ['case-pets-bestiary'] },
-  { id: 'pet-snake', name: 'Зелёная змея', rarity: 'rare', color: '#7cae3a', caseIds: ['case-pets-bestiary'] },
+  { id: 'pet-snake', name: 'Зелёная змейка', rarity: 'rare', color: '#5f9e3f', caseIds: ['case-pets-bestiary'] },
   { id: 'pet-pumpkin', name: 'Светящийся Джек', rarity: 'epic', color: '#ff8c2a', caseIds: ['case-pets-bestiary'] },
   { id: 'pet-jellyfish', name: 'Сияющая медуза', rarity: 'legendary', color: '#ff8fc0', caseIds: ['case-pets-bestiary'] },
   // Эксклюзивные питомцы кейса «Мифические питомцы» (2000 ВП).

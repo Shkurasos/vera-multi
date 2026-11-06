@@ -9,8 +9,10 @@ import { appealsApi } from '../services/api';
  * (/admin?appeal=…). Повторно отправить, пока предыдущая на рассмотрении,
  * нельзя — об этом говорит и сервер, и статус под кнопкой.
  */
-export default function AppealDialog({ open, onClose, onSent }: {
+export default function AppealDialog({ open, onClose, onSent, reportId = null }: {
   open: boolean; onClose: () => void; onSent?: () => void;
+  /** Обжалуемое решение администрации (из уведомления). */
+  reportId?: string | null;
 }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -23,13 +25,13 @@ export default function AppealDialog({ open, onClose, onSent }: {
     setError('');
     setSent(false);
     // Уже поданная апелляция: не предлагаем отправить вторую.
-    appealsApi.mine().then(({ data }) => setExisting(data)).catch(() => setExisting(null));
-  }, [open]);
+    appealsApi.mine(reportId).then(({ data }) => setExisting(data)).catch(() => setExisting(null));
+  }, [open, reportId]);
 
   const send = async () => {
     setBusy(true); setError('');
     try {
-      await appealsApi.send(text.trim());
+      await appealsApi.send(text.trim(), reportId);
       setSent(true);
       setExisting({ status: 'open' });
       onSent?.();
@@ -52,7 +54,7 @@ export default function AppealDialog({ open, onClose, onSent }: {
         <>
           <Typography sx={{ mb: 2 }}>
             Напишите, что считаете несправедливым. Апелляцию увидит администратор
-            и сможет снять блокировку.
+            и сможет отменить решение.
           </Typography>
           {error && <Alert severity="error">{error}</Alert>}
           <TextField
@@ -75,4 +77,16 @@ export default function AppealDialog({ open, onClose, onSent }: {
       )}
     </DialogActions>
   </Dialog>;
+}
+
+/** Кнопка «Обжаловать» под уведомлением о решении администрации. */
+export function AppealButton({ reportId }: { reportId: string }) {
+  const [open, setOpen] = useState(false);
+  return <>
+    <Button size="small" variant="outlined" sx={{ mt: 0.75, textTransform: 'none' }}
+      onClick={(e) => { e.stopPropagation(); setOpen(true); }}>
+      Обжаловать
+    </Button>
+    <AppealDialog open={open} onClose={() => setOpen(false)} reportId={reportId} />
+  </>;
 }

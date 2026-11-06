@@ -44,7 +44,7 @@ export default function SendPlaylistDialog({ open, playlist, onClose }: Props) {
       data: JSON.stringify({
         playlistId: playlist.id,
         name: playlist.name,
-        ownerName: user?.firstName || user?.username || undefined,
+        ownerName: user?.username || undefined,
         tracks,
       }),
     };

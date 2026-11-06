@@ -1,8 +1,37 @@
 {
   "items": [],
   "hidden": [
-    "base-photo-o"
+    "base-photo-o",
+    "base-deep-night",
+    "base-indigo-gold",
+    "base-cherry-night",
+    "base-lavender-dream",
+    "base-ocean-depth",
+    "base-sand-shore",
+    "base-smoky-rose",
+    "base-jade-dark",
+    "base-emerald-night",
+    "base-cosmic-velvet",
+    "base-coral-branch",
+    "base-paper-cream",
+    "base-mist-silver",
+    "base-neon-magenta",
+    "base-chalk-crimson",
+    "base-abyss-ice",
+    "base-gold-vault",
+    "base-vk-blue",
+    "base-x-ink",
+    "base-fb-light",
+    "base-discord-blurple",
+    "base-tg-night",
+    "gradient-purple",
+    "gradient-blue",
+    "gradient-pink",
+    "mountains",
+    "ocean",
+    "forest",
+    "night-sky"
   ],
   "overrides": {},
-  "updatedAt": "2026-10-28T17:48:54.239Z"
+  "updatedAt": "2026-10-31T10:12:05.255Z"
 }

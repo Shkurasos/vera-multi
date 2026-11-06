@@ -6,7 +6,7 @@ function signature(body, secret) {
   return crypto.createHmac('sha256', secret).update(text).digest('hex');
 }
 
-function registerYoomoney(app, { getDb, saveDb, authMiddleware, ensureWallet, pushWalletEmit }) {
+function registerYoomoney(app, { getDb, saveDb, authMiddleware, ensureWallet, pushWalletEmit, onTopupPaid }) {
   const receiver = process.env.YOOMONEY_RECEIVER || '';
   const secret = process.env.YOOMONEY_NOTIFICATION_SECRET || '';
   app.post('/api/wallet/yoomoney/topup', authMiddleware, (req, res) => {
@@ -47,6 +47,7 @@ function registerYoomoney(app, { getDb, saveDb, authMiddleware, ensureWallet, pu
       return res.sendStatus(500);
     }
     pushWalletEmit(user);
+    try { onTopupPaid?.(user, order.amountVs); } catch { /* кэшбэк не критичен для оплаты */ }
     res.sendStatus(200);
   });
 }

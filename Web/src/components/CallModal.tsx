@@ -10,7 +10,7 @@ interface IncomingCallData {
 }
 
 interface CallModalProps {
-  targetUser?: { id: string; firstName?: string; lastName?: string; username?: string; avatarUrl?: string } | null;
+  targetUser?: { id: string; username?: string; avatarUrl?: string } | null;
   callType?: 'audio' | 'video';
   incomingOffer?: RTCSessionDescriptionInit;
   onClose: () => void;
@@ -96,8 +96,18 @@ export function CallModal({ targetUser, callType = 'audio', onClose }: CallModal
   async function startCall(s: ReturnType<typeof getSocket>) {
     if (!s || !targetUser) return;
     const constraints = callType === 'video' ? { audio: true, video: true } : { audio: true, video: false };
-    const stream = await navigator.mediaDevices.getUserMedia(constraints).catch(() => null);
-    if (!stream) { setStatus('ended'); setTimeout(onClose, 1500); return; }
+    console.log('[CallModal] getUserMedia запрос:', constraints);
+    const stream = await navigator.mediaDevices.getUserMedia(constraints).catch((e) => {
+      console.error('[CallModal] ❌ getUserMedia FAILED:', e.name, e.message, e);
+      return null;
+    });
+    if (!stream) {
+      console.error('[CallModal] Стрим не получен, завершаем звонок');
+      setStatus('ended');
+      setTimeout(onClose, 1500);
+      return;
+    }
+    console.log('[CallModal] ✅ getUserMedia OK:', stream.getTracks().map(t => `${t.kind}:${t.label}`));
 
     localStreamRef.current = stream;
     if (localVideoRef.current) localVideoRef.current.srcObject = stream;
@@ -112,7 +122,12 @@ export function CallModal({ targetUser, callType = 'audio', onClose }: CallModal
       if (remoteVideoRef.current) remoteVideoRef.current.srcObject = e.streams[0] || new MediaStream([e.track]);
     };
     pc.onicecandidate = (e) => {
-      if (e.candidate) s.emit('call:ice-candidate', { targetUserId: targetUser.id, candidate: e.candidate.toJSON() });
+      if (e.candidate) {
+        console.log('[CallModal] ICE candidate:', e.candidate.candidate.slice(0, 60) + '...');
+        s.emit('call:ice-candidate', { targetUserId: targetUser.id, candidate: e.candidate.toJSON() });
+      } else {
+        console.log('[CallModal] ICE gathering завершён');
+      }
     };
 
     const offer = await pc.createOffer();
@@ -157,7 +172,7 @@ export function CallModal({ targetUser, callType = 'audio', onClose }: CallModal
   }
 
   const name = targetUser
-    ? [targetUser.firstName, targetUser.lastName].filter(Boolean).join(' ') || targetUser.username || 'Пользователь'
+    ? targetUser.username || 'Пользователь'
     : '';
   const fmtDuration = `${String(Math.floor(duration / 60)).padStart(2, '0')}:${String(duration % 60).padStart(2, '0')}`;
 

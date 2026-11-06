@@ -55,8 +55,11 @@ const defaultRadii = (): SquircleRadii => ({
 
 /** Режимы, которые включаются переключателями поверх радиусов. */
 export interface UiModes { glass: boolean; flat: boolean; compact: boolean }
+// Переключатель «Glass» убран: полупрозрачность с размытием давала тонкие швы
+// по краям поверхностей (линии у аватарки/в шапке) и ломала часть тем. Поле
+// glass оставлено в типе для совместимости со старыми сохранёнными настройками,
+// но в интерфейсе его больше нет и на DOM он не влияет.
 export const UI_MODES: { id: keyof UiModes; label: string; desc: string }[] = [
-  { id: 'glass',   label: 'Glass',      desc: 'Прозрачность и размытие фона' },
   { id: 'flat',    label: 'Плоский',    desc: 'Без теней: только заливка и границы' },
   { id: 'compact', label: 'Компактный', desc: 'Плотный интерфейс, меньше отступов' },
 ];
@@ -111,7 +114,7 @@ export const LEGACY_UI_STYLES: Record<UiStyle, { radii: SquircleRadii | null; mo
   rounded:  { radii: { surface: 24, avatar: 50, bubble: 26, profile: 24, nav: 56 }, modes: NO_MODES },
   square:   { radii: { surface: 4, avatar: 12, bubble: 4, profile: 4, nav: 4 }, modes: NO_MODES },
   squircle: { radii: null, modes: NO_MODES },
-  glass:    { radii: defaultRadii(), modes: { ...NO_MODES, glass: true } },
+  glass:    { radii: defaultRadii(), modes: NO_MODES }, // режим Glass удалён → как default
   flat:     { radii: defaultRadii(), modes: { ...NO_MODES, flat: true } },
   compact:  { radii: defaultRadii(), modes: { ...NO_MODES, compact: true } },
 };
@@ -189,7 +192,6 @@ export const UI_STYLES: { id: UiStyle; label: string; desc: string }[] = [
   { id: 'rounded', label: 'Скруглённый',  desc: 'Крупные радиусы у пузырей и кнопок' },
   { id: 'square',  label: 'Строгий',      desc: 'Прямые углы, минимализм' },
   { id: 'squircle', label: 'Полускруглённый', desc: 'Квадрат со скруглёнными углами — радиусы настраиваются ползунками' },
-  { id: 'glass',   label: 'Glass',        desc: 'Прозрачность и размытие фона' },
   { id: 'flat',    label: 'Плоский',      desc: 'Без теней: только заливка и границы' },
   { id: 'compact', label: 'Компактный',   desc: 'Плотный интерфейс, меньше отступов' },
 ];

@@ -220,7 +220,24 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   // Только сообщения открытого чата: любое сообщение в ЛЮБОМ чате заменяет
   // identity всей карты messages, из-за чего окно чата перерисовывалось и
   // заново собирало группы по датам. Массивы отдельных чатов сохраняют identity.
-  const chatMessagesForId = useChatStore((s) => s.messages[id || '']);
+  const rawMessages = useChatStore((s) => s.messages[id || '']);
+  // Стабилизируем ссылку на массив сообщений: zustand создаёт новый массив при
+  // любом обновлении чата (реакции, прочтение, набор текста), что иначе вызывает
+  // каскад chatMessages → windowedMessages → groupedMessages → перерисовку всех
+  // MessageBubble. Сравниваем по ID, чтобы не пересоздавать массив при смене
+  // только метаданных (счётчик реакций, время доставки и т.п.).
+  const prevMessagesRef = useRef<typeof rawMessages | null>(null);
+  const prevIdsRef = useRef<string>('');
+  const chatMessagesForId = useMemo(() => {
+    const list = rawMessages || [];
+    const signature = list.map(m => `${m.id}:${(m.reactions || []).map(r => `${r.emoji}:${r.count}`).join(',')}`).join('|');
+    if (signature === prevIdsRef.current && prevMessagesRef.current) {
+      return prevMessagesRef.current;
+    }
+    prevIdsRef.current = signature;
+    prevMessagesRef.current = rawMessages;
+    return rawMessages;
+  }, [rawMessages]);
   const activeChat = useChatStore((s) => s.activeChat);
   // Сообщения, которые сейчас схлопываются после удаления. Границы групп
   // считаем мимо них, чтобы плашка «Вы» переходила к следующему сообщению
@@ -440,6 +457,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   // между лентой и вводом; при вводе сверху они идут сразу перед ним.
   const composerAttachOrder = { xs: 3, md: chatInputPos === 'top' ? 1 : 3 };
   const messageAlign = useUserSettingsStore((s) => s.layout.messageAlign);
+  const showAvatarsInChat = useUserSettingsStore((s) => s.layout.showAvatarsInChat !== false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -902,11 +920,12 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
       const p = Math.min(1, (now - t0) / duration);
       container.scrollTop = start + (bottom - start) * ease(p);
       if (!reduced) {
-        // Blur ∝ |реальная дельта кадра| (берём фактический scrollTop, чтобы
-        // не размывать, когда браузер зажал прокрутку). Порог отсекает дрожь.
+        // Blur только на длинной прокрутке. Короткий докат к новому сообщению
+        // размывал сам пузырь — он появлялся «криво», пока фильтр не снялся.
         const delta = Math.abs(container.scrollTop - prev);
         prev = container.scrollTop;
-        const blur = Math.min(4, delta * 0.06);
+        const travel = Math.abs(bottom - start);
+        const blur = travel > container.clientHeight ? Math.min(4, delta * 0.06) : 0;
         container.style.filter = blur > 0.2 ? `blur(${blur.toFixed(2)}px)` : '';
       }
       if (p < 1 && messagesContainerRef.current === container) {
@@ -1259,11 +1278,11 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
         const chatFromList = chats.find(c => c.id === activeChat.id);
         const otherFallback = chatFromList?.members?.find(m => m.userId !== user?.id);
         return otherFallback?.user
-          ? `${otherFallback.user.firstName || ''} ${otherFallback.user.lastName || ''}`.trim() || otherFallback.user.username || 'Чат'
+          ? otherFallback.user.username || 'Чат'
           : 'Чат';
       }
       return other.user
-        ? `${other.user.firstName || ''} ${other.user.lastName || ''}`.trim() || other.user.username || 'Чат'
+        ? other.user.username || 'Чат'
         : 'Чат';
     }
     return activeChat.name || 'Группа';
@@ -2012,7 +2031,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   const chatAvatar = getChatAvatar();
   // Подпись под именем — общая для мобильной и десктопной шапки.
   const statusText = typingList.length > 0
-    ? 'печатает...'
+    ? 'печатает'
     : getPartnerUser()?.isBot
       ? 'бот'
       : partnerOnline
@@ -2071,7 +2090,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
   } as const;
 
   return (
-    <Box sx={{ display: 'flex', height: '100%', overflow: 'hidden', background: theme.bgChat, position: 'relative', perspective: 1200 }}>
+    <Box sx={{ display: 'flex', height: '100%', overflow: 'hidden', overflowX: 'hidden', background: theme.bgChat, position: 'relative', perspective: 1200, overscrollBehaviorX: 'none', touchAction: 'pan-y pinch-zoom' }}>
       {/* ── Main chat area ── */}
       <Box
         onDragOver={handleDragOver}
@@ -2099,9 +2118,11 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           animation: exiting
             ? `chatExit 220ms ${motion.easeOut} forwards`
             : `chatDepthIn 420ms ${motion.emphasized} both`,
+          // Без blur: фильтр на контейнере ленты размывает и новое сообщение,
+          // которое пришло, пока чат ещё «въезжает».
           '@keyframes chatDepthIn': {
-            '0%': { opacity: 0, transform: 'translateY(18px) scale(.972) rotateX(3deg)', filter: 'blur(12px)' },
-            '100%': { opacity: 1, transform: 'translateY(0) scale(1) rotateX(0)', filter: 'blur(0)' },
+            '0%': { opacity: 0, transform: 'translateY(18px) scale(.972) rotateX(3deg)' },
+            '100%': { opacity: 1, transform: 'translateY(0) scale(1) rotateX(0)' },
           },
           '@keyframes chatExit': chatExit,
         }}>
@@ -2380,13 +2401,19 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           px: { xs: 0.75, md: 2.5 }, py: { xs: 0.65, md: 1.5 }, gap: { xs: 0.5, md: 2 },
           background: theme.headerGradient || theme.bgHeader,
           backdropFilter: 'blur(22px)',
+          WebkitBackdropFilter: 'blur(22px)',
           borderBottom: chatHeaderPos === 'bottom' ? 'none' : `1px solid ${theme.border}`,
           borderTop: chatHeaderPos === 'bottom' ? `1px solid ${theme.border}` : 'none',
           boxShadow: '0 16px 44px rgba(0,0,0,0.22)',
           flexShrink: 0,
+          // Свой стабильный слой: backdrop-filter в Chromium иначе оставляет
+          // тонкий цветной шов по краю шапки (виден за именем чата) и мерцает.
+          isolation: 'isolate',
+          willChange: 'transform',
+          backfaceVisibility: 'hidden',
+          transform: 'translateZ(0)',
           position: 'relative', zIndex: 2,
           order: { xs: 0, md: chatHeaderPos === 'bottom' ? 3 : 0 },
-          ...getFinishStyles(theme),
           '& .mobile-secondary-action': { display: { xs: 'none', md: 'inline-flex' } },
         }}>
           {/* Avatar — клик открывает профиль/инфо */}
@@ -2865,6 +2892,13 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             width: '100%', minWidth: 0, maxWidth: '100%',
             overflow: 'hidden', boxSizing: 'border-box',
             cursor: 'pointer',
+            // Стабильный слой: иначе blur этой во всю ширину плашки оставляет
+            // мерцающий горизонтальный шов на обоях (виден в /hub, где есть
+            // закреплённое сообщение) и дёргается при ресайзе сайдбара.
+            isolation: 'isolate',
+            willChange: 'transform',
+            backfaceVisibility: 'hidden',
+            transform: 'translateZ(0)',
             position: 'relative', zIndex: 2, order: { xs: 1, md: 1 },
           }}
             onClick={() => handleScrollToMessage(currentPinned.id)}
@@ -2884,7 +2918,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
               </Typography>
               <Typography sx={{ fontSize: 13, color: theme.textSec, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {(() => {
-                  const author = currentPinned.sender?.firstName || currentPinned.sender?.username;
+                  const author = currentPinned.sender?.username;
                   const body = currentPinned.content || '📎 Вложение';
                   return author ? `${author}: ${body}` : body;
                 })()}
@@ -3088,20 +3122,44 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             </Box>
           ))}
           {typingList.length > 0 && (
+            // Та же колонка, что у чужого пузыря: строка сообщения держит
+            // px и (если аватарки включены) аватар 34px слева, а сам
+            // пузырь — auto-ширины. Старый ml/mr: 1 ставил плашку мимо них.
             <Box
               display="flex"
-              alignItems="center"
-              gap={1}
-              sx={{ mt: 0.5, ...(messageAlign === 'right' ? { mr: 1 } : { ml: 1 }) }}
+              alignItems="flex-end"
+              gap={0.5}
+              sx={{
+                width: '100%', boxSizing: 'border-box',
+                px: { xs: 1, md: 1.5 },
+                pt: 0.75, pb: { xs: 1.2, md: 1.6 },
+                flexDirection: messageAlign === 'right' ? 'row-reverse' : 'row',
+              }}
             >
+              {showAvatarsInChat && <Box sx={{ width: 34, flexShrink: 0 }} />}
               <Box sx={{
-                bgcolor: theme.bgBubbleOther, borderRadius: 3, px: 2, py: 1.2,
+                bgcolor: theme.bgBubbleOther, borderRadius: 3, px: 1.75, py: 1,
                 backdropFilter: 'blur(14px)',
                 border: `1px solid ${theme.border}`,
+                display: 'flex', alignItems: 'center', gap: 0.75,
               }}>
-                <Typography sx={{ fontSize: 14, color: theme.textSec, fontStyle: 'italic' }}>
-                  печатает...
+                <Typography sx={{ fontSize: 14, color: theme.textSec, fontStyle: 'italic', lineHeight: 1 }}>
+                  печатает
                 </Typography>
+                <Box aria-hidden sx={{ display: 'flex', alignItems: 'center', gap: '3px', height: 14 }}>
+                  {[0, 1, 2].map(i => (
+                    <Box key={i} sx={{
+                      width: 5, height: 5, borderRadius: '50%', bgcolor: theme.textSec,
+                      animation: 'veraTypingDot 1.2s ease-in-out infinite',
+                      animationDelay: `${i * 0.18}s`,
+                      '@keyframes veraTypingDot': {
+                        '0%, 60%, 100%': { transform: 'translateY(0)', opacity: 0.35 },
+                        '30%': { transform: 'translateY(-3px)', opacity: 1 },
+                      },
+                      '@media (prefers-reduced-motion: reduce)': { animation: 'none', opacity: 0.8 },
+                    }} />
+                  ))}
+                </Box>
               </Box>
             </Box>
           )}
@@ -3187,7 +3245,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
             theme={theme}
             order={composerAttachOrder}
             icon={<ReplyIcon />}
-            title={`Ответ ${replyTo.sender?.firstName || replyTo.sender?.username || ''}`.trim()}
+            title={`Ответ ${replyTo.sender?.username || ''}`.trim()}
             preview={replyTo.content || 'Вложение'}
             closeLabel="Отменить ответ"
             onClose={() => setReplyTo(null)}
@@ -3400,10 +3458,17 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           pb: { xs: 'calc(0.55rem + env(safe-area-inset-bottom))', md: 1.25 },
           bgcolor: theme.bgHeader,
           backdropFilter: 'blur(22px)',
+          WebkitBackdropFilter: 'blur(22px)',
           borderTop: chatInputPos === 'top' ? 'none' : `1px solid ${theme.border}`,
           borderBottom: chatInputPos === 'top' ? `1px solid ${theme.border}` : 'none',
           boxShadow: chatInputPos === 'top' ? '0 18px 46px rgba(0,0,0,0.28)' : '0 -18px 46px rgba(0,0,0,0.28)',
           flexShrink: 0,
+          // Стабильный слой: blur этой строки ввода во всю ширину иначе оставляет
+          // мерцающий шов на обоях (виден у скрепки снизу) и дёргается при ресайзе.
+          isolation: 'isolate',
+          willChange: 'transform',
+          backfaceVisibility: 'hidden',
+          transform: 'translateZ(0)',
           position: 'relative', zIndex: 2,
           order: { xs: 4, md: chatInputPos === 'top' ? 1 : 4 },
         }}>
@@ -3779,7 +3844,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           {forwardItems.length === 1 && (
             <Box sx={{ bgcolor: theme.bgChat, borderRadius: 2, p: 1.5, mb: 2, border: `1px solid ${theme.border}` }}>
               <Typography sx={{ fontSize: 13, color: theme.accent, fontWeight: 600, mb: 0.3 }}>
-                {forwardItems[0].sender?.firstName || forwardItems[0].sender?.username}
+                {forwardItems[0].sender?.username}
               </Typography>
               <Typography sx={{ fontSize: 14, color: theme.textSec }} noWrap>
                 {forwardItems[0].content || '📎 Вложение'}
@@ -3792,7 +3857,7 @@ function ChatWindowInner({ onPlayerHost }: ChatWindowProps) {
           <Box sx={{ maxHeight: 300, overflowY: 'auto' }}>
             {chats.filter(c => c && c.id && c.id !== 'vera-ai' && (c.type !== 'channel' || c.members.some(m => m.userId === user?.id && ['owner', 'admin'].includes(m.role)))).map((c) => {
               const cName = c.name || (c.type === 'private'
-                ? c.members?.find(m => m.userId !== user?.id)?.user?.firstName || 'Чат'
+                ? c.members?.find(m => m.userId !== user?.id)?.user?.username || 'Чат'
                 : 'Группа');
               const cAvatar = resolveFileUrl(c.avatarUrl || (c.type === 'private'
                 ? c.members?.find(m => m.userId !== user?.id)?.user?.avatarUrl

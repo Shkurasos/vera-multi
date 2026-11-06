@@ -131,7 +131,7 @@ test('case catalog contains the requested marketplace prices', () => {
     'case-street': 500,
     'case-culture': 100,
     'case-elements': 500,
-    'case-eclipse': 500,
+    'case-eclipse': 1000,
     'case-games': 500,
     'case-corporation': 200,
     'case-pets': 1000,

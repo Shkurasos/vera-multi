@@ -123,6 +123,6 @@ export function offlineLockInfo(): OfflineLockInfo | null {
   const cached = readCachedUser();
   const user = c ? (cached?.id === c.userId ? cached : c.user) : cached;
   if (!user?.id) return null;
-  const displayName = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || 'Vera';
+  const displayName = user.username || 'Vera';
   return { userId: user.id, username: user.username || '', displayName, hasCredential: !!c };
 }

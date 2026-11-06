@@ -80,6 +80,6 @@ test('регистрация требует ник и пароль, почта �
   const route = source.slice(start, source.indexOf("app.post('/api/auth/login'", start));
   assert.match(route, /\[a-zA-Z0-9_\.\]\{3,32\}/);
   assert.match(route, /password\.length < 12/);
-  assert.match(route, /email && !/);
+  assert.doesNotMatch(route, /req\.body\.email/); assert.doesNotMatch(route, /req\.body\.phone/);
   assert.match(route, /isAdminUsername\(username\)/);
 });

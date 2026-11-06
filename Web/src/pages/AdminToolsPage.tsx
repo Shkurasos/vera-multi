@@ -8,8 +8,9 @@ import { useAuthStore } from '../store/authStore';
 import { adminApi, aiLmmApi } from '../services/botsApi';
 import { adminApi as walletAdminApi } from '../services/api';
 import { ScanResult, ProxyLogEntry, RepeaterEntry } from '../types/bots';
-import ModerationPanel from '../components/ModerationPanel';
+import EnhancedModerationPanel from '../components/EnhancedModerationPanel';
 import AdminThemeEditor from '../components/AdminThemeEditor';
+import AdminFeedbackPanel from '../components/AdminFeedbackPanel';
 
 export default function AdminToolsPage() {
   const navigate = useNavigate();
@@ -201,13 +202,14 @@ export default function AdminToolsPage() {
   return (
     <Box sx={{
       height: '100%', overflowY: 'auto', overscrollBehavior: 'contain',
-      p: 3, color: '#fff', maxWidth: 900, mx: 'auto',
+      p: 3, color: '#fff', width: '100%',
       boxSizing: 'border-box',
       pb: { xs: 76, md: 3 }, // запас под мобильную нижнюю навигацию
       '&::-webkit-scrollbar': { width: 5 },
       '&::-webkit-scrollbar-thumb': { bgcolor: 'rgba(255,255,255,0.16)', borderRadius: 4 },
     }}>
-      <ModerationPanel />
+      <EnhancedModerationPanel />
+      <AdminFeedbackPanel />
       <AdminThemeEditor />
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant="h5">Панель администратора</Typography>
@@ -241,6 +243,16 @@ export default function AdminToolsPage() {
           } finally { setGrantBusy(false); }
         }}>{grantBusy ? 'Начисляем…' : 'Выдать ВП'}</Button>
         {grantResult && <Alert sx={{ mt: 2 }} severity={grantResult.error ? 'error' : 'success'}>{grantResult.text}</Alert>}
+      </Box>
+      <Box sx={{ p: 2, mb: 3, borderRadius: 3, border: '1px solid #ffffff22' }}>
+        <Typography variant="h6" sx={{ mb: 2 }}>🔍 Диагностика WebRTC / Звонков</Typography>
+        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+          Проверка getUserMedia, getDisplayMedia, прав на микрофон/камеру, STUN/TURN и Cloudflare WARP.
+        </Typography>
+        <Button variant="outlined" onClick={async () => {
+          const { showCallDiagnosticsAlert } = await import('../services/callDiagnostics');
+          showCallDiagnosticsAlert();
+        }}>Запустить диагностику</Button>
       </Box>
       <Typography variant="h5" fontWeight={700} sx={{ mb: 1 }}>🛡 Admin Tools</Typography>
       <Typography sx={{ color: 'text.secondary', mb: 3 }}>

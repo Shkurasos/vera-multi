@@ -13,11 +13,8 @@
  */
 
 export interface VeraProfile {
-  firstName?: string;
-  lastName?: string;
   username?: string;
   bio?: string;
-  birthDate?: string;
   country?: string;
   region?: string;
   city?: string;

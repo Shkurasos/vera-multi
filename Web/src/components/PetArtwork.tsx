@@ -30,13 +30,43 @@ const KEYFRAMES = `
 @keyframes veraPetSway { 0%,100% { transform: rotate(-4deg) } 50% { transform: rotate(4deg) } }
 @keyframes veraPetTongue { 0%,64%,100% { transform: scaleY(1); opacity: 1 } 74% { transform: scaleY(1.55); opacity: .6 } 84% { transform: scaleY(1); opacity: 1 } }
 @keyframes veraPetJackGlow { 0%,100% { opacity: .85; filter: drop-shadow(0 0 3px rgba(255,166,61,.5)) } 50% { opacity: 1; filter: drop-shadow(0 0 10px rgba(255,196,93,.95)) } }
-@keyframes veraPetTentacle { 0%,100% { transform: skewX(-4deg) translateY(0) } 50% { transform: skewX(4deg) translateY(2px) } }
+@keyframes veraPetJackFlame { 0%,100% { opacity: .6; transform: scaleY(1) } 20% { opacity: 1; transform: scaleY(1.15) } 40% { opacity: .75; transform: scaleY(.92) } 60% { opacity: .95; transform: scaleY(1.08) } 80% { opacity: .8; transform: scaleY(.96) } }
+@keyframes veraPetTentacle1 { 0%,100% { transform: skewX(-5deg) translateY(0) } 50% { transform: skewX(6deg) translateY(3px) } }
+@keyframes veraPetTentacle2 { 0%,100% { transform: skewX(4deg) translateY(1px) } 50% { transform: skewX(-5deg) translateY(-2px) } }
+@keyframes veraPetTentacle3 { 0%,100% { transform: skewX(-3deg) translateY(-1px) } 50% { transform: skewX(4deg) translateY(2px) } }
+@keyframes veraPetTentacle4 { 0%,100% { transform: skewX(5deg) translateY(0) } 50% { transform: skewX(-4deg) translateY(3px) } }
+@keyframes veraPetTentacle5 { 0%,100% { transform: skewX(-4deg) translateY(2px) } 50% { transform: skewX(5deg) translateY(-1px) } }
+@keyframes veraPetTentacle6 { 0%,100% { transform: skewX(3deg) translateY(1px) } 50% { transform: skewX(-6deg) translateY(2px) } }
+@keyframes veraPetWobble { 0%,100% { transform: rotate(-3deg) scale(1,1) } 25% { transform: rotate(0deg) scale(1.03,.97) } 50% { transform: rotate(3deg) scale(1,1) } 75% { transform: rotate(0deg) scale(.97,1.03) } }
+@keyframes veraPetBoop { 0%,60%,100% { transform: translateY(0) scale(1,1) } 70% { transform: translateY(-6px) scale(1.06,.94) } 82% { transform: translateY(0) scale(.95,1.05) } 90% { transform: translateY(-2px) scale(1,1) } }
+@keyframes veraPetAura { 0%,100% { opacity: .35; transform: scale(.9) } 50% { opacity: .85; transform: scale(1.12) } }
+@keyframes veraPetSparkleSpin { 0% { transform: rotate(0deg) } 100% { transform: rotate(360deg) } }
+@keyframes veraPetSparklePop { 0%,100% { opacity: .2; transform: scale(.5) } 50% { opacity: 1; transform: scale(1.2) } }
+@keyframes veraPetWink { 0%,46%,54%,100% { transform: scaleY(1) } 50% { transform: scaleY(.08) } }
+@keyframes veraPetLegWiggle { 0%,100% { transform: rotate(0deg) } 50% { transform: rotate(2.5deg) } }
+@keyframes veraPetHeartUp { 0% { opacity: 0; transform: translateY(0) scale(.4) } 20% { opacity: 1 } 100% { opacity: 0; transform: translateY(-16px) scale(1) } }
+@keyframes veraPetJackBeam { 0%,100% { opacity: .55 } 50% { opacity: 1 } }
 .vera-pet-tap { animation: veraPetTap .45s ease-out }
 .vera-pet-swing { animation: veraPetSwing 3.6s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 0% }
 .vera-pet-sway { animation: veraPetSway 3.4s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 100% }
 .vera-pet-tongue { animation: veraPetTongue 3.2s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 0% }
 .vera-pet-jackglow { animation: veraPetJackGlow 2.8s ease-in-out infinite }
-.vera-pet-tentacle { animation: veraPetTentacle 3s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 0% }
+.vera-pet-jackflame { animation: veraPetJackFlame 2.2s ease-in-out infinite; transform-box: fill-box; transform-origin: center }
+.vera-pet-tentacle1 { animation: veraPetTentacle1 3.2s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 0% }
+.vera-pet-tentacle2 { animation: veraPetTentacle2 2.8s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 0% }
+.vera-pet-tentacle3 { animation: veraPetTentacle3 3.4s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 0% }
+.vera-pet-tentacle4 { animation: veraPetTentacle4 3s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 0% }
+.vera-pet-tentacle5 { animation: veraPetTentacle5 2.9s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 0% }
+.vera-pet-tentacle6 { animation: veraPetTentacle6 3.1s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 0% }
+.vera-pet-wobble { animation: veraPetWobble 3.4s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 100% }
+.vera-pet-boop { animation: veraPetBoop 2.8s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 100% }
+.vera-pet-aura { animation: veraPetAura 2.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center }
+.vera-pet-sparklespin { animation: veraPetSparkleSpin 9s linear infinite; transform-box: fill-box; transform-origin: 60px 58px }
+.vera-pet-sparklepop { animation: veraPetSparklePop 2.2s ease-in-out infinite; transform-box: fill-box; transform-origin: center }
+.vera-pet-wink { animation: veraPetWink 3.8s ease-in-out infinite; transform-box: fill-box; transform-origin: center }
+.vera-pet-legwiggle { animation: veraPetLegWiggle 2.4s ease-in-out infinite; transform-box: fill-box; transform-origin: 60px 62px }
+.vera-pet-heartup { animation: veraPetHeartUp 3.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center }
+.vera-pet-jackbeam { animation: veraPetJackBeam 2.8s ease-in-out infinite }
 .vera-pet-particle { animation: veraPetBurst .8s ease-out both }
 .vera-pet-float { animation: veraPetFloat 3.2s ease-in-out infinite }
 .vera-pet-breathe { animation: veraPetBreathe 2.8s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 90% }
@@ -55,7 +85,12 @@ const KEYFRAMES = `
   .vera-pet-float, .vera-pet-breathe, .vera-pet-blink, .vera-pet-ear, .vera-pet-hop,
   .vera-pet-glow, .vera-pet-glowpulse, .vera-pet-flicker, .vera-pet-flap-l, .vera-pet-flap-r,
   .vera-pet-twinkle, .vera-pet-z, .vera-pet-tap, .vera-pet-swing, .vera-pet-sway,
-  .vera-pet-tongue, .vera-pet-jackglow, .vera-pet-tentacle { animation: none !important }
+  .vera-pet-tongue, .vera-pet-jackglow, .vera-pet-jackflame,
+  .vera-pet-tentacle1, .vera-pet-tentacle2, .vera-pet-tentacle3,
+  .vera-pet-tentacle4, .vera-pet-tentacle5, .vera-pet-tentacle6,
+  .vera-pet-wobble, .vera-pet-boop, .vera-pet-aura, .vera-pet-sparklespin,
+  .vera-pet-sparklepop, .vera-pet-wink, .vera-pet-legwiggle,
+  .vera-pet-heartup, .vera-pet-jackbeam { animation: none !important }
   .vera-pet-particle { display: none !important }
 }
 `;
@@ -372,21 +407,19 @@ function PhoenixArt() {
   );
 }
 
-/* ── Пушистый паук: висит на нитке, лапки-крючки и большие глаза ── */
+/* ── Пушистый паук (common): мягко покачивается, милый ── */
 function SpiderArt() {
   return (
     <g className="vera-pet-swing">
-      {/* нить, за которую паучок качается */}
-      <path d="M60 0Q61 14 60 26" fill="none" stroke="#d8cfc4" strokeWidth="1.4" strokeLinecap="round" />
       <defs>
-        <radialGradient id="veraPetSpiderBody" gradientUnits="userSpaceOnUse" cx="60" cy="52" r="46">
-          <stop offset="0%" stopColor="#f6b16b" />
-          <stop offset="55%" stopColor="#e08c42" />
-          <stop offset="100%" stopColor="#ad5c20" />
+        <radialGradient id="veraPetSpiderBody" gradientUnits="userSpaceOnUse" cx="60" cy="50" r="48">
+          <stop offset="0%" stopColor="#ffcf9a" />
+          <stop offset="52%" stopColor="#ef9a4c" />
+          <stop offset="100%" stopColor="#b8651f" />
         </radialGradient>
       </defs>
       {/* восемь лапок с изломом-«коленом» */}
-      <g fill="none" stroke="#7c4a1e" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round">
+      <g className="vera-pet-legwiggle" fill="none" stroke="#7c4a1e" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round">
         <path d="M40 53Q31 45 28 35Q26 28 17 24" />
         <path d="M36 61Q25 59 18 51Q14 47 7 44" />
         <path d="M37 71Q25 75 19 85Q16 91 9 95" />
@@ -395,274 +428,340 @@ function SpiderArt() {
         <path d="M84 61Q95 59 102 51Q106 47 113 44" />
         <path d="M83 71Q95 75 101 85Q104 91 111 95" />
         <path d="M77 79Q85 89 87 99Q88 104 95 107" />
-      </g>
-      {/* пушистый контур: бугорки шёрстки под телом */}
-      <g fill="url(#veraPetSpiderBody)" stroke="#7c3f16" strokeWidth="2.2">
-        <circle cx="41" cy="47" r="8" />
-        <circle cx="52" cy="40" r="8.5" />
-        <circle cx="68" cy="40" r="8.5" />
-        <circle cx="79" cy="47" r="8" />
-        <circle cx="34" cy="58" r="7.5" />
-        <circle cx="86" cy="58" r="7.5" />
-        <circle cx="37" cy="71" r="7" />
-        <circle cx="83" cy="71" r="7" />
-      </g>
-      <ellipse cx="60" cy="62" rx="27" ry="23" fill="url(#veraPetSpiderBody)" stroke="#7c3f16" strokeWidth="2.4" />
-      {/* мягкая светлая мордочка */}
-      <ellipse cx="60" cy="63" rx="19" ry="15" fill="#f9c98f" opacity="0.4" />
-      {/* глаза: две большие, две поменьше и пара крохотных сверху */}
-      <g className="vera-pet-blink">
-        <g fill="#2f1c10">
-          <circle cx="52" cy="60" r="7" />
-          <circle cx="68" cy="60" r="7" />
-          <circle cx="39" cy="52" r="3.6" />
-          <circle cx="81" cy="52" r="3.6" />
-          <circle cx="56" cy="45" r="1.7" />
-          <circle cx="64" cy="45" r="1.7" />
-        </g>
-        <g fill="#ffffff">
-          <circle cx="49.6" cy="57.4" r="2.6" />
-          <circle cx="65.6" cy="57.4" r="2.6" />
-          <circle cx="54.2" cy="62.6" r="1.2" />
-          <circle cx="70.2" cy="62.6" r="1.2" />
-          <circle cx="38" cy="51" r="1.2" />
-          <circle cx="80" cy="51" r="1.2" />
+        {/* крохотные «тапочки» на кончиках */}
+        <g stroke="none" fill="#5a3113">
+          <circle cx="17" cy="24" r="2.4" /><circle cx="7" cy="44" r="2.4" />
+          <circle cx="9" cy="95" r="2.4" /><circle cx="25" cy="107" r="2.4" />
+          <circle cx="103" cy="24" r="2.4" /><circle cx="113" cy="44" r="2.4" />
+          <circle cx="111" cy="95" r="2.4" /><circle cx="95" cy="107" r="2.4" />
         </g>
       </g>
-      {/* румянец, рот и клыки */}
-      <g fill="#e8875f" opacity="0.5">
-        <circle cx="40" cy="68" r="3.6" />
-        <circle cx="80" cy="68" r="3.6" />
-      </g>
-      <path d="M56 73q4 3 8 0" fill="none" stroke="#5a3113" strokeWidth="1.8" strokeLinecap="round" />
-      <g fill="#fff6ea" stroke="#e2b489" strokeWidth="1.2" strokeLinejoin="round">
-        <path d="M55.5 74.5h4L57.5 80Z" />
-        <path d="M60.5 74.5h4L62.5 80Z" />
+      {/* пушистый контур: бугорки шёрстки */}
+      <g className="vera-pet-wobble">
+        <g fill="url(#veraPetSpiderBody)" stroke="#7c3f16" strokeWidth="2.2">
+          <circle cx="41" cy="46" r="8.5" />
+          <circle cx="52" cy="38" r="9" />
+          <circle cx="68" cy="38" r="9" />
+          <circle cx="79" cy="46" r="8.5" />
+          <circle cx="33" cy="58" r="8" />
+          <circle cx="87" cy="58" r="8" />
+          <circle cx="37" cy="71" r="7.5" />
+          <circle cx="83" cy="71" r="7.5" />
+        </g>
+        <ellipse cx="60" cy="61" rx="28" ry="24" fill="url(#veraPetSpiderBody)" stroke="#7c3f16" strokeWidth="2.4" />
+        {/* мягкая светлая мордочка + блик */}
+        <ellipse cx="60" cy="62" rx="20" ry="16" fill="#ffe0bd" opacity="0.5" />
+        <ellipse cx="54" cy="48" rx="12" ry="7" fill="#ffffff" opacity="0.28" transform="rotate(-18 54 48)" />
+        {/* глаза: большие блестящие + крохотные сверху */}
+        <g className="vera-pet-blink">
+          <g fill="#2f1c10">
+            <circle cx="52" cy="60" r="8.2" />
+            <circle cx="68" cy="60" r="8.2" />
+            <circle cx="38" cy="51" r="3.4" />
+            <circle cx="82" cy="51" r="3.4" />
+          </g>
+          {/* радужка потеплее */}
+          <g fill="#6b3a18">
+            <circle cx="52.6" cy="61" r="4" />
+            <circle cx="68.6" cy="61" r="4" />
+          </g>
+          <g fill="#ffffff">
+            <circle cx="49.4" cy="57" r="3" />
+            <circle cx="65.4" cy="57" r="3" />
+            <circle cx="54.6" cy="63.4" r="1.5" />
+            <circle cx="70.6" cy="63.4" r="1.5" />
+            <circle cx="37" cy="50" r="1.2" />
+            <circle cx="81" cy="50" r="1.2" />
+          </g>
+        </g>
+        {/* звёздочки-блёстки в уголках глаз */}
+        <g className="vera-pet-sparklepop" fill="#fff7e8">
+          <path d={starPath(45, 55, 2.2)} />
+          <path d={starPath(75, 55, 2.2)} />
+        </g>
+        {/* румянец, улыбка и мягкие клыки */}
+        <g fill="#f0956a" opacity="0.6">
+          <circle cx="40" cy="67" r="4.2" />
+          <circle cx="80" cy="67" r="4.2" />
+        </g>
+        <path d="M54 72q6 5 12 0" fill="none" stroke="#5a3113" strokeWidth="2" strokeLinecap="round" />
+        <g fill="#fff6ea" stroke="#e2b489" strokeWidth="1.2" strokeLinejoin="round">
+          <path d="M55.6 73.8h3.4L57.3 78Z" />
+          <path d="M61 73.8h3.4L62.7 78Z" />
+        </g>
       </g>
     </g>
   );
 }
 
-/* ── Мягкий медвежонок: сидит, дышит и шевелит ушками ── */
+/* ── Плюшевый медвежонок (uncommon): игрушечный, с швом и большими глазами ── */
 function BearArt() {
-  const fur = '#dfb08c';
-  const light = '#f6e3cd';
-  const outline = '#7a5140';
+  const fur = '#d9a066';
+  const furDark = '#c48746';
+  const light = '#f3dcb6';
+  const outline = '#86592f';
+  const stitch = '#9c6b38';
   return (
     <g className="vera-pet-float">
-      <ellipse cx="60" cy="110" rx="34" ry="5" fill="#000000" opacity="0.2" />
+      <ellipse cx="60" cy="111" rx="33" ry="5" fill="#000000" opacity="0.18" />
       <g className="vera-pet-breathe">
-        {/* ушки */}
+        {/* ушки — круглые плюшевые */}
         <g className="vera-pet-ear">
-          <circle cx="41" cy="32" r="11" fill={fur} stroke={outline} strokeWidth="2.4" />
-          <circle cx="41" cy="32" r="5.5" fill={light} />
+          <circle cx="40" cy="30" r="13" fill={fur} stroke={outline} strokeWidth="2.6" />
+          <circle cx="40" cy="30" r="6.5" fill={light} />
         </g>
         <g className="vera-pet-ear" style={{ animationDelay: '0.7s' }}>
-          <circle cx="79" cy="32" r="11" fill={fur} stroke={outline} strokeWidth="2.4" />
-          <circle cx="79" cy="32" r="5.5" fill={light} />
+          <circle cx="80" cy="30" r="13" fill={fur} stroke={outline} strokeWidth="2.6" />
+          <circle cx="80" cy="30" r="6.5" fill={light} />
         </g>
-        {/* тело */}
-        <ellipse cx="60" cy="86" rx="27" ry="21" fill={fur} stroke={outline} strokeWidth="2.4" />
+        {/* тело — пухлое */}
+        <ellipse cx="60" cy="88" rx="29" ry="23" fill={fur} stroke={outline} strokeWidth="2.6" />
+        {/* светлое пузико-заплатка со строчкой */}
+        <ellipse cx="60" cy="90" rx="17" ry="16" fill={light} stroke={furDark} strokeWidth="1.4" />
+        <path d="M60 60v10" fill="none" stroke={stitch} strokeWidth="1.6" strokeLinecap="round" strokeDasharray="2.5 3" />
         {/* задние лапы с подушечками */}
-        <g stroke={outline} strokeWidth="2.2">
-          <ellipse cx="28" cy="94" rx="11" ry="13" fill={fur} transform="rotate(-10 28 94)" />
-          <ellipse cx="92" cy="94" rx="11" ry="13" fill={fur} transform="rotate(10 92 94)" />
+        <g stroke={outline} strokeWidth="2.4">
+          <ellipse cx="29" cy="97" rx="12" ry="14" fill={fur} transform="rotate(-10 29 97)" />
+          <ellipse cx="91" cy="97" rx="12" ry="14" fill={fur} transform="rotate(10 91 97)" />
         </g>
-        <ellipse cx="28" cy="97" rx="6" ry="7.5" fill={light} transform="rotate(-10 28 97)" />
-        <ellipse cx="92" cy="97" rx="6" ry="7.5" fill={light} transform="rotate(10 92 97)" />
-        <g fill={light}>
-          <circle cx="23" cy="85" r="2.4" /><circle cx="28" cy="83" r="2.4" /><circle cx="33" cy="85" r="2.4" />
-          <circle cx="87" cy="85" r="2.4" /><circle cx="92" cy="83" r="2.4" /><circle cx="97" cy="85" r="2.4" />
+        <ellipse cx="29" cy="100" rx="6.5" ry="8.5" fill={light} transform="rotate(-10 29 100)" />
+        <ellipse cx="91" cy="100" rx="6.5" ry="8.5" fill={light} transform="rotate(10 91 100)" />
+        <g fill={furDark}>
+          <circle cx="24" cy="88" r="2.6" /><circle cx="29" cy="86" r="2.6" /><circle cx="34" cy="88" r="2.6" />
+          <circle cx="86" cy="88" r="2.6" /><circle cx="91" cy="86" r="2.6" /><circle cx="96" cy="88" r="2.6" />
         </g>
-        {/* передние лапки */}
-        <g stroke={outline} strokeWidth="2.2">
-          <ellipse cx="49" cy="99" rx="9" ry="7.5" fill={fur} />
-          <ellipse cx="71" cy="99" rx="9" ry="7.5" fill={fur} />
+        {/* передние лапки, обнимают животик */}
+        <g stroke={outline} strokeWidth="2.4">
+          <ellipse cx="46" cy="98" rx="10" ry="8.5" fill={fur} transform="rotate(18 46 98)" />
+          <ellipse cx="74" cy="98" rx="10" ry="8.5" fill={fur} transform="rotate(-18 74 98)" />
         </g>
-        {/* голова */}
-        <circle cx="60" cy="52" r="25" fill={fur} stroke={outline} strokeWidth="2.4" />
-        <ellipse cx="60" cy="60" rx="10.5" ry="8" fill={light} />
-        <path d="M57 57l6 6M63 57l-6 6" fill="none" stroke="#4a3226" strokeWidth="2.2" strokeLinecap="round" />
-        <path d="M60 63v1.5M56.5 66.5q3.5 2.5 7 0" fill="none" stroke="#4a3226" strokeWidth="1.6" strokeLinecap="round" />
-        <g className="vera-pet-blink" fill="#4a3226">
-          <circle cx="51" cy="50" r="3.2" />
-          <circle cx="69" cy="50" r="3.2" />
+        {/* голова — крупная, круглая */}
+        <circle cx="60" cy="50" r="28" fill={fur} stroke={outline} strokeWidth="2.6" />
+        {/* шов-строчка через макушку — «игрушечность» */}
+        <path d="M60 22v12" fill="none" stroke={stitch} strokeWidth="1.6" strokeLinecap="round" strokeDasharray="2.5 3" />
+        {/* нос — треугольник вершиной вниз */}
+        <path d="M54 53.5q6-2 12 0 1.1.4-.4 2.1l-5.6 4.6-5.6-4.6q-1.5-1.7-.4-2.1Z" fill="#2c2c2c" stroke="#2c2c2c" strokeWidth="1" strokeLinejoin="round" />
+        {/* рот — короткая вертикальная чёрточка */}
+        <path d="M60 60.2v5" fill="none" stroke="#2c2c2c" strokeWidth="1.8" strokeLinecap="round" />
+        {/* простые глаза-точки — крупнее и шире */}
+        <g className="vera-pet-blink" fill="#2c2c2c">
+          <circle cx="48" cy="49" r="3.8" />
+          <circle cx="72" cy="49" r="3.8" />
         </g>
-        <g fill="#f0a6a6" opacity="0.8">
-          <circle cx="43" cy="59" r="4.2" />
-          <circle cx="77" cy="59" r="4.2" />
+        {/* румяные щёчки */}
+        <g fill="#f39b9b" opacity="0.75">
+          <circle cx="40" cy="56" r="4.6" />
+          <circle cx="80" cy="56" r="4.6" />
         </g>
       </g>
     </g>
   );
 }
 
-/* ── Зелёная змея: свернулась кольцами и шипит язычком ── */
+/* ── Зелёная змейка (rare): свёрнута толстыми кольцами, открытый рот с язычком ── */
 function SnakeArt() {
+  const outline = '#1c1c1c';
+  const green = '#5f9e3f';
+  const greenLight = '#7bb84f';
+  const belly = '#e9dcae';
+  const spot = '#4a8130';
   return (
     <g className="vera-pet-float">
       <defs>
-        <linearGradient id="veraPetSnakeRing1" gradientUnits="userSpaceOnUse" x1="60" y1="82" x2="60" y2="107">
-          <stop offset="0%" stopColor="#7cae3a" />
-          <stop offset="100%" stopColor="#547f27" />
-        </linearGradient>
-        <linearGradient id="veraPetSnakeRing2" gradientUnits="userSpaceOnUse" x1="60" y1="71" x2="60" y2="94">
-          <stop offset="0%" stopColor="#95c94a" />
-          <stop offset="100%" stopColor="#6b9a2f" />
-        </linearGradient>
-        <linearGradient id="veraPetSnakeRing3" gradientUnits="userSpaceOnUse" x1="60" y1="62" x2="60" y2="83">
-          <stop offset="0%" stopColor="#a8d65e" />
-          <stop offset="100%" stopColor="#7cae3a" />
-        </linearGradient>
-        <linearGradient id="veraPetSnakeHead" gradientUnits="userSpaceOnUse" x1="50" y1="32" x2="72" y2="58">
-          <stop offset="0%" stopColor="#b3e06a" />
-          <stop offset="100%" stopColor="#83b83e" />
+        <linearGradient id="veraPetSnakeBody" gradientUnits="userSpaceOnUse" x1="60" y1="18" x2="60" y2="64">
+          <stop offset="0%" stopColor="#7bb84f" />
+          <stop offset="100%" stopColor="#5f9e3f" />
         </linearGradient>
       </defs>
-      <ellipse cx="60" cy="110" rx="36" ry="5" fill="#000000" opacity="0.2" />
-      {/* хвостик с заострённым кончиком */}
-      <g strokeLinecap="round" fill="none">
-        <path d="M84 96q14 3 20-6" stroke="#21301a" strokeWidth="11" />
-        <path d="M84 96q14 3 20-6" stroke="#6f9e33" strokeWidth="7" />
-        <path d="M104 90q3-3 3-7" stroke="#21301a" strokeWidth="6" />
-        <path d="M104 90q3-3 3-7" stroke="#8fc93f" strokeWidth="3" />
+      <ellipse cx="60" cy="112" rx="42" ry="6" fill="#000000" opacity="0.14" />
+
+      {/* ── нижний виток (самый большой, плоский) ── */}
+      <ellipse cx="60" cy="96" rx="47" ry="20" fill={green} stroke={outline} strokeWidth="4.5" />
+      {/* бежевое брюшко снизу переднего витка */}
+      <path d="M16 98q44 24 88 0 2 8-6 14-38 18-76 0-8-6-6-14Z" fill={belly} stroke={outline} strokeWidth="3.5" strokeLinejoin="round" />
+      {/* крапинки на нижнем витке */}
+      <g fill={spot} opacity="0.55">
+        <circle cx="26" cy="92" r="3" /><circle cx="33" cy="98" r="2.3" />
+        <circle cx="90" cy="92" r="3" /><circle cx="84" cy="98" r="2.3" />
       </g>
-      {/* три витка: задний темнее, передний светлее */}
-      <ellipse cx="60" cy="94" rx="35" ry="13" fill="url(#veraPetSnakeRing1)" stroke="#21301a" strokeWidth="2.6" />
-      <ellipse cx="60" cy="97" rx="27" ry="6.5" fill="#f4e9cf" stroke="#21301a" strokeWidth="1.6" />
-      <g stroke="#dcc9a0" strokeWidth="1.4" strokeLinecap="round">
-        <path d="M44 96.5v4.5M52 98v4.5M60 98.5v4.5M68 98v4.5M76 96.5v4.5" />
+
+      {/* ── средний виток ── */}
+      <path d="M13 92q0-18 24-22 20-3 40 1 24 4 30 16 6 12-8 18-22 9-50 4-34-6-36-17Z"
+        fill={greenLight} stroke={outline} strokeWidth="4.5" strokeLinejoin="round" />
+      {/* бежевая волна брюшка на среднем витке, уходит к груди */}
+      <path d="M26 82q24-12 54-4 14 4 14 12-2 8-14 8-6-10-20-12-20-3-34 4-4-4 0-8Z"
+        fill={belly} stroke={outline} strokeWidth="3" strokeLinejoin="round" opacity="0.98" />
+      <g fill={spot} opacity="0.5">
+        <circle cx="30" cy="78" r="2.6" /><circle cx="86" cy="86" r="2.6" /><circle cx="80" cy="80" r="2" />
       </g>
-      <ellipse cx="60" cy="82" rx="31" ry="12" fill="url(#veraPetSnakeRing2)" stroke="#21301a" strokeWidth="2.6" />
-      <ellipse cx="60" cy="85" rx="22" ry="5.5" fill="#f4e9cf" stroke="#21301a" strokeWidth="1.6" />
-      <g stroke="#dcc9a0" strokeWidth="1.3" strokeLinecap="round">
-        <path d="M50 84.5v4M57 85.5v4M64 85.5v4M71 84.5v4" />
-      </g>
-      <ellipse cx="60" cy="72" rx="26" ry="11" fill="url(#veraPetSnakeRing3)" stroke="#21301a" strokeWidth="2.6" />
-      {/* крапинки на витках */}
-      <g fill="#5f8f2e" opacity="0.8">
-        <circle cx="33" cy="95" r="3.4" />
-        <circle cx="87" cy="95" r="3.4" />
-        <circle cx="34" cy="82" r="2.6" />
-        <circle cx="86" cy="82" r="2.6" />
-        <circle cx="41" cy="71" r="2.2" />
-        <circle cx="79" cy="71" r="2.2" />
-      </g>
-      {/* голова качается, язычок периодически высовывается */}
+
+      {/* ── приподнятая шея с головой — покачивается ── */}
       <g className="vera-pet-sway">
-        <path d="M51 79Q47 57 60 43Q73 57 69 79Z" fill="url(#veraPetSnakeHead)" stroke="#21301a" strokeWidth="2.4" strokeLinejoin="round" />
-        <ellipse cx="60" cy="44" rx="17" ry="13.5" fill="url(#veraPetSnakeHead)" stroke="#21301a" strokeWidth="2.4" />
-        <path d="M48 38q7-8 18-6" fill="none" stroke="#e2f7b4" strokeWidth="3" strokeLinecap="round" opacity="0.8" />
-        <g fill="#5f8f2e" opacity="0.75">
-          <circle cx="52" cy="35" r="2" />
-          <circle cx="66" cy="34" r="2.4" />
+        {/* толстая короткая шея, выходит из витков под голову */}
+        <path d="M54 88c-10-4-12-18-6-30 4-8 10-14 14-18" fill="none" stroke={outline} strokeWidth="30" strokeLinecap="round" />
+        <path d="M54 88c-10-4-12-18-6-30 4-8 10-14 14-18" fill="none" stroke={green} strokeWidth="23" strokeLinecap="round" />
+        {/* бежевое горло на шее */}
+        <path d="M53 82c-6-4-7-15-3-24 2-5 6-10 10-13" fill="none" stroke={belly} strokeWidth="10" strokeLinecap="round" />
+
+        {/* голова — круглая */}
+        <ellipse cx="60" cy="40" rx="27" ry="25" fill="url(#veraPetSnakeBody)" stroke={outline} strokeWidth="4.5" />
+        {/* бежевый подбородок */}
+        <path d="M44 52q16 12 32 0-4 10-16 10-12 0-16-10Z" fill={belly} opacity="0.9" />
+        {/* крапинки на макушке */}
+        <g fill={spot} opacity="0.5">
+          <circle cx="52" cy="22" r="3" /><circle cx="66" cy="20" r="3.4" />
+          <circle cx="44" cy="30" r="2.4" /><circle cx="74" cy="30" r="2.6" />
         </g>
-        {/* глаза с двумя бликами */}
-        <g className="vera-pet-blink">
-          <g fill="#21301a">
-            <circle cx="53" cy="44" r="4" />
-            <circle cx="67" cy="44" r="4" />
-          </g>
-          <g fill="#ffffff">
-            <circle cx="51.5" cy="42.4" r="1.5" />
-            <circle cx="65.5" cy="42.4" r="1.5" />
-            <circle cx="54.3" cy="45.6" r="0.8" />
-            <circle cx="68.3" cy="45.6" r="0.8" />
-          </g>
+        {/* глаза — простые чёрные овалы */}
+        <g className="vera-pet-blink" fill={outline}>
+          <ellipse cx="49" cy="40" rx="4" ry="5.5" />
+          <ellipse cx="71" cy="40" rx="4" ry="5.5" />
         </g>
-        {/* румянец и ноздри */}
-        <g fill="#f2a6a6" opacity="0.7">
-          <ellipse cx="46" cy="50" rx="3.6" ry="2.4" />
-          <ellipse cx="74" cy="50" rx="3.6" ry="2.4" />
-        </g>
-        <g fill="#21301a">
-          <circle cx="57" cy="49.5" r="0.9" />
-          <circle cx="63" cy="49.5" r="0.9" />
-        </g>
-        <path d="M53 52q7 5 14 0" fill="none" stroke="#21301a" strokeWidth="1.7" strokeLinecap="round" />
-        <g className="vera-pet-tongue" stroke="#e2657f" strokeWidth="2.2" strokeLinecap="round" fill="none">
-          <path d="M60 53.5v6" />
-          <path d="M60 59.5q-2 3-4 3.5" />
-          <path d="M60 59.5q2 3 4 3.5" />
+        {/* рот — аккуратный маленький открытый овал */}
+        <ellipse cx="60" cy="57" rx="5" ry="6.5" fill={outline} />
+        <g className="vera-pet-tongue">
+          <path d="M60 58v7" fill="none" stroke="#e86a86" strokeWidth="2.6" strokeLinecap="round" />
+          <path d="M60 65q-2.5 3-5 3.5M60 65q2.5 3 5 3.5" fill="none" stroke="#e86a86" strokeWidth="2.6" strokeLinecap="round" />
         </g>
       </g>
     </g>
   );
 }
 
-/* ── Светящийся Джек: рыжая тыква с пульсирующим лицом-фонарём ── */
+/* ── Светящийся Джек (epic): классический резной фонарь со свечением ── */
 function PumpkinArt() {
   return (
     <g className="vera-pet-float">
       <defs>
-        <radialGradient id="veraPetPumpkinBody" gradientUnits="userSpaceOnUse" cx="50" cy="44" r="72">
-          <stop offset="0%" stopColor="#ffc178" />
-          <stop offset="45%" stopColor="#f9933c" />
-          <stop offset="100%" stopColor="#d76a12" />
-        </radialGradient>
-        <radialGradient id="veraPetPumpkinGlow" gradientUnits="userSpaceOnUse" cx="60" cy="74" r="34">
-          <stop offset="0%" stopColor="#ffd98a" stopOpacity="0.85" />
-          <stop offset="100%" stopColor="#ffb347" stopOpacity="0" />
+        <linearGradient id="veraPetPumpkinBody" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#ffa942" />
+          <stop offset="100%" stopColor="#f3851d" />
+        </linearGradient>
+        <linearGradient id="veraPetPumpkinStem" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#4aa72e" />
+          <stop offset="100%" stopColor="#2e7d1e" />
+        </linearGradient>
+        <radialGradient id="veraPetPumpkinAura" gradientUnits="userSpaceOnUse" cx="60" cy="72" r="56">
+          <stop offset="0%" stopColor="#ffd24d" stopOpacity="0.85" />
+          <stop offset="55%" stopColor="#ff9e1f" stopOpacity="0.3" />
+          <stop offset="100%" stopColor="#ff8c1a" stopOpacity="0" />
         </radialGradient>
       </defs>
-      <ellipse cx="60" cy="101" rx="34" ry="4.5" fill="#000000" opacity="0.2" />
-      {/* серый стебель, слегка покачивается */}
-      <g className="vera-pet-ear">
-        <path d="M60 38c0-11 5-19 15-22 3.5-1 6 3.5 2.5 5.5-6.5 3.5-9.5 9-9.5 16.5z" fill="#6b6f75" stroke="#2b2320" strokeWidth="2.4" strokeLinejoin="round" />
-        <path d="M64 33c1-6 4-10 9-12" fill="none" stroke="#8d9298" strokeWidth="2" strokeLinecap="round" />
-      </g>
-      {/* верхние бугры-доли дают ребристый силуэт */}
-      <g fill="url(#veraPetPumpkinBody)" stroke="#2b2320" strokeWidth="2.6">
-        <circle cx="41" cy="45" r="15" />
-        <circle cx="60" cy="41" r="16" />
-        <circle cx="79" cy="45" r="15" />
-      </g>
-      {/* тело */}
-      <ellipse cx="60" cy="68" rx="37" ry="30" fill="url(#veraPetPumpkinBody)" stroke="#2b2320" strokeWidth="3" />
-      {/* линии долей и мягкий блик */}
-      <g fill="none" stroke="#c8600f" strokeWidth="2.4" strokeLinecap="round" opacity="0.9">
-        <path d="M45 43Q37 55 37 68t8 27" />
-        <path d="M75 43Q83 55 83 68t-8 27" />
-      </g>
-      <path d="M36 44q7-9 18-10" fill="none" stroke="#ffe0b0" strokeWidth="3.5" strokeLinecap="round" opacity="0.55" />
-      {/* внутреннее свечение фонаря */}
-      <ellipse cx="60" cy="74" rx="27" ry="17" fill="url(#veraPetPumpkinGlow)" />
-      {/* лицо-фонарь: глаза-треугольники и зубастая ухмылка */}
-      <g className="vera-pet-jackglow" fill="#241d1a" stroke="#241d1a" strokeWidth="2.5" strokeLinejoin="round">
-        <path d="M39 66l9-15 9 15z" />
-        <path d="M63 66l9-15 9 15z" />
-        <path d="M34 77Q60 96 86 77L74 77 71 82 66 77 58 77 55 81 50 77 34 77Z" />
+      {/* свечение фонаря — тёплая пульсирующая аура */}
+      <circle className="vera-pet-aura" cx="60" cy="72" r="50" fill="url(#veraPetPumpkinAura)" />
+      <ellipse cx="60" cy="104" rx="36" ry="4.5" fill="#000000" opacity="0.18" />
+      <g className="vera-pet-boop">
+        {/* зелёный изогнутый стебель с листиками */}
+        <path d="M60 44c-1-10 2-20 9-25 5-3.6 10 .5 7 4-5 5-8 11-7 20z" fill="url(#veraPetPumpkinStem)" stroke="#256b16" strokeWidth="1.6" strokeLinejoin="round" />
+        <path d="M69 20c3-2 6-1 6 2" fill="none" stroke="#7bd25a" strokeWidth="2.2" strokeLinecap="round" />
+        <path d="M54 46q-6-3-11 1 6 4 12 1zM66 47q7-3 12 1-6 4-12 1z" fill="#2e7d1e" stroke="#256b16" strokeWidth="1.2" strokeLinejoin="round" />
+        {/* тело из пяти ребристых долей */}
+        <g fill="url(#veraPetPumpkinBody)" stroke="#d2700f" strokeWidth="1.4">
+          <ellipse cx="30" cy="74" rx="17" ry="30" />
+          <ellipse cx="90" cy="74" rx="17" ry="30" />
+          <ellipse cx="42" cy="72" rx="20" ry="33" />
+          <ellipse cx="78" cy="72" rx="20" ry="33" />
+          <ellipse cx="60" cy="71" rx="23" ry="35" />
+        </g>
+        {/* тёмные линии между долями и светлые блики */}
+        <g fill="none" stroke="#d2700f" strokeWidth="2" strokeLinecap="round" opacity="0.8">
+          <path d="M47 45Q42 72 47 100" />
+          <path d="M73 45Q78 72 73 100" />
+          <path d="M31 52Q26 74 31 96" />
+          <path d="M89 52Q94 74 89 96" />
+        </g>
+        <g fill="none" stroke="#ffc76a" strokeWidth="2.6" strokeLinecap="round" opacity="0.7">
+          <path d="M54 46Q50 72 54 98" />
+          <path d="M66 46Q70 72 66 98" />
+        </g>
+        {/* резное лицо с внутренним свечением */}
+        <g className="vera-pet-jackglow">
+          {/* свечение-подложка под прорезями */}
+          <g fill="#ffcf4a" opacity="0.9">
+            <path d="M34 58l17 7-17 11Z" />
+            <path d="M86 58l-17 7 17 11Z" />
+            <path d="M60 70l8 13H52Z" />
+            <path d="M30 86q30 24 60 0l-10 .5-4 7-6-6-7 6-5-7-7 6-6-7-8 .5Z" />
+          </g>
+          {/* чёрные вырезы фонаря поверх свечения */}
+          <g fill="#1f1a16">
+            <path d="M35 59l15 6.5L35 76Z" />
+            <path d="M85 59L70 65.5 85 76Z" />
+            <path d="M60 71l7.5 11.5H52.5Z" />
+            <path d="M31 87q29 23 58 0l-9.5 .5-4 7-6.5-6-6 6-5-7-7 6-5-7-8.5 .5Z" />
+          </g>
+        </g>
       </g>
     </g>
   );
 }
 
-/* ── Сияющая медуза: полупрозрачный купол и волна щупалец ── */
+/* ── Сияющая медуза (legendary): премиальная аура, орбита блёсток и разные щупальца ── */
 function JellyfishArt() {
   return (
     <g className="vera-pet-float">
       <defs>
-        <radialGradient id="veraPetJellyBell" cx="50%" cy="30%" r="80%">
-          <stop offset="0%" stopColor="#ffe9f3" />
-          <stop offset="70%" stopColor="#ffc9de" />
-          <stop offset="100%" stopColor="#ffaed0" />
+        <radialGradient id="veraPetJellyBell" cx="50%" cy="28%" r="85%">
+          <stop offset="0%" stopColor="#fff2fb" />
+          <stop offset="55%" stopColor="#ffcbe6" />
+          <stop offset="100%" stopColor="#ff9fd0" />
         </radialGradient>
+        <radialGradient id="veraPetJellyAura" gradientUnits="userSpaceOnUse" cx="60" cy="52" r="50">
+          <stop offset="0%" stopColor="#ffc6e8" stopOpacity="0.75" />
+          <stop offset="55%" stopColor="#c9a3ff" stopOpacity="0.3" />
+          <stop offset="100%" stopColor="#a0e8ff" stopOpacity="0" />
+        </radialGradient>
+        <linearGradient id="veraPetJellyGloss" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.9" />
+          <stop offset="45%" stopColor="#d6f3ff" stopOpacity="0.5" />
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+        </linearGradient>
       </defs>
-      {/* щупальца — покачиваются волной */}
-      <g className="vera-pet-tentacle" fill="none" stroke="#e98bb4" strokeWidth="6" strokeLinecap="round">
-        <path d="M34 70q-5 9 0 17t0 17" />
-        <path d="M45 72q-5 9 0 17t0 17" />
-        <path d="M56 73q-5 9 0 17t0 17" />
-        <path d="M67 73q-5 9 0 17t0 17" />
-        <path d="M78 72q-5 9 0 17t0 17" />
-        <path d="M89 70q-5 9 0 17t0 17" />
+      {/* legendary-аура */}
+      <circle className="vera-pet-aura" cx="60" cy="52" r="46" fill="url(#veraPetJellyAura)" />
+      {/* орбита блёсток-звёздочек */}
+      <g className="vera-pet-sparklespin">
+        <g className="vera-pet-sparklepop" fill="#ffffff">
+          <path d={starPath(60, 12, 3)} />
+          <path d={starPath(102, 48, 2.4)} style={{ animationDelay: '0.5s' } as React.CSSProperties} />
+          <path d={starPath(20, 56, 2.6)} style={{ animationDelay: '1s' } as React.CSSProperties} />
+          <path d={starPath(90, 86, 2)} style={{ animationDelay: '1.4s' } as React.CSSProperties} />
+          <path d={starPath(30, 88, 2.2)} style={{ animationDelay: '0.8s' } as React.CSSProperties} />
+        </g>
+      </g>
+      {/* щупальца — разной длины, волнистые, каждое движется независимо */}
+      <g className="vera-pet-tentacle1" fill="none" stroke="#f093c0" strokeWidth="5.5" strokeLinecap="round">
+        <path d="M30 70q-6 8-2 15t-2 18" />
+      </g>
+      <g className="vera-pet-tentacle2" fill="none" stroke="#e8a3d4" strokeWidth="6" strokeLinecap="round">
+        <path d="M42 72q-4 10 1 18t-1 14" />
+      </g>
+      <g className="vera-pet-tentacle3" fill="none" stroke="#f5a8d8" strokeWidth="5" strokeLinecap="round">
+        <path d="M54 73q-3 9 0 16t-2 15" />
+      </g>
+      <g className="vera-pet-tentacle4" fill="none" stroke="#f0b3db" strokeWidth="6.5" strokeLinecap="round">
+        <path d="M66 73q2 10 0 17t2 14" />
+      </g>
+      <g className="vera-pet-tentacle5" fill="none" stroke="#e598cf" strokeWidth="5.5" strokeLinecap="round">
+        <path d="M78 72q5 9 1 18t3 12" />
+      </g>
+      <g className="vera-pet-tentacle6" fill="none" stroke="#f0a0d6" strokeWidth="6" strokeLinecap="round">
+        <path d="M90 70q6 8 2 16t4 17" />
+      </g>
+      {/* светящиеся бусины на концах, разные позиции */}
+      <g fill="#fff2fb" stroke="#ffb3d9" strokeWidth="1.4">
+        <circle cx="26" cy="103" r="2.8" /><circle cx="42" cy="104" r="3" />
+        <circle cx="52" cy="104" r="2.6" /><circle cx="70" cy="104" r="3.2" />
+        <circle cx="82" cy="102" r="2.8" /><circle cx="96" cy="103" r="3" />
       </g>
       {/* купол со свечением */}
       <g className="vera-pet-glowpulse">
         <path d="M60 20c-21 0-38 16-38 36 0 8 5 13 13 13h50c8 0 13-5 13-13 0-20-17-36-38-36Z" fill="url(#veraPetJellyBell)" stroke="#d06a97" strokeWidth="2.6" strokeLinejoin="round" />
-        <path d="M37 56c1-14 11-24 23-24s22 10 23 24z" fill="#f7a8cd" opacity="0.9" />
+        <path d="M37 56c1-14 11-24 23-24s22 10 23 24z" fill="#ffb6db" opacity="0.85" />
+        {/* стеклянный глянец купола */}
+        <path d="M34 50c2-18 14-30 26-30 8 0 15 5 19 12-8-6-30-8-45 18Z" fill="url(#veraPetJellyGloss)" />
         <path d="M56 21q4-3 8 0" fill="none" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" />
-        <ellipse cx="44" cy="34" rx="6.5" ry="4" fill="#ffffff" opacity="0.85" transform="rotate(-32 44 34)" />
+        <ellipse cx="44" cy="34" rx="6.5" ry="4" fill="#ffffff" opacity="0.9" transform="rotate(-32 44 34)" />
         <g fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" opacity="0.7">
           <path d="M74 38q5 6 5 13" />
           <path d="M81 44q4 5 4 10" />
@@ -670,18 +769,29 @@ function JellyfishArt() {
         {/* мордочка */}
         <g className="vera-pet-blink">
           <g fill="#2b1a22">
-            <circle cx="52" cy="47" r="4.2" />
-            <circle cx="68" cy="47" r="4.2" />
+            <circle cx="51" cy="47" r="5" />
+            <circle cx="69" cy="47" r="5" />
+          </g>
+          <g fill="#7a3b58">
+            <circle cx="51.6" cy="47.8" r="2.4" />
+            <circle cx="69.6" cy="47.8" r="2.4" />
           </g>
           <g fill="#ffffff">
-            <circle cx="50.5" cy="45.5" r="1.3" />
-            <circle cx="66.5" cy="45.5" r="1.3" />
+            <circle cx="49" cy="44.6" r="1.8" />
+            <circle cx="67" cy="44.6" r="1.8" />
+            <circle cx="53" cy="49.4" r="0.9" />
+            <circle cx="71" cy="49.4" r="0.9" />
           </g>
         </g>
-        <path d="M57.5 55q2.5 2.5 5 0" fill="none" stroke="#2b1a22" strokeWidth="1.8" strokeLinecap="round" />
-        <g fill="#f2889f" opacity="0.75">
-          <circle cx="43" cy="53" r="3.6" />
-          <circle cx="77" cy="53" r="3.6" />
+        {/* звёздочки-искорки у глаз */}
+        <g className="vera-pet-twinkle" fill="#ffffff">
+          <path d={starPath(44, 42, 1.8)} />
+          <path d={starPath(76, 42, 1.8)} />
+        </g>
+        <path d="M56.5 55q3.5 3 7 0" fill="none" stroke="#2b1a22" strokeWidth="1.8" strokeLinecap="round" />
+        <g fill="#ff8fb8" opacity="0.8">
+          <circle cx="42" cy="53" r="3.8" />
+          <circle cx="78" cy="53" r="3.8" />
         </g>
       </g>
     </g>

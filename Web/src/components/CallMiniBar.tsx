@@ -20,7 +20,7 @@ export default function CallMiniBar() {
   if (!activeChatId || !minimized) return null;
 
   const peerList = Object.values(peers);
-  const meName = `${me?.firstName || ''} ${me?.lastName || ''}`.trim() || me?.username || 'Вы';
+  const meName = me?.username || 'Вы';
 
   return (
     <Box sx={{
@@ -46,7 +46,7 @@ export default function CallMiniBar() {
         />
         {peerList.slice(0, 3).map((p) => {
           const dn = p.user
-            ? (`${p.user.firstName || ''} ${p.user.lastName || ''}`.trim() || p.user.username || p.userId.slice(0, 6))
+            ? (p.user.username || p.userId.slice(0, 6))
             : p.userId.slice(0, 6);
           return (
             <CallTile

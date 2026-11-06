@@ -102,7 +102,7 @@ export interface DeskRights {
   myLevel: DeskLevel | null;
   canEdit: boolean;
   canManage: boolean;
-  members: Array<{ userId: string; level: DeskLevel; user?: { id: string; username?: string | null; firstName?: string | null; lastName?: string | null; avatarUrl?: string | null } | null }>;
+  members: Array<{ userId: string; level: DeskLevel; user?: { id: string; username?: string | null; avatarUrl?: string | null } | null }>;
 }
 
 /** Палитра нитей. */

@@ -7,9 +7,19 @@ import { Close, RestartAlt, Image as ImageIcon, Inventory2 } from '@mui/icons-ma
 import { useThemeStore } from '../store/themeStore';
 import { ActivityKind, useProfileCustomizationStore } from '../store/profileCustomizationStore';
 import { useShopStore } from '../store/shopStore';
+import { filesApi } from '../services/api';
 import ReactionSlotsEditor from './ReactionSlotsEditor';
 
 interface Props { open: boolean; onClose: () => void; }
+
+// /uploads/... → абсолютный URL (чтобы превью/баннер грузился и через туннель).
+function resolveMediaUrl(url?: string): string {
+  if (!url) return '';
+  const v = String(url).trim();
+  if (/^https?:\/\//i.test(v) || /^data:(?:image|video)\//i.test(v)) return v;
+  if (v.startsWith('/')) return window.location.origin + v;
+  return '';
+}
 
 export default function ProfileCustomizeDialog({ open, onClose }: Props) {
   const { theme } = useThemeStore();
@@ -26,15 +36,18 @@ export default function ProfileCustomizeDialog({ open, onClose }: Props) {
     const f = e.target.files?.[0];
     e.target.value = '';
     if (!f) return;
-    const data = await new Promise<string>((res, rej) => {
-      const r = new FileReader();
-      r.onload = () => res(String(r.result || ''));
-      r.onerror = () => rej(r.error);
-      r.readAsDataURL(f);
-    });
-    c.set('bannerUrl', data);
+    const isVideo = /^video\//i.test(f.type);
+    const maxMb = isVideo ? 16 : 4;
+    if (f.size > maxMb * 1024 * 1024) return;
+    // Грузим файлом на сервер и храним короткий /uploads/... URL — так баннер
+    // синхронизируется и виден другим (data-URL не проходил синк из-за размера).
+    try {
+      const { data } = await filesApi.upload(f, false);
+      if (data?.url) c.set('bannerUrl', data.url);
+    } catch { /* тихо игнорируем — пользователь попробует снова */ }
   }
 
+  const bannerSrc = resolveMediaUrl(c.bannerUrl);
   const isBannerVideo = !!c.bannerUrl && (/^data:video\//i.test(c.bannerUrl) || /\.(mp4|webm|mov)$/i.test(c.bannerUrl));
 
   return (
@@ -53,9 +66,9 @@ export default function ProfileCustomizeDialog({ open, onClose }: Props) {
             <Typography sx={{ fontSize: 12, color: theme.textSec, mb: 0.5 }}>Баннер</Typography>
             <Stack direction="row" spacing={1} alignItems="center">
               <Box sx={{ position: 'relative', width: 96, height: 48, borderRadius: 1.5, flexShrink: 0, overflow: 'hidden',
-                background: (!c.bannerUrl || isBannerVideo) ? `linear-gradient(135deg, ${c.bannerColor}, ${theme.accent})` : `url(${c.bannerUrl}) center/cover`,
+                background: (!bannerSrc || isBannerVideo) ? `linear-gradient(135deg, ${c.bannerColor}, ${theme.accent})` : `url(${bannerSrc}) center/cover`,
                 border: `1px solid ${theme.border}` }}>
-                {isBannerVideo && <video src={c.bannerUrl} autoPlay loop muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                {isBannerVideo && <video src={bannerSrc} autoPlay loop muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
               </Box>
               <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" useFlexGap>
                 <Button component="label" size="small" startIcon={<ImageIcon sx={{ fontSize: 16 }} />} variant="outlined" sx={{ textTransform: 'none', py: 0.4, fontSize: 12 }}>
